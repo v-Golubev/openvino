@@ -60,7 +60,7 @@ public:
     // Remove node by connecting its 0th input with 0th output
     static void removeLayer(std::shared_ptr<Node> node);
 
-    static std::shared_ptr<opset1::Multiply> swapMultiplyAndAdd(std::shared_ptr<Node> addAfterMultiply, const std::pair<int, int> multiplyBranch);
+    static std::shared_ptr<Node> swapMultiplyAndAdd(std::shared_ptr<Node> addAfterMultiply, const int multiplyBranch);
 
     static bool isScalarLike(std::shared_ptr<opset1::Constant> constant);
 
@@ -126,6 +126,17 @@ public:
         const std::shared_ptr<ngraph::Node>& operation,
         const FakeQuantizeDequantization& dequantization,
         const bool updatePrecision);
+
+    static InsertDequantizationResult moveMultiplyAfter(
+        const std::shared_ptr<ngraph::Node>& operation,
+        const FakeQuantizeDequantization& dequantization,
+        const bool removeConvert);
+
+    static void removeConvertIfPossible(
+        const std::shared_ptr<ngraph::Node>& operation,
+        const FakeQuantizeDequantization& dequantization);
+
+    static bool checkConstantValuePrecision(const element::Type expectedPrecision, const std::shared_ptr<Node>& constant);
 
     static size_t getInputIndex(const std::shared_ptr<ngraph::Node>& parent, const std::shared_ptr<ngraph::Node>& child);
 

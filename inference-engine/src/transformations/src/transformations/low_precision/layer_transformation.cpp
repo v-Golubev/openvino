@@ -349,7 +349,7 @@ void LayerTransformation::fillAvailablePrecisions(std::shared_ptr<Node> layer, s
         }
 
         if (!layerTransformationsManager->isQuantized(child)) {
-            // low precision chain is interrupted here: next layer supported precisions are ignored
+            // low precision chain is interrupted here: next operation supported precisions are ignored
             continue;
         }
 
@@ -428,6 +428,30 @@ std::shared_ptr<ngraph::Node> LayerTransformation::moveDequantizationAfter(
     return result.newOperation;
 }
 
+std::shared_ptr<ngraph::Node> LayerTransformation::moveMultiplyAfter(
+    TransformationContext &context,
+    const std::shared_ptr<ngraph::Node>& operation,
+    const FakeQuantizeDequantization& dequantization,
+    const bool removeConvert) const {
+    const auto result = ngraph::pass::low_precision::NetworkHelper::moveMultiplyAfter(operation, dequantization, removeConvert);
+    updateOutput(context, result.lastDequantization, result.newOperation);
+    return result.newOperation;
+}
+
+void LayerTransformation::removeConvertIfPossible(
+    TransformationContext &context,
+    const std::shared_ptr<ngraph::Node>& operation) const {
+    FakeQuantizeDequantization dequantization = NetworkHelper::getDequantization(operation, 0);
+    if ((dequantization.subtract != nullptr) &&
+        NetworkHelper::checkConstantValuePrecision(
+            dequantization.convert->get_output_element_type(0),
+            dequantization.subtract->get_input_node_shared_ptr(1))) {
+        auto newOperation = separateInStandaloneBranch(operation);
+        dequantization = NetworkHelper::getDequantization(operation, 0);
+        NetworkHelper::removeConvertIfPossible(operation, dequantization);
+    }
+}
+
 void LayerTransformation::updateOutput(
     TransformationContext &context,
     std::shared_ptr<ngraph::Node> lastNode,
@@ -454,7 +478,6 @@ void LayerTransformation::addPattern(ngraph::pass::GraphRewrite& pass, Transform
     auto m = std::make_shared<ngraph::pattern::Matcher>(patternRoot, "SingleNodeMatcher");
     pass.add_matcher(m, internal_callback, ngraph::pass::PassProperty::CHANGE_DYNAMIC_STATE);
 }
-
 
 }  // namespace low_precision
 }  // namespace pass

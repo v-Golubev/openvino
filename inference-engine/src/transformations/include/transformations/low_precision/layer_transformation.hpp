@@ -252,7 +252,13 @@ public:
 
     PrecisionDetails getPrecisionDetails(const QuantizationDetails& quantizationDetails) const;
 
+    // return true if operation can be quantized and false otherwise
+    // for example: if convolution operation weights are not quantized, then isQuantize returns false and true otherwise
+    // note: dequantization operations on activations are absent during method execution
     virtual bool isQuantized(std::shared_ptr<Node> layer) const noexcept;
+
+    // return true if operation can be preserved for precision
+    // note: dequantization operations on activations are absent during method execution
     virtual bool isPrecisionPreserved(std::shared_ptr<Node> layer) const noexcept;
 
     DataPrecision getDataPrecision(
@@ -308,11 +314,23 @@ protected:
 protected:
     std::shared_ptr<ngraph::Node> separateInStandaloneBranch(std::shared_ptr<ngraph::Node> node) const;
 
+    // TODO: remove context
+    // TODO: remove dequantization
     std::shared_ptr<ngraph::Node> moveDequantizationAfter(
         TransformationContext &context,
         const std::shared_ptr<ngraph::Node>& operation,
         const FakeQuantizeDequantization& dequantization,
         const bool updatePrecision) const;
+
+    std::shared_ptr<ngraph::Node> moveMultiplyAfter(
+        TransformationContext &context,
+        const std::shared_ptr<ngraph::Node>& operation,
+        const FakeQuantizeDequantization& dequantization,
+        const bool removeConvert) const;
+
+    void removeConvertIfPossible(
+        TransformationContext &context,
+        const std::shared_ptr<ngraph::Node>& operation) const;
 
     void updateOutput(
         TransformationContext &context,

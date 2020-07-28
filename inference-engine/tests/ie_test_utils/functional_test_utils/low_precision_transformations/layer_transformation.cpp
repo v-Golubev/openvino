@@ -110,6 +110,8 @@ void LayerTransformation::ConfigurePlugin(const LptVersion lptVersion) {
             THROW_IE_EXCEPTION << "unexpected LPT version " << lptVersion;
         }
     }
+
+    configuration[PluginConfigInternalParams::KEY_LP_TRANSFORMS_MODE] = PluginConfigParams::YES;
 }
 
 InferenceEngine::Blob::Ptr LayerTransformation::GenerateInput(
@@ -256,7 +258,7 @@ std::string LayerTransformation::getTestCaseNameByParams(
     const ngraph::pass::low_precision::LayerTransformation::Params& params,
     const LayerTestsUtils::LayerTransformation::LptVersion version) {
     std::ostringstream result;
-    result << precision << "_" << targetDevice << "_" << version << "_" << toString(params);
+    result << precision << "_" << inputShapes << "_" << targetDevice << "_" << version << "_" << toString(params);
     return result.str();
 }
 
