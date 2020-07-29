@@ -41,8 +41,8 @@ InferenceEngine::Blob::Ptr SplitTransformation::GenerateInput(const InferenceEng
 
     return FuncTestUtils::createAndFillBlobConsistently(
         info.getTensorDesc(),
-        fqOnData.empty() ? 25.f : fqOnData.outputHighValues[0] - fqOnData.outputLowValues[0],
-        fqOnData.empty() ? -12.5f : fqOnData.outputLowValues[0],
+        static_cast<uint32_t>(fqOnData.empty() ? 25.f : fqOnData.outputHighValues[0] - fqOnData.outputLowValues[0]),
+        static_cast<int32_t>(fqOnData.empty() ? -12.5f : fqOnData.outputLowValues[0]),
         1ul);
 }
 
