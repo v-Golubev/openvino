@@ -106,8 +106,7 @@ void SplitTransformation::updateOutputs(
     const size_t outputSize = context.network->get_output_size();
     if (outputSize == 1) {
         updateOutput(context, lastNodes[0], originalNode);
-    }
-    else {
+    } else {
         const std::string originalName = originalNode->get_friendly_name();
         for (auto& lastNode : lastNodes) {
             for (size_t i = 0; i < outputSize; ++i) {
