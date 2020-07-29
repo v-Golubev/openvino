@@ -36,6 +36,7 @@
 #include "transformations/low_precision/normalize_l2.hpp"
 #include "transformations/low_precision/reshape.hpp"
 #include "transformations/low_precision/relu.hpp"
+#include "transformations/low_precision/split.hpp"
 #include "transformations/low_precision/subtract.hpp"
 
 // uncomment to display precision info during low precision transformations
@@ -170,6 +171,7 @@ LowPrecisionTransformations LowPrecisionTransformer::getAllTransformations(const
         add<NormalizeL2Transformation, opset1::NormalizeL2>(params).
         add<ReshapeTransformation, opset1::Reshape>(params).
         add<ReluTransformation, opset1::Relu>(params).
+        add<SplitTransformation, opset1::Split>(params).
 
         addCleanup<FuseFakeQuantizeTransformation, opset1::FakeQuantize>(params).
         // workaround: Convert I8 -> FP32 is not supported by CPU plugin
@@ -222,6 +224,7 @@ TypeRelaxedReplacer::TypeRelaxedReplacer() {
     make_matcher_type_relaxed<opset1::Subtract>(this);
     make_matcher_type_relaxed<opset1::NormalizeL2>(this);
     make_matcher_type_relaxed<opset1::Multiply>(this);
+    //make_matcher_type_relaxed<opset1::Split>(this);
 }
 
 LowPrecisionTransformer::LowPrecisionTransformer(const LowPrecisionTransformations& transformations)
