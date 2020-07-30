@@ -12,63 +12,84 @@
 #include <transformations/low_precision/split.hpp>
 
 #include "common_test_utils/ngraph_test_utils.hpp"
-#include "simple_low_precision_transformer.hpp"
+#include "ngraph_functions/low_precision_transformations/common/dequantization_operations.hpp"
 #include "ngraph_functions/low_precision_transformations/split_function.hpp"
+#include "simple_low_precision_transformer.hpp"
 
+namespace {
 using namespace testing;
 using namespace ngraph::pass;
 
 class SplitTransformationTestValues {
 public:
-    low_precision::LayerTransformation::Params transformationParams;
-    ngraph::builder::subgraph::SplitFunction::ActualValues actual;
-    ngraph::builder::subgraph::SplitFunction::ExpectedValues expected;
+    class Actual {
+    public:
+        ngraph::element::Type precisionBeforeDequantization;
+        ngraph::builder::subgraph::DequantizationOperations dequantization;
+    };
+
+    class Expected {
+    public:
+        ngraph::element::Type precision;
+        std::vector<ngraph::builder::subgraph::DequantizationOperations> dequantizationAfter;
+    };
+
+    ngraph::Shape inputShape;
+    std::int64_t splitedAxis;
+    size_t numSplits;
+    ngraph::pass::low_precision::LayerTransformation::Params params;
+    Actual actual;
+    Expected expected;
 };
 
-typedef std::tuple<
-    ngraph::element::Type,
-    ngraph::Shape,
-    bool,
-    SplitTransformationTestValues> SplitTransformationParams;
+inline std::ostream& operator<<(std::ostream& os,
+    const std::vector<ngraph::builder::subgraph::DequantizationOperations>& values) {
+    os << "{ ";
+    for (size_t i = 0; i < values.size(); ++i) {
+        os << values[i];
+        if (i != (values.size() - 1ul)) {
+            os << ", ";
+        }
+    }
+    os << " }";
+    return os;
+}
 
-class SplitTransformation : public LayerTransformation, public testing::WithParamInterface<SplitTransformationParams> {
+class SplitTransformation : public LayerTransformation, public testing::WithParamInterface<SplitTransformationTestValues> {
 public:
     void SetUp() override {
-        const ngraph::element::Type precision = std::get<0>(GetParam());
-        const ngraph::Shape shape = std::get<1>(GetParam());
-        const bool updatePrecisions = std::get<2>(GetParam());
-        const SplitTransformationTestValues testValues = std::get<3>(GetParam());
-
-        const low_precision::LayerTransformation::Params params = low_precision::LayerTransformation::Params(testValues.transformationParams).
-            setUpdatePrecisions(updatePrecisions);
+        const SplitTransformationTestValues testValues = GetParam();
 
         actualFunction = ngraph::builder::subgraph::SplitFunction::getOriginal(
-            precision,
-            shape,
-            updatePrecisions,
-            testValues.actual);
+            testValues.inputShape,
+            testValues.actual.precisionBeforeDequantization,
+            testValues.actual.dequantization,
+            testValues.splitedAxis,
+            testValues.numSplits);
 
-        SimpleLowPrecisionTransformer transform;
-        transform.add<ngraph::pass::low_precision::SplitTransformation, ngraph::opset1::Split>(testValues.transformationParams);
-        transform.transform(actualFunction);
+        SimpleLowPrecisionTransformer transformer;
+        transformer.add<ngraph::pass::low_precision::SplitTransformation, ngraph::opset1::Split>(testValues.params);
+        transformer.transform(actualFunction);
 
         referenceFunction = ngraph::builder::subgraph::SplitFunction::getReference(
-            precision,
-            shape,
-            updatePrecisions,
-            testValues.expected);
+            testValues.inputShape,
+            testValues.expected.precision,
+            testValues.expected.dequantizationAfter,
+            testValues.splitedAxis,
+            testValues.numSplits);
     }
 
-    static std::string getTestCaseName(testing::TestParamInfo<SplitTransformationParams> obj) {
-        const ngraph::element::Type precision = std::get<0>(obj.param);
-        const ngraph::Shape shape = std::get<1>(obj.param);
-        const bool updatePrecisions = std::get<2>(obj.param);
-        SplitTransformationTestValues testValues = std::get<3>(obj.param);
+    static std::string getTestCaseName(testing::TestParamInfo<SplitTransformationTestValues> obj) {
+        const SplitTransformationTestValues testValues = obj.param;
 
         std::ostringstream result;
         result <<
-            LayerTransformation::getTestCaseNameByParams(precision, shape, testValues.transformationParams.setUpdatePrecisions(updatePrecisions)) <<
-            testValues.actual << testValues.expected;
+            testValues.inputShape << "_" <<
+            testValues.actual.precisionBeforeDequantization << "_" <<
+            testValues.actual.dequantization << "_" <<
+            testValues.expected.dequantizationAfter <<
+            "_axis=" << testValues.splitedAxis <<
+            "_num_splits=" << testValues.numSplits;
         return result.str();
     }
 };
@@ -81,113 +102,151 @@ TEST_P(SplitTransformation, CompareFunctions) {
     ASSERT_TRUE(res.first) << res.second;
 }
 
-const std::vector<ngraph::element::Type> precisions = {
-    ngraph::element::f32,
-    // ngraph::element::f16
-};
-
-const std::vector<ngraph::Shape> shapes = {
-    { 1, 3, 24, 24 }
-};
-
-const std::vector<bool> updatePrecision = {
-    true,
-    false
-};
-
 const std::vector<SplitTransformationTestValues> testValues = {
     {
+        ngraph::Shape({ 1, 3, 16, 16 }), {2}, {2},
         LayerTransformation::createParamsU8I8(),
         // ActualValues
         {
             ngraph::element::u8,
-            { }, { 128.f },
-            { }, { 3.f },
-            2, 8
+            {{ngraph::element::f32}, {128.f}, {3.f}}
         },
         // ExpectedValues
         {
             ngraph::element::u8,
-            { }, { { 128.f }, { 128.f }, { 128.f }, { 128.f }, { 128.f }, { 128.f }, { 128.f }, { 128.f } },
-            { }, { { 3.f }, { 3.f }, { 3.f }, { 3.f }, { 3.f }, { 3.f }, { 3.f }, { 3.f } },
-            2, 8
+            {
+                {{ngraph::element::f32}, {128.f}, {3.f}},
+                {{ngraph::element::f32}, {128.f}, {3.f}},
+            }
         }
     },
     {
+        ngraph::Shape({ 1, 3, 16, 16 }), {1}, {3},
         LayerTransformation::createParamsI8I8(),
-        // Actualvalues
+        // ActualValues
         {
             ngraph::element::i8,
-            { 1, 3, 1, 1 }, { 11.f, 22.f, 33.f },
-            { 1, 3, 1, 1 }, { 1.f, 2.f, 3.f },
-            1, 3
+            {{ngraph::element::f32},
+            {{1.f, 2.f, 3.f}, ngraph::element::f32, {1, 3, 1, 1}},
+            {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}}
         },
-        // Expectedvalues
+        // ExpectedValues
         {
             ngraph::element::i8,
-            { 1, 1, 1, 1 }, { { 11.f }, { 22.f }, { 33.f } },
-            { 1, 1, 1, 1 }, { { 1.f }, { 2.f }, { 3.f } },
-            1, 3
+            {
+                {
+                    {ngraph::element::f32},
+                    {{1.f}, ngraph::element::f32, {1, 1, 1, 1}},
+                    {{11.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {{2.f}, ngraph::element::f32, {1, 1, 1, 1}},
+                    {{22.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {{3.f}, ngraph::element::f32, {1, 1, 1, 1}},
+                    {{33.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+            }
         }
     },
     {
+        ngraph::Shape({ 1, 3, 16, 16 }), {-1}, {2},
         LayerTransformation::createParamsU8I8(),
         // Actualvalues
         {
             ngraph::element::u8,
-            { 1, 3, 1, 1 }, { 11.f, 22.f, 33.f },
-            { 1, 3, 1, 1 }, { 1.f, 2.f, 3.f },
-            -1, 3
+            {{ngraph::element::f32},
+            {{1.f, 2.f, 3.f}, ngraph::element::f32, {1, 3, 1, 1}},
+            {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}}
         },
         // Expectedvalues
         {
             ngraph::element::u8,
-            { 1, 3, 1, 1 }, { { 11.f, 22.f, 33.f }, { 11.f, 22.f, 33.f }, { 11.f, 22.f, 33.f }, { 11.f, 22.f, 33.f } },
-            { 1, 3, 1, 1 }, { { 1.f, 2.f, 3.f }, { 1.f, 2.f, 3.f }, { 1.f, 2.f, 3.f }, { 1.f, 2.f, 3.f } },
-            -1, 3
+            {
+                {
+                    {ngraph::element::f32},
+                    {{1.f, 2.f, 3.f}, ngraph::element::f32, {1, 3, 1, 1}},
+                    {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {{1.f, 2.f, 3.f}, ngraph::element::f32, {1, 3, 1, 1}},
+                    {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {{1.f, 2.f, 3.f}, ngraph::element::f32, {1, 3, 1, 1}},
+                    {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}
+                }
+            }
         }
     },
     {
+        ngraph::Shape({ 1, 3, 16, 16 }), {-3}, {3},
         LayerTransformation::createParamsI8I8(),
-        // Actualvalues
+        // ActualValues
         {
             ngraph::element::i8,
-            { }, { 11.f },
-            { }, { 1.f },
-            2, 2
+            {{ngraph::element::f32},
+            {},
+            {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}}
         },
-        // Expectedvalues
+        // ExpectedValues
         {
             ngraph::element::i8,
-            { }, { { 11.f }, { 11.f } },
-            { }, { { 1.f }, { 1.f } },
-            2, 2
+            {
+                {
+                    {ngraph::element::f32},
+                    {},
+                    {{11.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {},
+                    {{22.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {},
+                    {{33.f}, ngraph::element::f32, {1, 1, 1, 1}}
+                },
+            }
         }
     },
     {
+        ngraph::Shape({ 1, 3, 4, 4 }), {2}, {2},
         LayerTransformation::createParamsI8I8(),
-        // Actualvalues
+        // ActualValues
         {
             ngraph::element::i8,
-            { }, { },
-            { }, { 1.f },
-            2, 2
+            {{ngraph::element::f32},
+            {{1.f, 2.f, 3.f, 4.f}, ngraph::element::f32, {1, 1, 4, 1}},
+            {{11.f, 22.f, 33.f, 44.f}, ngraph::element::f32, {1, 1, 4, 1}}}
         },
-        // Expectedvalues
+        // ExpectedValues
         {
             ngraph::element::i8,
-            { }, { },
-            { }, { { 1.f }, { 1.f } },
-            2, 2
+            {
+                {
+                    {ngraph::element::f32},
+                    {{1.f, 2.f}, ngraph::element::f32, {1, 1, 2, 1}},
+                    {{11.f, 22.f}, ngraph::element::f32, {1, 1, 2, 1}}
+                },
+                {
+                    {ngraph::element::f32},
+                    {{3.f, 4.f}, ngraph::element::f32, {1, 1, 2, 1}},
+                    {{33.f, 44.f}, ngraph::element::f32, {1, 1, 2, 1}}
+                }
+            }
         }
-    }
+    },
 };
 INSTANTIATE_TEST_CASE_P(
     LPT,
     SplitTransformation,
-    ::testing::Combine(
-        ::testing::ValuesIn(precisions),
-        ::testing::ValuesIn(shapes),
-        ::testing::ValuesIn(updatePrecision),
-        ::testing::ValuesIn(testValues)),
+    ::testing::ValuesIn(testValues),
     SplitTransformation::getTestCaseName);
+} // namespace

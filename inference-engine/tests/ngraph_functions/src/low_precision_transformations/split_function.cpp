@@ -10,45 +10,33 @@
 
 #include "ngraph_functions/subgraph_builders.hpp"
 #include "transformations/low_precision/network_helper.hpp"
+#include "ngraph_functions/low_precision_transformations/common/builders.hpp"
+#include "ngraph_functions/low_precision_transformations/common/dequantization_operations.hpp"
+
 
 namespace ngraph {
 namespace builder {
 namespace subgraph {
-std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
-    const ngraph::element::Type originalFunctionPrecision,
-    const ngraph::Shape& inputShape,
-    const bool updatePrecisions,
-    const ActualValues& values) {
-    const auto input = std::make_shared<ngraph::opset1::Parameter>(
-        updatePrecisions ? values.lowPrecision : originalFunctionPrecision,
-        ngraph::Shape(inputShape));
-    std::shared_ptr<ngraph::Node> parent = input;
+    std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
+        const ngraph::Shape& inputShape,
+        const ngraph::element::Type precisionBeforeDequantization,
+        const ngraph::builder::subgraph::DequantizationOperations& dequantization,
+        const int64_t splitedAxis,
+        const size_t numSplits) {
+        const std::shared_ptr<op::v0::Parameter> input = std::make_shared<ngraph::opset1::Parameter>(
+            precisionBeforeDequantization,
+            ngraph::Shape(inputShape));
 
-    const std::shared_ptr<ngraph::Node> convert = std::make_shared<ngraph::opset1::Convert>(parent, originalFunctionPrecision);
-    parent = convert;
+        const std::shared_ptr<Node> dequantizationOp = makeDequantization(input, dequantization);
+        const auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, splitedAxis);
+        const std::shared_ptr<Node> split = std::make_shared<ngraph::opset1::Split>(dequantizationOp, constant, numSplits);
 
-    if (!values.subtractValues.empty()) {
-        auto constant = std::make_shared<ngraph::opset1::Constant>(originalFunctionPrecision,
-            values.subtractShape, values.subtractValues);
-        const std::shared_ptr<ngraph::Node> subtract = std::make_shared<ngraph::opset1::Subtract>(parent, constant);
-        parent = subtract;
+        ngraph::ResultVector results;
+        for (size_t i = 0; i < numSplits; ++i) {
+            results.push_back(std::make_shared<ngraph::opset1::Result>(split->get_output_as_single_output_node(i)));
+        }
+        return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitFunction");
     }
-
-    if (!values.multiplyValues.empty()) {
-        auto constant = std::make_shared<ngraph::opset1::Constant>(originalFunctionPrecision,
-            values.multiplyShape, values.multiplyValues);
-        const std::shared_ptr<ngraph::Node> multiply = std::make_shared<ngraph::opset1::Multiply>(parent, constant);
-        parent = multiply;
-    }
-    auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, values.splitedAxis);
-    const std::shared_ptr<ngraph::Node> split = std::make_shared<ngraph::opset1::Split>(parent, constant, values.numSplit);
-
-    ngraph::ResultVector results;
-    for (size_t i = 0; i < values.numSplit; ++i) {
-        results.push_back(std::make_shared<ngraph::opset1::Result>(split->get_output_as_single_output_node(i)));
-    }
-    return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitTransformation");
-}
 
 std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
     const ngraph::element::Type originalFunctionPrecision,
@@ -79,42 +67,24 @@ std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
 }
 
 std::shared_ptr<ngraph::Function> SplitFunction::getReference(
-    const ngraph::element::Type originalFunctionPrecision,
     const ngraph::Shape& inputShape,
-    const bool updatePrecisions,
-    const ExpectedValues& values) {
-    auto input = std::make_shared<ngraph::opset1::Parameter>(
-        updatePrecisions ? values.lowPrecision : originalFunctionPrecision,
+    const ngraph::element::Type precision,
+    const std::vector<ngraph::builder::subgraph::DequantizationOperations>& dequantizationAfter,
+    const int64_t splitedAxis,
+    const size_t numSplit) {
+    const std::shared_ptr<op::v0::Parameter> input = std::make_shared<ngraph::opset1::Parameter>(
+        precision,
         ngraph::Shape(inputShape));
 
-    auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, values.splitedAxis);
-    const std::shared_ptr<ngraph::Node> split = std::make_shared<ngraph::opset1::Split>(input, constant, values.numSplit);
-
-    std::vector<std::shared_ptr<ngraph::Node>> parents(values.numSplit);
-    for (size_t i = 0; i < values.numSplit; ++i) {
-        const std::shared_ptr<ngraph::Node> convert = std::make_shared<ngraph::opset1::Convert>(split, originalFunctionPrecision);
-        parents[i] = convert;
-    }
-
-    if (!values.subtractValues.empty()) {
-        for (size_t i = 0; i < values.numSplit; ++i) {
-            auto subConst = std::make_shared<ngraph::opset1::Constant>(originalFunctionPrecision, values.subtractShape, values.subtractValues[i]);
-            const std::shared_ptr<ngraph::Node> subtract = std::make_shared<op::TypeRelaxed<ngraph::opset1::Subtract>>(parents[i], subConst);
-            ngraph::pass::low_precision::NetworkHelper::setOutDataPrecision(subtract, originalFunctionPrecision);
-            parents[i] = subtract;
-        }
-    }
-
-    for (size_t i = 0; i < values.numSplit; ++i) {
-        auto mulConst = std::make_shared<ngraph::opset1::Constant>(originalFunctionPrecision, values.multiplyShape, values.multiplyValues[i]);
-        const std::shared_ptr<ngraph::Node> multiply = std::make_shared<op::TypeRelaxed<ngraph::opset1::Multiply>>(parents[i], mulConst);
-        ngraph::pass::low_precision::NetworkHelper::setOutDataPrecision(multiply, originalFunctionPrecision);
-        parents[i] = multiply;
-    }
+    std::shared_ptr<ngraph::opset1::Split> split;
+    const auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, splitedAxis);
+    split = std::make_shared<ngraph::opset1::Split>(input, constant, numSplit);
 
     ngraph::ResultVector results;
-    for (size_t i = 0; i < values.numSplit; ++i) {
-        results.push_back(std::make_shared<ngraph::opset1::Result>(parents[i]));
+    for (size_t i = 0; i < numSplit; ++i) {
+        const std::shared_ptr<Node> quantizationOpAfter =
+            makeDequantization(split->get_output_as_single_output_node(i), dequantizationAfter[i]);
+        results.push_back(std::make_shared<ngraph::opset1::Result>(quantizationOpAfter));
     }
     return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitTransformation");
 }
