@@ -25,15 +25,16 @@ void SplitTransformation::transform(TransformationContext& context, ngraph::patt
     const std::shared_ptr<Node> split = separateInStandaloneBranch(m.get_match_root());
     auto dequantization = NetworkHelper::getDequantization(split);
 
-    std::vector<Output<Node>> inputs(split->get_input_size());
+    OutputVector inputs(split->get_input_size());
     for (size_t i = 0; i < split->get_input_size(); ++i) {
         inputs[i] = split->get_input_node_shared_ptr(i);
     }
+
     const size_t dequantizationIndex = NetworkHelper::getInputIndex(dequantization.multiply, split);
     inputs[dequantizationIndex] = dequantization.data;
+
     std::shared_ptr<ngraph::Node> newSplit = split->clone_with_new_inputs(inputs);
     newSplit->set_friendly_name(split->get_friendly_name());
-    newSplit->get_output_inputs(0);
 
     const ngraph::Shape subConstShape = dequantization.subtract ?
         dequantization.subtract->get_input_node_shared_ptr(1)->get_shape() : Shape{};
@@ -46,22 +47,24 @@ void SplitTransformation::transform(TransformationContext& context, ngraph::patt
 
     int64_t SplitedAxis = as_type_ptr<opset1::Constant>(split->get_input_node_shared_ptr(1))->cast_vector<int64_t>()[0];
     size_t axis = SplitedAxis > 0 ? SplitedAxis : split->get_input_shape(0).size() + SplitedAxis;
-    size_t outputSize = split->get_output_size();
+    size_t outputSize = newSplit->get_output_size();
+
+    const auto subSplitLengths = getConstSplitLengths(inputs, subConstShape, outputSize);
+    const auto mulSplitLengths = getConstSplitLengths(inputs, mulConstShape, outputSize);
 
     std::vector<std::shared_ptr<ngraph::Node>> lastNodes(outputSize);
     ngraph::OutputVector replacement;
-    for (const auto& output : newSplit->get_outputs()) {
+    for (size_t i = 0; i < outputSize; ++i) {
         const std::shared_ptr<ngraph::Node> convert =
-            dequantization.convert->clone_with_new_inputs({ output.get_output() });
+            dequantization.convert->clone_with_new_inputs({ newSplit->get_output_as_single_output_node(i) });
 
         std::shared_ptr<ngraph::Node> subtract;
-        if ((!subConstShape.empty()) && (subConstShape[axis] != 1)) {
-            Shape newSubConstShape(subConstShape);
-            newSubConstShape[axis] /= outputSize;
+        if (!subSplitLengths.empty()) {
+            const auto newSubConstShape = getConstSplitShape(subSplitLengths, subConstShape, axis, i);
 
             std::vector<float> newSubValues(
-                subValues.begin() + output.get_index() * newSubConstShape[axis],
-                subValues.begin() + (output.get_index() + 1) * newSubConstShape[axis]);
+                subValues.begin() + subSplitLengths[i],
+                subValues.begin() + subSplitLengths[i + 1]);
 
             const auto subConst = std::make_shared<ngraph::opset1::Constant>(
                 dequantization.subtract->get_input_element_type(1), newSubConstShape, newSubValues);
@@ -73,13 +76,12 @@ void SplitTransformation::transform(TransformationContext& context, ngraph::patt
         }
 
         std::shared_ptr<ngraph::Node> multiply;
-        if ((!mulConstShape.empty()) && (mulConstShape[axis] != 1)) {
-            Shape newMulConstShape(mulConstShape);
-            newMulConstShape[axis] /= outputSize;
+        if (!mulSplitLengths.empty()) {
+            const auto newMulConstShape = getConstSplitShape(mulSplitLengths, mulConstShape, axis, i);
 
             std::vector<float> newMulValues(
-                mulValues.begin() + output.get_index() * newMulConstShape[axis],
-                mulValues.begin() + (output.get_index() + 1) * newMulConstShape[axis]);
+                mulValues.begin() + mulSplitLengths[i],
+                mulValues.begin() + mulSplitLengths[i + 1]);
 
             auto mul_const = std::make_shared<ngraph::opset1::Constant>(
                 dequantization.multiply->get_input_element_type(1), newMulConstShape, newMulValues);
@@ -97,6 +99,36 @@ void SplitTransformation::transform(TransformationContext& context, ngraph::patt
 
     replace_node(split, replacement);
     updateOutputs(context, lastNodes, newSplit);
+}
+
+std::vector<size_t> SplitTransformation::getConstSplitLengths(
+    const OutputVector& inputs,
+    const ngraph::Shape& constShape,
+    const size_t outputSize) const {
+    int64_t axis = as_type_ptr<opset1::Constant>(inputs[1].get_node_shared_ptr())->cast_vector<int64_t>()[0];
+    size_t splitedAxis = axis > 0 ? axis : inputs[0].get_shape().size() + axis;
+
+    if ((!constShape.empty()) && (constShape[splitedAxis] != 1)) {
+        std::vector<size_t> result(outputSize + 1);
+        result[0] = 0;
+        for (size_t i = 1; i < result.size(); ++i) {
+            result[i] = result[i - 1] + constShape[splitedAxis] / outputSize;
+        }
+        return result;
+    }
+    else {
+        return std::vector<size_t>();
+    }
+}
+
+ngraph::Shape SplitTransformation::getConstSplitShape(
+    const std::vector<size_t>& constSplitLengths,
+    const ngraph::Shape& constShape, const size_t axis,
+    const size_t idx) const {
+    size_t numSplit = constSplitLengths.size() - 1;
+    Shape result(constShape);
+    result[axis] = constSplitLengths[idx + 1] - constSplitLengths[idx];
+    return result;
 }
 
 void SplitTransformation::updateOutputs(

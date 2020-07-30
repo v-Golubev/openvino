@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "layer_transformation.hpp"
 #include "ngraph/node.hpp"
 
@@ -21,7 +23,16 @@ public:
         TransformationContext& context,
         std::vector<std::shared_ptr<ngraph::Node>> lastNodes,
         std::shared_ptr<ngraph::Node> originalNode) const;
-};
+protected:
+    ngraph::Shape getConstSplitShape(
+        const std::vector<size_t>& constSplitLengths,
+        const ngraph::Shape& constShape, const size_t axis,
+        const size_t idx) const;
+    virtual std::vector<size_t> getConstSplitLengths(
+        const OutputVector& inputs,
+        const ngraph::Shape& constShape,
+        const size_t outputSize) const;
+};  
 } // namespace low_precision
 } // namespace pass
 } // namespace ngraph
