@@ -32,7 +32,7 @@ protected:
         const OutputVector& inputs,
         const ngraph::Shape& constShape,
         const size_t outputSize) const;
-};  
+};
 } // namespace low_precision
 } // namespace pass
 } // namespace ngraph
