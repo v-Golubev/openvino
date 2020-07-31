@@ -92,6 +92,9 @@ size_t getFirstChangedChannel(const Shape& shape1, const Shape& shape2) {
 }
 
 bool ReshapeTransformation::canBeTransformed(const TransformationContext& context, std::shared_ptr<Node> op) const {
+    if (!LayerTransformation::canBeTransformed(context, op)) {
+        return false;
+    }
     const FakeQuantizeDequantization dequantization = NetworkHelper::getDequantization(op, 0);
 
     const Shape subtractShape = dequantization.subtract == nullptr ? Shape{} : dequantization.subtract->get_input_node_ptr(1)->get_output_shape(0);

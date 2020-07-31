@@ -33,12 +33,22 @@ public:
         const int64_t splitedAxis,
         const size_t numSplit);
 
+    static std::shared_ptr<ngraph::Function> getOriginal(
+        const ngraph::element::Type precisionBeforeDequantization,
+        const ngraph::builder::subgraph::DequantizationOperations& dequantization);
+
     static std::shared_ptr<ngraph::Function> getReference(
         const ngraph::Shape& inputShape,
         const ngraph::element::Type precisionAfterOperation,
         const std::vector<ngraph::builder::subgraph::DequantizationOperations>& dequantizationAfter,
         const int64_t splitedAxis,
         const size_t numSplit);
+
+    static std::shared_ptr<ngraph::Function> getReference(
+        ngraph::element::Type precisionBeforeDequantization,
+        ngraph::builder::subgraph::DequantizationOperations dequantizationBefore,
+        ngraph::element::Type precisionAfterOperation,
+        ngraph::builder::subgraph::DequantizationOperations dequantizationAfter);
 };
 }  // namespace subgraph
 }  // namespace builder

@@ -214,14 +214,14 @@ const std::vector<VariadicSplitTransformationTestValues> testValues = {
         LayerTransformation::createParamsI8I8(),
         // ActualValues
         {
-            ngraph::element::u8,
+            ngraph::element::i8,
             {{ngraph::element::f32},
             {},
             {{11.f, 22.f, 33.f}, ngraph::element::f32, {1, 3, 1, 1}}}
         },
         // ExpectedValues
         {
-            ngraph::element::u8,
+            ngraph::element::i8,
             {
                 {
                     {ngraph::element::f32},

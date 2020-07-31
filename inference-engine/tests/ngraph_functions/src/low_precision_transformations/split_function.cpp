@@ -38,6 +38,22 @@ namespace subgraph {
         return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitFunction");
     }
 
+    std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
+        const ngraph::element::Type precisionBeforeDequantization,
+        const ngraph::builder::subgraph::DequantizationOperations& dequantization) {
+        ngraph::Shape inputShape{ 1, 3, 224, 224 };
+        const std::shared_ptr<op::v0::Parameter> input = std::make_shared<ngraph::opset1::Parameter>(
+            precisionBeforeDequantization,
+            ngraph::Shape(inputShape));
+
+        const std::shared_ptr<Node> dequantizationOp = makeDequantization(input, dequantization);
+        const auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, 1Ll);
+        const std::shared_ptr<Node> split = std::make_shared<ngraph::opset1::Split>(dequantizationOp, constant, 1Ul);
+
+        ngraph::ResultVector result{ std::make_shared<ngraph::opset1::Result>(split->get_output_as_single_output_node(0)) };
+        return std::make_shared<ngraph::Function>(result, ngraph::ParameterVector{ input }, "SplitFunction");
+    }
+
 std::shared_ptr<ngraph::Function> SplitFunction::getOriginal(
     const ngraph::element::Type originalFunctionPrecision,
     const ngraph::Shape& inputShape,
@@ -87,6 +103,34 @@ std::shared_ptr<ngraph::Function> SplitFunction::getReference(
         results.push_back(std::make_shared<ngraph::opset1::Result>(quantizationOpAfter));
     }
     return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitTransformation");
+}
+
+std::shared_ptr<ngraph::Function> SplitFunction::getReference(
+    ngraph::element::Type precisionBeforeDequantization,
+    ngraph::builder::subgraph::DequantizationOperations dequantizationBefore,
+    ngraph::element::Type precisionAfterOperation,
+    ngraph::builder::subgraph::DequantizationOperations dequantizationAfter) {
+    ngraph::Shape inputShape{ 1, 3, 224, 224 };
+    const std::shared_ptr<op::v0::Parameter> input = std::make_shared<ngraph::opset1::Parameter>(
+        precisionBeforeDequantization,
+        ngraph::Shape(inputShape));
+
+    const std::shared_ptr<Node> quantizationOpBefore = makeDequantization(input, dequantizationBefore);
+
+    const auto constant = std::make_shared<ngraph::opset1::Constant>(element::i64, Shape{ }, 1Ll);
+    std::shared_ptr<ngraph::opset1::Split> split;
+
+    if (quantizationOpBefore->get_output_element_type(0) == precisionAfterOperation) {
+        split = std::make_shared<ngraph::opset1::Split>(quantizationOpBefore, constant, 1Ul);
+    }
+    else {
+        split = std::make_shared<ngraph::opset1::Split>(quantizationOpBefore, constant, 1Ul);
+        ngraph::pass::low_precision::NetworkHelper::setOutDataPrecision(split, precisionAfterOperation);
+    }
+    const std::shared_ptr<Node> quantizationOpAfter = makeDequantization(split, dequantizationAfter);
+
+    ngraph::ResultVector results{ std::make_shared<ngraph::opset1::Result>(quantizationOpAfter) };
+    return std::make_shared<ngraph::Function>(results, ngraph::ParameterVector{ input }, "SplitFunction");
 }
 
 }  // namespace subgraph

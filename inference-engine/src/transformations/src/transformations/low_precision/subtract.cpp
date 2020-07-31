@@ -34,6 +34,9 @@ void SubtractTransformation::registerMatcherIn(GraphRewrite &pass, Transformatio
 }
 
 void SubtractTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher &m) const {
+    if (!LayerTransformation::canBeTransformed(context, m.get_match_root())) {
+        return;
+    }
     // ngraph::pass::VisualizeTree("C:\\Projects\\temp\\test.transformed").run_on_module(std::vector<std::shared_ptr<ngraph::Function>>{ context.network });
 
     std::shared_ptr<opset1::Subtract> subtract = as_type_ptr<opset1::Subtract>(m.get_match_root());

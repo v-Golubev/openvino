@@ -71,7 +71,14 @@ bool LayerTransformation::canBeTransformed(const TransformationContext& context,
     if (!isQuantized(layer)) {
         return false;
     }
+    const auto dequantization = NetworkHelper::getDequantization(layer, 0);
+    auto precision = dequantization.data->get_element_type();
 
+    const auto prOnActivationsIter = std::find(precisionsOnActivations.cbegin(), precisionsOnActivations.cend(), precision);
+    const auto prOnWeightsIter = std::find(precisionsOnWeights.cbegin(), precisionsOnWeights.cend(), precision);
+    if ((prOnActivationsIter == precisionsOnActivations.cend() && prOnWeightsIter == precisionsOnWeights.cend()) && updatePrecisions) {
+        return false;
+    }
     return true;
 }
 
