@@ -38,6 +38,7 @@
 #include "transformations/low_precision/relu.hpp"
 #include "transformations/low_precision/split.hpp"
 #include "transformations/low_precision/subtract.hpp"
+#include "transformations/low_precision/variadic_split.hpp"
 
 // uncomment to display precision info during low precision transformations
 // #define DISPLAY_PECISION
@@ -172,6 +173,7 @@ LowPrecisionTransformations LowPrecisionTransformer::getAllTransformations(const
         add<ReshapeTransformation, opset1::Reshape>(params).
         add<ReluTransformation, opset1::Relu>(params).
         add<SplitTransformation, opset1::Split>(params).
+        add<VariadicSplitTransformation, opset1::VariadicSplit>(params).
 
         addCleanup<FuseFakeQuantizeTransformation, opset1::FakeQuantize>(params).
         // workaround: Convert I8 -> FP32 is not supported by CPU plugin
