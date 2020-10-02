@@ -30,6 +30,16 @@ ngraph::pass::low_precision::LayerTransformation::Params LayerTransformation::cr
         { ngraph::element::i8 });
 }
 
+ngraph::pass::low_precision::LayerTransformation::Params LayerTransformation::createParamsU16I16() {
+    return low_precision::LayerTransformation::Params(
+        true,
+        low_precision::LayerTransformation::QuantizedTensorAlignment::UpdateLevel,
+        low_precision::LayerTransformation::QuantizedTensorAlignment::None,
+        true,
+        { ngraph::element::u16 },
+        { ngraph::element::i16 });
+}
+
 ngraph::pass::low_precision::LayerTransformation::Params LayerTransformation::createParamsI8I8() {
     return low_precision::LayerTransformation::Params(
         true,

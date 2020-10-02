@@ -290,7 +290,7 @@ std::vector<float> QuantizationDetails::getBlobValue(std::shared_ptr<Node> const
 }
 
 bool QuantizationDetails::isSupportedLevel(const size_t level) {
-    static const std::unordered_set<size_t> supported_levels = { 15ul, 16ul, 255ul, 256ul };
+    static const std::unordered_set<size_t> supported_levels = { 15ul, 16ul, 255ul, 256ul, 65536ul, 65535ul };
     return supported_levels.find(level) != supported_levels.end();
 }
 

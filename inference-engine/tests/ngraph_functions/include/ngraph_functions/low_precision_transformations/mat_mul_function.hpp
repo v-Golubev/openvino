@@ -40,6 +40,13 @@ public:
         const std::vector<float>& weightsConstValues,
         const FakeQuantizeOnWeights& fqOnWeights);
 
+    static std::shared_ptr<ngraph::Function> getGNAOriginal(
+        const ngraph::element::Type precision,
+        const ngraph::Shape& inputShape,
+        const FakeQuantizeOnData& fqOnData,
+        std::shared_ptr<ngraph::opset1::Constant> weights,
+        const FakeQuantizeOnWeights& fqOnWeights);
+
     static std::shared_ptr<ngraph::Function> getReference(
         const ngraph::element::Type precision,
         const ngraph::Shape& inputShape1,
@@ -58,6 +65,17 @@ public:
         const ngraph::element::Type weightsConstPrecision,
         const ngraph::Shape& weightsConstShape,
         const std::vector<float>& weightsConstValues,
+        const DequantizationOperations& resultDequantization);
+
+    static std::shared_ptr<ngraph::Function> getGNAReference(
+        const ngraph::element::Type inputPrecision,
+        const ngraph::Shape& inputShape,
+        const FakeQuantizeOnData& fqOnData,
+        const ngraph::element::Type precisionBeforeDequantization,
+        const DequantizationOperations& dequantizationBefore,
+        std::shared_ptr<ngraph::opset1::Constant> weights,
+        const FakeQuantizeOnWeights& fqOnWeights,
+        const ngraph::element::Type precisionAfterOperation,
         const DequantizationOperations& resultDequantization);
 
     static std::shared_ptr<ngraph::Function> getOriginal(

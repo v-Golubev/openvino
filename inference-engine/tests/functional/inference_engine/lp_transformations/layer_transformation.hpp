@@ -21,6 +21,8 @@ public:
     static ngraph::pass::low_precision::LayerTransformation::Params createParamsI8I8();
     static ngraph::pass::low_precision::LayerTransformation::Params createParamsU8I8AndI8();
 
+    static ngraph::pass::low_precision::LayerTransformation::Params createParamsU16I16();
+
     static std::string toString(const ngraph::pass::low_precision::LayerTransformation::Params& params);
 
     static std::string getTestCaseNameByParams(

@@ -45,7 +45,8 @@ bool FakeQuantizeDequantization::isShared() const {
 }
 
 bool FakeQuantizeDequantization::isLowPrecision() const {
-    return (data.get_element_type() == element::i8) || (data.get_element_type() == element::u8);
+    return (data.get_element_type() == element::i8) || (data.get_element_type() == element::u8) ||
+           (data.get_element_type() == element::i16) || (data.get_element_type() == element::u16);
 }
 
 bool FakeQuantizeDequantization::checkElementwise(const std::shared_ptr<ngraph::Node>& dequantizationElementwise) {

@@ -635,6 +635,7 @@ std::tuple<std::shared_ptr<Node>, std::shared_ptr<Node>> NetworkHelper::decompos
     // TODO: for debuging only - remove later
     newFQ->set_friendly_name(fq->get_friendly_name() + "_original");
 
+    auto originalPreicison = fq->get_input_element_type(0);
     std::shared_ptr<ngraph::Node> convert2;
     if (updatePrecision) {
         std::shared_ptr<Node> convert;
@@ -649,11 +650,11 @@ std::tuple<std::shared_ptr<Node>, std::shared_ptr<Node>> NetworkHelper::decompos
             THROW_IE_LPT_EXCEPTION(*newFQ) << "unexpected operation type";
         }
 
-        convert2 = std::make_shared<DequantizationConvert>(convert, element::f32);
+        convert2 = std::make_shared<DequantizationConvert>(convert, originalPreicison);
         convert2->set_friendly_name(convert->get_friendly_name() + "/DequantizationConvert");
     } else {
         if (newFQ->get_output_element_type(0) != element::f32) {
-            convert2 = std::make_shared<DequantizationConvert>(newFQ, element::f32);
+            convert2 = std::make_shared<DequantizationConvert>(newFQ, originalPreicison);
             convert2->set_friendly_name(newFQ->get_friendly_name() + "/DequantizationConvert");
         }
     }
@@ -825,6 +826,7 @@ FakeQuantizeDequantization NetworkHelper::getDequantization(const std::shared_pt
     const std::shared_ptr<opset1::Convert> convert = as_type_ptr<opset1::Convert>(dataNode.get_node_shared_ptr());
     if (convert != nullptr) {
         if ((convert->input(0).get_element_type() != element::i8) && (convert->input(0).get_element_type() != element::u8) &&
+            (convert->input(0).get_element_type() != element::i16) && (convert->input(0).get_element_type() != element::u16) &&
             (convert->output(0).get_element_type() != element::f32)) {
             return FakeQuantizeDequantization(dataNode, nullptr, subtract, multiply);
         }
