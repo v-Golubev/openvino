@@ -26,7 +26,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getOriginal(
     input->set_friendly_name("input");
 
     const auto fakeQuantize = ngraph::builder::makeFakeQuantize(
-        input, element::f32, fakeQuantizeOnData.quantizationLevel, fakeQuantizeOnData.constantShape,
+        input, precision, fakeQuantizeOnData.quantizationLevel, fakeQuantizeOnData.constantShape,
         fakeQuantizeOnData.inputLowValues, fakeQuantizeOnData.inputHighValues, fakeQuantizeOnData.outputLowValues, fakeQuantizeOnData.outputHighValues);
     fakeQuantize->set_friendly_name("fakeQuantize");
 
@@ -47,7 +47,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getReference(
 
     std::shared_ptr<ngraph::opset1::FakeQuantize> fakeQuantize = as_type_ptr<ngraph::opset1::FakeQuantize>(ngraph::builder::makeFakeQuantize(
         input,
-        element::f32,
+        precision,
         fakeQuantizeOnData.quantizationLevel,
         fakeQuantizeOnData.constantShape,
         fakeQuantizeOnData.inputLowValues,
@@ -57,7 +57,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getReference(
     std::shared_ptr<Node> parent = fakeQuantize;
 
     if (updatePrecisions) {
-        const std::shared_ptr<ngraph::opset1::Convert> convert = std::make_shared<DequantizationConvert>(parent, element::f32);
+        const std::shared_ptr<ngraph::opset1::Convert> convert = std::make_shared<DequantizationConvert>(parent, precision);
         parent = convert;
 
         ngraph::pass::low_precision::NetworkHelper::setOutDataPrecision(fakeQuantize, fakeQuantizeOutputPrecision);
@@ -65,6 +65,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getReference(
         if (fakeQuantize->get_output_element_type(0) != element::f32) {
             const std::shared_ptr<ngraph::opset1::Convert> convert = std::make_shared<DequantizationConvert>(parent, element::f32);
             parent = convert;
+            ngraph::pass::low_precision::NetworkHelper::setOutDataPrecision(fakeQuantize, element::f32);
         }
     }
 
@@ -73,7 +74,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getReference(
         std::make_shared<ngraph::op::TypeRelaxed<DequantizationSubtract>>(
             parent,
             ngraph::opset1::Constant::create(
-                element::f32,
+                precision,
                 expectedSubtractValues.size() == 1ul ? ngraph::Shape{ } : ngraph::Shape{ expectedSubtractValues.size() },
                 expectedSubtractValues),
             ngraph::op::AutoBroadcastSpec::NUMPY);
@@ -86,7 +87,7 @@ std::shared_ptr<ngraph::Function> FakeQuantizeFunction::getReference(
         std::make_shared<DequantizationMultiply>(
             parent,
             ngraph::opset1::Constant::create(
-                element::f32,
+                precision,
                 expectedMultiplyValues.size() == 1ul ? ngraph::Shape{ } : ngraph::Shape{ expectedMultiplyValues.size() },
                 expectedMultiplyValues));
     if (multiply != nullptr) {

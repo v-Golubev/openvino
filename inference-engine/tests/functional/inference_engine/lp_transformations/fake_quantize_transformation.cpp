@@ -30,6 +30,7 @@ public:
 
 class FakeQuantizeTransformationTestValues {
 public:
+    ngraph::element::Type inputPrecision;
     low_precision::LayerTransformation::Params params;
     builder::subgraph::FakeQuantizeOnData actual;
     builder::subgraph::FakeQuantizeOnData expected;
@@ -56,7 +57,6 @@ inline std::ostream& operator<<(std::ostream& out, const FakeQuantizeTransformat
 }
 
 typedef std::tuple<
-    ngraph::element::Type,
     ngraph::Shape,
     bool,
     FakeQuantizeTransformationTestValues> FakeQuantizeTransformationParams;
@@ -64,11 +64,11 @@ typedef std::tuple<
 class FakeQuantizeTransformation : public LayerTransformation, public testing::WithParamInterface<FakeQuantizeTransformationParams> {
 public:
     void SetUp() override {
-        const ngraph::element::Type precision = std::get<0>(GetParam());
-        const ngraph::Shape shape = std::get<1>(GetParam());
-        const bool updatePrecision = std::get<2>(GetParam());
-        const FakeQuantizeTransformationTestValues fakeQuantizeOnData = std::get<3>(GetParam());
+        const ngraph::Shape shape = std::get<0>(GetParam());
+        const bool updatePrecision = std::get<1>(GetParam());
+        const FakeQuantizeTransformationTestValues fakeQuantizeOnData = std::get<2>(GetParam());
 
+        auto precision = updatePrecision ? fakeQuantizeOnData.inputPrecision : element::f32;
         const low_precision::LayerTransformation::Params params = low_precision::LayerTransformation::Params(fakeQuantizeOnData.params).
             setUpdatePrecisions(updatePrecision);
 
@@ -76,7 +76,6 @@ public:
             precision,
             shape,
             fakeQuantizeOnData.actual);
-
         SimpleLowPrecisionTransformer transform;
         transform.add<ngraph::pass::low_precision::FakeQuantizeTransformation, ngraph::opset1::FakeQuantize>(params);
         transform.transform(actualFunction);
@@ -87,16 +86,16 @@ public:
             params.updatePrecisions,
             fakeQuantizeOnData.expected,
             fakeQuantizeOnData.expectedFakeQuantizeOnDataPrecision,
-            fakeQuantizeOnData.expectedValues.find(element::f32)->second.subtract,
-            fakeQuantizeOnData.expectedValues.find(element::f32)->second.multiply);
+            fakeQuantizeOnData.expectedValues.find(precision)->second.subtract,
+            fakeQuantizeOnData.expectedValues.find(precision)->second.multiply);
     }
 
     static std::string getTestCaseName(testing::TestParamInfo<FakeQuantizeTransformationParams> obj) {
-        ngraph::element::Type precision;
         ngraph::Shape shape;
         bool updatePrecision;
         FakeQuantizeTransformationTestValues fakeQuantizeOnData;
-        std::tie(precision, shape, updatePrecision, fakeQuantizeOnData) = obj.param;
+        std::tie(shape, updatePrecision, fakeQuantizeOnData) = obj.param;
+        auto precision = fakeQuantizeOnData.inputPrecision;
 
         std::ostringstream result;
         result << LayerTransformation::getTestCaseNameByParams(precision, shape, fakeQuantizeOnData.params) <<
@@ -112,17 +111,12 @@ TEST_P(FakeQuantizeTransformation, CompareFunctions) {
     ASSERT_TRUE(res.first) << res.second;
 }
 
-const std::vector<ngraph::element::Type> precisions = {
-    ngraph::element::f32,
-    ngraph::element::i32,
-    ngraph::element::f16
-};
-
 const std::vector<bool> updatePrecisions = { true, false };
 
 const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformationTestValues = {
     // U8
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsU8I8(),
         { 256ul, {}, { 0.f }, { 2.55f }, { 0.f }, { 2.55f } },
         { 256ul, {}, { 0.f }, { 2.55f }, { 0.f }, { 255.f } },
@@ -133,6 +127,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
         }
     },
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsU8I8(),
         { 256ul, {}, { -1.23f }, { 2.55f }, { -1.23f }, { 2.55f } },
         { 256ul, {}, { -1.23f }, { 2.55f }, { 0.f }, { 255.f } },
@@ -143,6 +138,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
         }
     },
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsU8I8(),
         { 256ul, {}, { -1.28f} , { 1.27f }, { -1.28f} , { 1.27f } },
         { 256ul, {}, { -1.28f} , { 1.27f }, { 0.f }, { 255.f } },
@@ -153,8 +149,35 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
         }
     },
 
+    // U16, inputPrecision I32
+    {
+        ngraph::element::i32,
+        LayerTransformation::createParamsU16I16(),
+        { 65536ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 131070.f } },
+        { 65536ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 65535.f } },
+        ngraph::element::u16,
+        {
+            { ngraph::element::f32, {{}, { 2.f }} },
+            { ngraph::element::f16, {{}, { 2.f }} },
+            { ngraph::element::i32, {{}, { 2.f }} }
+        }
+    },
+    {
+        ngraph::element::i32,
+        LayerTransformation::createParamsU16I16(),
+        { 65535ul, {}, { 0.f} , { 4369.f }, { -32767.f} , { 32767.f } },
+        { 65535ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 65534.f } },
+        ngraph::element::u16,
+        {
+            { ngraph::element::f32, {{ 32767.f }, { 1.f }} },
+            { ngraph::element::f16, {{ 32767.f }, { 1.f }} },
+            { ngraph::element::i32, {{ 32767.f }, { 1.f }} }
+        }
+    },
+
     // I8
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsI8I8(),
         { 256ul, {}, { -1.28f}, { 1.27f }, { -1.28f}, { 1.27f } },
         { 256ul, {}, { -1.28f}, { 1.27f }, { -128.f}, { 127.f } },
@@ -165,6 +188,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
         }
     },
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsI8I8(),
         { 256ul, {}, { -0.12f}, { 1.27f }, { -0.12f}, { 1.27f } },
         { 256ul, {}, { -0.12f}, { 1.27f }, { -128.f}, { 127.f } },
@@ -175,6 +199,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
         }
     },
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsI8I8(),
         { 256ul, {}, { 0.f }, { 2.55f }, { 0.f }, { 2.55f } },
         { 256ul, {}, { 0.f }, { 2.55f }, { -128.f }, { 127.f } },
@@ -187,6 +212,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
 
     // dot interval
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsI8I8(),
         { 256ul, {}, { 0.f }, { 2.55f }, { 2.55f }, { 2.55f } },
         { 256ul, {}, { 0.f }, { 2.55f }, { 1.f }, { 1.f } },
@@ -199,6 +225,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
     // efficientnet-b0: efficientnet-b0/model/blocks_2/depthwise_conv2d/depthwise/fq_input_0, interval: -0.504395 - +0.5
     // I8 symmetric: max ratio = 0.000907078
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsU8I8AndI8(),
         { 256ul, {}, { -0.504395f }, { 0.5f }, { -0.504395f }, { 0.5 } },
         { 256ul, {}, { -0.504395f }, { 0.5f }, { -128.f }, { 127.f } },
@@ -211,6 +238,7 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
 
     // denormal values
     {
+        ngraph::element::f32,
         LayerTransformation::createParamsU8I8AndI8(),
         { 256ul, {}, { 0.f }, { 25.5f }, { -1.0686283872061019e-38 }, { 1.0686283872061019e-38 } },
         { 256ul, {}, { 0.f }, { 25.5f }, { 0.f }, { 255.f } },
@@ -231,7 +259,6 @@ INSTANTIATE_TEST_CASE_P(
     LPT,
     FakeQuantizeTransformation,
     ::testing::Combine(
-        ::testing::ValuesIn(precisions),
         ::testing::ValuesIn(shapes),
         ::testing::ValuesIn(updatePrecisions),
         ::testing::ValuesIn(fakeQuantizeTransformationTestValues)),
