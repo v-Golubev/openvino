@@ -61,17 +61,17 @@ public:
                 NGRAPH_CHECK(false, "unexpected levels ", levels, " for precision ", precision);
             }
         } else if (precision == element::i16) {
-            if (levels == 65535) {
-                return static_cast<float>(std::numeric_limits<std::int16_t>::lowest()) + 1.f;
-            } else if (levels == 65536) {
-                return static_cast<float>(std::numeric_limits<std::int16_t>::lowest());
+            if (levels == 16383) {
+                return -8191.f;
+            } else if (levels == 16384) {
+                return -8192.f;
             } else {
                 NGRAPH_CHECK(false, "unexpected levels ", levels, " for precision ", precision);
             }
         } else if (precision == element::u8) {
             return static_cast<float>(std::numeric_limits<unsigned char>::lowest());
         } else if (precision == element::u16) {
-            return static_cast<float>(std::numeric_limits<std::uint16_t>::lowest());
+            return 0.f;
         } else if (precision == element::f16) {
             return -1.0e15f;
         } else if (precision == element::f32) {
@@ -82,7 +82,7 @@ public:
     }
 
     static float getMaxValue(const element::Type precision, const size_t levels) {
-        if ((levels != 255ul) && (levels != 256ul) && (levels != 65535ul) && (levels != 65536ul)) {
+        if ((levels != 255ul) && (levels != 256ul) && (levels != 16384ul) && (levels != 16383ul)) {
             THROW_TRANSFORMATION_EXCEPTION << "unexpected levels " << levels;
         }
 
@@ -91,9 +91,9 @@ public:
         } else if (precision == element::u8) {
             return static_cast<float>(std::numeric_limits<unsigned char>::max()) - (256 - levels);
         } else if (precision == element::i16) {
-            return static_cast<float>(std::numeric_limits<std::int16_t>::max());
+            return 8191.f;
         } else if (precision == element::u16) {
-            return static_cast<float>(std::numeric_limits<std::uint16_t>::max() - (65536 - levels));
+            return static_cast<float>(levels - 1);
         } else if (precision == element::f16) {
             return 1.0e15f;
         } else if (precision == element::f32) {

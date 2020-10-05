@@ -153,8 +153,8 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
     {
         ngraph::element::i32,
         LayerTransformation::createParamsU16I16(),
-        { 65536ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 131070.f } },
-        { 65536ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 65535.f } },
+        { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f * 2.f} },
+        { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f} },
         ngraph::element::u16,
         {
             { ngraph::element::f32, {{}, { 2.f }} },
@@ -165,13 +165,13 @@ const std::vector<FakeQuantizeTransformationTestValues> fakeQuantizeTransformati
     {
         ngraph::element::i32,
         LayerTransformation::createParamsU16I16(),
-        { 65535ul, {}, { 0.f} , { 4369.f }, { -32767.f} , { 32767.f } },
-        { 65535ul, {}, { 0.f} , { 4369.f }, { 0.f} , { 65534.f } },
+        { 16383ul, {}, { 0.f} , { 16382.f }, {-8191.f * 3.f}, {8191.f * 3.f} },
+        { 16383ul, {}, { 0.f} , { 16382.f }, { 0.f} , { 16382.f } },
         ngraph::element::u16,
         {
-            { ngraph::element::f32, {{ 32767.f }, { 1.f }} },
-            { ngraph::element::f16, {{ 32767.f }, { 1.f }} },
-            { ngraph::element::i32, {{ 32767.f }, { 1.f }} }
+            { ngraph::element::f32, {{ 8191.f }, { 3.f }} },
+            { ngraph::element::f16, {{ 8191.f }, { 3.f }} },
+            { ngraph::element::i32, {{ 8191.f }, { 3.f }} }
         }
     },
 

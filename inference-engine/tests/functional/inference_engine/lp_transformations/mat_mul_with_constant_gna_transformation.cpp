@@ -138,38 +138,57 @@ std::vector<MatMullTransformationTestValues> testValues = {
     {
         LayerTransformation::createParamsU16I16().setSupportAsymmetricQuantization(false),
         {
-            { 65535, ngraph::Shape({}),  {0}, {65534}, {0}, {65534 * 2} },
-            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 32700)),
-            { 65535, ngraph::Shape({}),  {0.f}, {65534.f}, {-32767 * 3}, {32767 * 3} },
+            { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f * 2.f} },
+            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 8191)),
+            { 16383, ngraph::Shape({}),  {-8191.f}, {8191.f}, {-8191.f * 3.f}, {8191.f * 3.f} },
         },
         {
-            { 65535, ngraph::Shape({}),  {0}, {65534}, {0}, {65534} },
+            { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f} },
             ngraph::element::u16,
             {},
-            // 32700 (weights) - 32767 (FQ)
-            ngraph::op::Constant::create(ngraph::element::i16, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, -67)),
+            ngraph::op::Constant::create(ngraph::element::i16, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 8191)),
             {},
             ngraph::element::i32,
-            {{}, {}, { 6 } }, // 2(on data) * 3(on weights)
+            {{}, {}, { 6.f } }, // 2(on data) * 3(on weights)
             ngraph::element::i32,
         }
     },
-    // U16 & I16 with subtract
+    // U16 & I16
     {
         LayerTransformation::createParamsU16I16().setSupportAsymmetricQuantization(false),
         {
-            { 65535, ngraph::Shape({}),  {-32767}, {32767}, {-32767}, {32767} },
-            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 32700)),
-            { 65535, ngraph::Shape({}),  {0.f}, {65534.f}, {-32767}, {32767} },
+            { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f * 2.f} },
+            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 8200)),
+            { 16383, ngraph::Shape({}),  {0.f}, {16382.f}, {-8191.f}, {8191.f} },
         },
         {
-            { 65535, ngraph::Shape({}),  {-32767}, {32767}, {0}, {65534} },
+            { 16384, ngraph::Shape({}),  {0.f}, {16383.f}, {0.f}, {16383.f} },
             ngraph::element::u16,
-            {{ngraph::element::i32}, {32767}, {1}},
-            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 32700)),
-            { 65535, ngraph::Shape({}),  {0.f}, {65534.f}, {-32767}, {32767} },
-            ngraph::element::i32,
             {},
+            // 8200 - 8191(FakeQuantize)
+            ngraph::op::Constant::create(ngraph::element::i16, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 9)),
+            {},
+            ngraph::element::i32,
+            {{}, {}, { 2.f } },
+            ngraph::element::i32,
+        }
+    },
+    // U16 & I16
+    {
+        LayerTransformation::createParamsU16I16().setSupportAsymmetricQuantization(false),
+        {
+            { 16383, ngraph::Shape({}),  {-8191.f}, {8191.f}, {-8191.f}, {8191.f} },
+            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 8191)),
+            { 16383, ngraph::Shape({}),  {-8191.f}, {8191.f}, {-8191.f}, {8191.f} },
+        },
+        {
+            { 16383, ngraph::Shape({}),  {-8191.f}, {8191.f}, {0.f}, {16382.f} },
+            ngraph::element::u16,
+            {{ngraph::element::i32}, {8191.f}, {1}},
+            ngraph::op::Constant::create(ngraph::element::i32, ngraph::Shape{ 2048, 1000 }, std::vector<float>(2048 * 1000, 8191)),
+            { 16383, ngraph::Shape({}),  {-8191.f}, {8191.f}, {-8191.f}, {8191.f} },
+            ngraph::element::i32,
+            {{}, {}, {} },
             ngraph::element::i32,
         }
     },
