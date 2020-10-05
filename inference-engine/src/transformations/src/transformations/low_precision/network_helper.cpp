@@ -635,7 +635,7 @@ std::tuple<std::shared_ptr<Node>, std::shared_ptr<Node>> NetworkHelper::decompos
     // TODO: for debuging only - remove later
     newFQ->set_friendly_name(fq->get_friendly_name() + "_original");
 
-    auto originalPreicison = fq->get_input_element_type(0);
+    auto originalPreicison = fq->get_input_element_type(1);
     std::shared_ptr<ngraph::Node> convert2;
     if (updatePrecision) {
         std::shared_ptr<Node> convert;
