@@ -130,6 +130,10 @@ public:
             return signedInterval  ? -127.0 : 0.0;
         } else if (quantizationLevels == 256) {
             return signedInterval ? -128.0 : 0.0;
+        } else if (quantizationLevels == 16384) {
+            return signedInterval ? -8192.0 : 0.0;
+        } else if (quantizationLevels == 16383) {
+            return signedInterval ? -8191.0 : 0.0;
         } else {
             // THROW_TRANSFORMATION_EXCEPTION << "quantization level " << quantizationLevels << " is not supported";
             // FIXME: not completed
@@ -140,6 +144,8 @@ public:
     static float getMax(const size_t quantizationLevels, const bool signedInterval) {
         if ((quantizationLevels == 255) || (quantizationLevels == 256)) {
             return signedInterval ? 127.0 : 255.0;
+        } else if ((quantizationLevels == 16384) || (quantizationLevels == 16383)) {
+            return signedInterval ? 8191.0 : 16383;
         } else {
             // THROW_TRANSFORMATION_EXCEPTION << "quantization level " << quantizationLevels << " is not supported";
             // FIXME: not completed
