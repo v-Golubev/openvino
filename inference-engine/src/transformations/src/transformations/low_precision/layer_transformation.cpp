@@ -238,11 +238,21 @@ LayerTransformation::PrecisionDetails LayerTransformation::getPrecisionDetails(c
 
     if (!hasZeroPoint) {
         if (signedPrecision && (!unsignedPrecision)) {
-            return LayerTransformation::PrecisionDetails(element::i8, hasNegative, hasZeroPoint);
+            if (quantizationDetails.levels == 16384 || quantizationDetails.levels == 16383) {
+                return LayerTransformation::PrecisionDetails(element::i16, hasNegative, hasZeroPoint);
+            }
+            if (quantizationDetails.levels == 256 || quantizationDetails.levels == 255) {
+                return LayerTransformation::PrecisionDetails(element::i8, hasNegative, hasZeroPoint);
+            }
         }
 
         if ((!signedPrecision) && unsignedPrecision) {
-            return LayerTransformation::PrecisionDetails(element::u8, hasNegative, hasZeroPoint);
+            if (quantizationDetails.levels == 16384 || quantizationDetails.levels == 16383) {
+                return LayerTransformation::PrecisionDetails(element::u16, hasNegative, hasZeroPoint);
+            }
+            if (quantizationDetails.levels == 256 || quantizationDetails.levels == 255) {
+                return LayerTransformation::PrecisionDetails(element::u8, hasNegative, hasZeroPoint);
+            }
         }
     }
 
