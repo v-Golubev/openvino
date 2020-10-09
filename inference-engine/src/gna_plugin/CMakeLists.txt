@@ -31,8 +31,24 @@ endif()
 #saving rpath to GNA shared library be used by CI
 log_rpath_from_dir(GNA ${libGNA_LIBRARIES_BASE_PATH})
 
-target_link_libraries(${TARGET_NAME} PRIVATE inference_engine Threads::Threads libGNA)
-target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(${TARGET_NAME}
+        PRIVATE
+            inference_engine
+            inference_engine_transformations
+            inference_engine_lp_transformations
+            ngraph
+            Threads::Threads libGNA
+            ${NGRAPH_LIBRARIES})
+
+target_include_directories(${TARGET_NAME}
+        PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE
+        $<TARGET_PROPERTY:inference_engine_lp_transformations,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:inference_engine_transformations,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:ngraph,INTERFACE_INCLUDE_DIRECTORIES>
+        $<TARGET_PROPERTY:${NGRAPH_LIBRARIES},INTERFACE_INCLUDE_DIRECTORIES>)
+
 target_compile_definitions(${TARGET_NAME}
     PRIVATE
         _NO_MKL_
@@ -50,7 +66,13 @@ target_compile_definitions(${TARGET_NAME}_test_static
             INTEGER_LOW_P
             USE_STATIC_IE)
 target_link_libraries(${TARGET_NAME}_test_static PUBLIC inference_engine_preproc_s inference_engine_lp_transformations libGNA::API)
-target_include_directories(${TARGET_NAME}_test_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(${TARGET_NAME}_test_static
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}
+        PRIVATE
+            $<TARGET_PROPERTY:inference_engine_lp_transformations,INTERFACE_INCLUDE_DIRECTORIES>
+            $<TARGET_PROPERTY:inference_engine_transformations,INTERFACE_INCLUDE_DIRECTORIES>)
+
 set_target_properties(${TARGET_NAME}_test_static PROPERTIES COMPILE_PDB_NAME ${TARGET_NAME}_test_static)
 
 if(WIN32)

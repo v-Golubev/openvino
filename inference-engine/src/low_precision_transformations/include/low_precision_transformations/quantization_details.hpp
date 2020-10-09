@@ -18,7 +18,7 @@ IE_SUPPRESS_DEPRECATED_START
 /**
 * @brief Quantization layer details and basic operations on them.
 */
-class INFERENCE_ENGINE_API_CLASS(QuantizationDetails) {
+class INFERENCE_ENGINE_API_CLASS(QuantizationDetails)    {
 public:
     QuantizationDetails();
     QuantizationDetails(const QuantizationDetails& quantizationDetails);

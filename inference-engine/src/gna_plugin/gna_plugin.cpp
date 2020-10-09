@@ -340,7 +340,15 @@ void GNAPlugin::InitGNADevice() {
 }
 
 void GNAPlugin::LoadNetwork(ICNNNetwork & _network) {
+    int passIdx = 0;
     std::shared_ptr<InferenceEngine::details::CNNNetworkImpl> convertedNetwork;
+    {
+        auto ngraphPasses = make_shared<PassManager>(PassManagerSettings{policy, true},
+                                                     shared_ptr<ICNNNetwork>(&_network, [](ICNNNetwork*){}));
+        ngraphPasses->registerPass<LowPrecisionTransformationsPass>();
+        passIdx = ngraphPasses->run(passIdx);
+    }
+
     if (_network.getFunction()) {
         convertedNetwork = std::make_shared<InferenceEngine::details::CNNNetworkImpl>(_network);
     }
@@ -357,9 +365,11 @@ void GNAPlugin::LoadNetwork(ICNNNetwork & _network) {
     }
 
     // network optimisation phases
-    int passIdx = 0;
     auto run_passes = [&] (const CNNNetPtr& network, bool runBeforeCopy) {
         auto passes = make_shared<PassManager>(PassManagerSettings{policy, runBeforeCopy}, network);
+
+        //ngraphPasses->registerPass<LowPrecisionTransformationsPass>();
+
         passes->registerPass<RemoveConstPass>();
         passes->registerPass<UnrollTIPass>();
         passes->registerPass<RemoveConstPass>();

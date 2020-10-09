@@ -57,6 +57,12 @@ public:
                     THROW_IE_EXCEPTION << "unexpected levels " << levels << " for precision " << precision;
                 }
             }
+            case Precision::I16: {
+                return static_cast<float>(std::numeric_limits<PrecisionTrait<Precision::I16>::value_type>::min());
+            }
+            case Precision::I32: {
+                return static_cast<float>(std::numeric_limits<PrecisionTrait<Precision::I32>::value_type>::min());
+            }
             case Precision::U8: {
                 return static_cast<float>(std::numeric_limits<unsigned char>::lowest());
             }
@@ -76,6 +82,12 @@ public:
         switch (precision) {
             case Precision::I8: {
                 return static_cast<float>(std::numeric_limits<signed char>::max());
+            }
+            case Precision::I16: {
+                return static_cast<float>(std::numeric_limits<PrecisionTrait<Precision::I16>::value_type>::max());
+            }
+            case Precision::I32: {
+                return static_cast<float>(std::numeric_limits<PrecisionTrait<Precision::I32>::value_type>::max());
             }
             case Precision::U8: {
                 return static_cast<float>(std::numeric_limits<unsigned char>::max());

@@ -24,6 +24,11 @@
 #include <legacy/graph_tools.hpp>
 #include <legacy/net_pass.h>
 #include <layers/gna_copy_layer.hpp>
+#include <low_precision_transformations/weightable_layer_transformation.hpp>
+#include <low_precision_transformations/fully_connected.hpp>
+#include "simple_lpt_transform.hpp"
+#include <transformations/low_precision/fake_quantize.hpp>
+#include <transformations/low_precision/mat_mul.hpp>
 
 #include "gna_plugin_log.hpp"
 #include "frontend/quantized_layer_params.hpp"
@@ -1438,6 +1443,35 @@ void FuseMultipleIdentitiesPass::run() {
             getInputTo(alreadyIdentity->outData.front())[l->name] = l;
         }
     }
+}
+
+void LowPrecisionTransformationsPass::run() {
+#ifdef USE_LEGACY_LPT
+    auto params = LayerTransformation::Params(true,  // updatePrecisions
+                                              true,  // quantizeOutputs
+                                              true,  // weightsToConst
+                                              LayerTransformation::QuantizedTensorAlignment::UpdateLevel,  // quantizedTensorAlignmentOnActivations
+                                              LayerTransformation::QuantizedTensorAlignment::None,  // quantizedTensorAlignmentOnWeights
+                                              true,  // roundQuantizedValues
+                                              true,  // updateBiases
+                                              false,  // supportAsymmetricQuantization - no yet
+                                              {Precision::I32},  // precisionsOnActivations
+                                              {Precision::I16});  // precisionsOnwWeights
+
+    LowPrecisionTransformations lpt({}, {}, {});
+    lpt.add<FakeQuantizeTransformation>(params, "fakequantize");
+    lpt.add<FullyConnectedTransformation>(params, "fullyconnected");
+
+    LowPrecisionTransformer transformer(lpt);
+    transformer.transform(*getPassManager()->getNetwork().get());
+#else
+    ngraph::pass::low_precision::LayerTransformation::Params params;
+    SimpleLowPrecisionTransformer transformer;
+    transformer.add<ngraph::pass::low_precision::FakeQuantizeTransformation, ngraph::opset1::FakeQuantize>(params);
+    transformer.add<ngraph::pass::low_precision::MatMulTransformation, ngraph::opset1::MatMul>(params);
+
+    transformer.transform(getPassManager()->getNetwork()->getFunction());
+#endif
 }
 
 int PassManager::run(int index) {

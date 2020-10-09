@@ -30,7 +30,7 @@ public:
     virtual ~IPassManager() = default;
     virtual int &getIntVar(std::string name) = 0;
     virtual const Policy &getPolicy() const = 0;
-    virtual const InferenceEngine::CNNNetPtr &getNetwork() const = 0;
+    virtual InferenceEngine::CNNNetPtr &getNetwork() = 0;
 };
 
 class BasePass : public Pass {
@@ -180,6 +180,11 @@ DECL_PASS(FuseMultipleIdentities);
 */
 DECL_PASS(BroadcastConst);
 
+/**
+* @brief applies certain transformations from LPTransformations library
+*/
+DECL_PASS_BEFORE_COPY(LowPrecisionTransformations);
+
 struct PassManagerSettings {
     Policy policy;
     /// @brief whether to run passes before copy
@@ -208,7 +213,7 @@ public:
     const Policy & getPolicy() const override {
         return settings.policy;
     }
-    const InferenceEngine::CNNNetPtr & getNetwork() const override {
+    InferenceEngine::CNNNetPtr & getNetwork() override {
         return network;
     }
     /**
