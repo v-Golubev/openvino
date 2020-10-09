@@ -1465,7 +1465,13 @@ void LowPrecisionTransformationsPass::run() {
     LowPrecisionTransformer transformer(lpt);
     transformer.transform(*getPassManager()->getNetwork().get());
 #else
-    ngraph::pass::low_precision::LayerTransformation::Params params;
+    ngraph::pass::low_precision::LayerTransformation::Params params = ngraph::pass::low_precision::LayerTransformation::Params(
+        true,  // updatePrecisions
+        ngraph::pass::low_precision::LayerTransformation::QuantizedTensorAlignment::UpdateLevel,  // quantizedTensorAlignmentOnActivations
+        ngraph::pass::low_precision::LayerTransformation::QuantizedTensorAlignment::None,  // quantizedTensorAlignmentOnWeights
+        false,// supportAsymmetricQuantization;
+        { ngraph::element::u16, ngraph::element::i16 },
+        { ngraph::element::i16 });
     SimpleLowPrecisionTransformer transformer;
     transformer.add<ngraph::pass::low_precision::FakeQuantizeTransformation, ngraph::opset1::FakeQuantize>(params);
     transformer.add<ngraph::pass::low_precision::MatMulTransformation, ngraph::opset1::MatMul>(params);
