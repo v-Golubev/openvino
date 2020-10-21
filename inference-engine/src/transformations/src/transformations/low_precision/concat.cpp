@@ -235,6 +235,7 @@ void ConcatTransformation::addDequantizationLayers(
         outputs.emplace(node->get_input_node_shared_ptr(0)->get_friendly_name(), node);
     }
 
+    std::unordered_map<std::string, std::string> renameMap;
     std::unordered_map<std::string, std::shared_ptr<ngraph::Node>> notHandledSubgraphLayers = subgraph.layers;
     while (notHandledSubgraphLayers.size() != 0ul) {
         const auto layerIt = notHandledSubgraphLayers.begin();
@@ -377,13 +378,15 @@ void ConcatTransformation::addDequantizationLayers(
                     if (it != outputs.end()) {
                         const std::string originalName = layer->get_friendly_name();
                         const std::string newName = layer->get_friendly_name() + LayerTransformation::originalLayerPostfix;
-                        layer->set_friendly_name(newName);
+                        renameMap.emplace(originalName, newName);
                         source->set_friendly_name(originalName);
-                        subgraph.layers[layer->get_friendly_name()] = layer;
                     }
                 }
             }
         }
+    }
+    for (auto& elem : renameMap) {
+        subgraph.layers[elem.first]->set_friendly_name(elem.second);
     }
 }
 
