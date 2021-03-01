@@ -22,26 +22,6 @@ namespace ngraph {
 namespace pass {
 namespace low_precision {
 
-QuantizationDetails::QuantizationDetails()
-    : levels(),
-      inputLowValues({}),
-      inputHighValues({}),
-      outputLowValues({}),
-      outputHighValues({}),
-      inputIntervalsCount(0),
-      outputIntervalsCount(0),
-      outputChannelsCount(0) {}
-
-QuantizationDetails::QuantizationDetails(const QuantizationDetails& quantizationDetails)
-    : levels(quantizationDetails.levels),
-      inputLowValues(quantizationDetails.inputLowValues),
-      inputHighValues(quantizationDetails.inputHighValues),
-      outputLowValues(quantizationDetails.outputLowValues),
-      outputHighValues(quantizationDetails.outputHighValues),
-      inputIntervalsCount(quantizationDetails.inputIntervalsCount),
-      outputIntervalsCount(quantizationDetails.outputIntervalsCount),
-      outputChannelsCount(quantizationDetails.outputChannelsCount) {}
-
 QuantizationDetails::QuantizationDetails(const size_t levels, const std::vector<float>& inputLowValues,
                                          const std::vector<float>& inputHighValues,
                                          const std::vector<float>& outputLowValues,

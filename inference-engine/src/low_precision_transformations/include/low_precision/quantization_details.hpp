@@ -20,8 +20,8 @@ namespace low_precision {
 
 class TRANSFORMATIONS_API QuantizationDetails {
 public:
-    QuantizationDetails();
-    QuantizationDetails(const QuantizationDetails& quantizationDetails);
+    QuantizationDetails() = default;
+    QuantizationDetails(const QuantizationDetails& quantizationDetails) = default;
     QuantizationDetails(
             const size_t levels,
             const std::vector<float>& inputLowValues,
@@ -31,6 +31,8 @@ public:
             const size_t inputIntervalsCount,
             const size_t outputIntervalsCount,
             const size_t outputChannelsCount);
+
+    QuantizationDetails& operator=(const QuantizationDetails& quantizationDetails) = delete;
 
     static bool outputLayoutIsSupported(std::shared_ptr<opset1::FakeQuantize> quantize);
 
