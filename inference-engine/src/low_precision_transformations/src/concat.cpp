@@ -40,10 +40,6 @@ ConcatTransformation::ConcatTransformation(const Params& params) : LayerTransfor
     this->register_matcher(m, callback);
 }
 
-void ConcatTransformation::registerMatcherIn(GraphRewrite& pass, TransformationContext& context) const {
-    addSingleNodePattern<opset1::Concat>(pass, context);
-}
-
 bool ConcatTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher &m) const {
     std::shared_ptr<ngraph::opset1::Concat> concat = ngraph::as_type_ptr<ngraph::opset1::Concat>(m.get_match_root());
     if (!canBeTransformed(context, concat)) {

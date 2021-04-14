@@ -37,23 +37,6 @@ FuseConvertTransformation::FuseConvertTransformation(const Params& params) : Lay
     this->register_matcher(matcher, callback);
 }
 
-void FuseConvertTransformation::registerMatcherIn(GraphRewrite &pass, TransformationContext &context) const {
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Multiply>({ make_op_label<opset1::Convert>(), make_op_label<opset1::Constant>() }));
-
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Subtract>({ make_op_label<opset1::Convert>(), make_op_label<opset1::Constant>() }));
-
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Add>({ make_op_label<opset1::Convert>(), make_op_label<opset1::Constant>() }));
-}
-
 std::shared_ptr<Node> removeConvertIfPossibleForSubtract(
     const std::shared_ptr<opset1::Convert>& convert,
     const std::shared_ptr<opset1::Subtract>& subtract) {
