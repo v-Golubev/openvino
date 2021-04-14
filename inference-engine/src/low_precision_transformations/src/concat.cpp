@@ -29,7 +29,7 @@ ConcatTransformation::ConcatTransformation(const Params& params) : LayerTransfor
 
     ngraph::graph_rewrite_callback callback = [this](pattern::Matcher& m) {
         auto op = m.get_match_root();
-        if (!op || m_transformation_callback(op)) {
+        if (!op || transformation_callback(op)) {
             return false;
         }
 
@@ -193,8 +193,8 @@ bool ConcatTransformation::transform(TransformationContext& context, ngraph::pat
     }
 
     // TODO: debug only
-    const auto precision1 = layerDequantizations[0].data.get_element_type();
-    const auto precision2 = layerDequantizations[1].data.get_element_type();
+    // const auto precision1 = layerDequantizations[0].data.get_element_type();
+    // const auto precision2 = layerDequantizations[1].data.get_element_type();
 
     auto newConcat = std::make_shared<opset1::Concat>(OutputVector{ layerDequantizations[0].data, layerDequantizations[1].data }, 1ul);
     replace_node(concat, newConcat);

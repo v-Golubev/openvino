@@ -19,7 +19,7 @@ using namespace ngraph::pass::low_precision;
 InterpolateTransformation::InterpolateTransformation(const Params& params) : LayerTransformation(params) {
     ngraph::graph_rewrite_callback callback = [this](pattern::Matcher& m) {
         auto op = m.get_match_root();
-        if (m_transformation_callback(op)) {
+        if (!op || transformation_callback(op)) {
             return false;
         }
         return transform(*context, m);

@@ -62,7 +62,7 @@ NGRAPH_RTTI_DEFINITION(ngraph::pass::low_precision::LowPrecision, "LowPrecision"
 
 ngraph::pass::low_precision::LowPrecision::LowPrecision(
     const std::vector<OperationPrecisionRestriction>& restrictions,
-    const LayerTransformation::Params params) : restrictions(restrictions), params(params){
+    const LayerTransformation::Params params) : restrictions(restrictions), params(params) {
 }
 
 bool ngraph::pass::low_precision::LowPrecision::run_on_function(std::shared_ptr<ngraph::Function> f) {
