@@ -103,10 +103,6 @@ AddTransformation::AddTransformation(const Params& params) : EltwiseBaseTransfor
     this->register_matcher(m, callback);
 }
 
-void AddTransformation::registerMatcherIn(GraphRewrite &pass, TransformationContext &context) const {
-    addSingleNodePattern<opset1::Add>(pass, context);
-}
-
 bool AddTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher &m) const {
     std::shared_ptr<opset1::Add> op = as_type_ptr<opset1::Add>(m.get_match_root());
     if ((op == nullptr) || (!canBeTransformed(context, op))) {

@@ -27,45 +27,28 @@ InterpolateTransformation::InterpolateTransformation(const Params& params) : Lay
 
     this->register_matcher(
         std::make_shared<ngraph::pattern::Matcher>(
-            make_op_pattern<opset1::Interpolate>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>() }),
+            pattern::wrap_type<opset1::Interpolate>({ pattern::wrap_type<opset1::Multiply>(), pattern::wrap_type<opset1::Constant>() }),
             "InterpolateTransformation"),
         callback);
 
     this->register_matcher(
         std::make_shared<ngraph::pattern::Matcher>(
-            make_op_pattern<opset4::Interpolate>({
-                make_op_label<opset1::Multiply>(),
-                make_op_label<opset1::Constant>(),
-                make_op_label<opset1::Constant>(),
-                make_op_label<opset1::Constant>() }),
+            pattern::wrap_type<opset4::Interpolate>({
+                pattern::wrap_type<opset1::Multiply>(),
+                pattern::wrap_type<opset1::Constant>(),
+                pattern::wrap_type<opset1::Constant>(),
+                pattern::wrap_type<opset1::Constant>() }),
             "InterpolateTransformation"),
         callback);
 
     this->register_matcher(
         std::make_shared<ngraph::pattern::Matcher>(
-            make_op_pattern<opset4::Interpolate>({
-                make_op_label<opset1::Multiply>(),
-                make_op_label<opset1::Constant>(),
-                make_op_label<opset1::Constant>() }),
+            pattern::wrap_type<opset4::Interpolate>({
+                pattern::wrap_type<opset1::Multiply>(),
+                pattern::wrap_type<opset1::Constant>(),
+                pattern::wrap_type<opset1::Constant>() }),
             "InterpolateTransformation"),
         callback);
-}
-
-void InterpolateTransformation::registerMatcherIn(GraphRewrite& pass, TransformationContext& context) const {
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Interpolate>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>() }));
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset4::Interpolate>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>(),
-            make_op_label<opset1::Constant>(), make_op_label<opset1::Constant>() }));
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset4::Interpolate>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>(),
-            make_op_label<opset1::Constant>() }));
 }
 
 bool InterpolateTransformation::transform(TransformationContext &context, ngraph::pattern::Matcher &m) const {

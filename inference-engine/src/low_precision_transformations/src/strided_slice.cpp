@@ -73,15 +73,15 @@ std::shared_ptr<Node> stridedSliceDeqConstant(
 
 StridedSliceTransformation::StridedSliceTransformation(const Params& params) : LayerTransformation(params) {}
 
-void StridedSliceTransformation::registerMatcherIn(GraphRewrite& pass, TransformationContext& context) const {
-    addPattern(pass,
-        context,
-        make_op_pattern<opset1::StridedSlice>({
-            make_op_label<opset1::Multiply>(),
-            make_op_label<opset1::Constant>(),
-            make_op_label<opset1::Constant>(),
-            make_op_label<opset1::Constant>() }));
-}
+//void StridedSliceTransformation::registerMatcherIn(GraphRewrite& pass, TransformationContext& context) const {
+//    addPattern(pass,
+//        context,
+//        make_op_pattern<opset1::StridedSlice>({
+//            make_op_label<opset1::Multiply>(),
+//            make_op_label<opset1::Constant>(),
+//            make_op_label<opset1::Constant>(),
+//            make_op_label<opset1::Constant>() }));
+//}
 
 bool StridedSliceTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher& m) const {
     if (!StridedSliceTransformation::canBeTransformed(context, m.get_match_root())) {

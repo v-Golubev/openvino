@@ -16,7 +16,6 @@ namespace low_precision {
 class TRANSFORMATIONS_API VariadicSplitTransformation : public SplitTransformation {
 public:
     VariadicSplitTransformation(const Params& params);
-    void registerMatcherIn(GraphRewrite& pass, TransformationContext& context) const override;
 };
 } // namespace low_precision
 } // namespace pass

@@ -37,18 +37,6 @@ ConvolutionTransformation::ConvolutionTransformation(const Params& params) : Wei
     this->register_matcher(m, callback);
 }
 
-void ConvolutionTransformation::registerMatcherIn(GraphRewrite &pass, TransformationContext &context) const {
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Convolution>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Multiply>() }));
-
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Convolution>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::FakeQuantize>() }));
-}
-
 bool ConvolutionTransformation::isQuantized(std::shared_ptr<Node> layer) const noexcept {
     return WeightableLayerTransformation::isQuantized(layer, false);
 }

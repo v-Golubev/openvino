@@ -362,43 +362,43 @@ void LowPrecisionTransformer::transform(std::shared_ptr<Function> network) {
         pass.run_on_function(network);
     }
 
-    {
-        // Branch specific transformations
-        GraphRewrite pass;
-        registerAllMatchers(transformations.branchSpecificTransformations, pass, context);
-        pass.run_on_function(network);
-    }
+    //{
+    //    // Branch specific transformations
+    //    GraphRewrite pass;
+    //    registerAllMatchers(transformations.branchSpecificTransformations, pass, context);
+    //    pass.run_on_function(network);
+    //}
 
-    {
-        // Step #1: FakeQuantize decomposition transformation execution
-        GraphRewrite pass;
-        registerAllMatchers(transformations.decompositionTransformations, pass, context);
-        pass.run_on_function(network);
-    }
+    //{
+    //    // Step #1: FakeQuantize decomposition transformation execution
+    //    GraphRewrite pass;
+    //    registerAllMatchers(transformations.decompositionTransformations, pass, context);
+    //    pass.run_on_function(network);
+    //}
 
-    {
-        // Step #2: layer transformations execution
-        GraphRewrite pass;
-        registerAllMatchers(transformations.transformations, pass, context);
-        pass.run_on_function(network);
-    }
+    //{
+    //    // Step #2: layer transformations execution
+    //    GraphRewrite pass;
+    //    registerAllMatchers(transformations.transformations, pass, context);
+    //    pass.run_on_function(network);
+    //}
 
-    {
-        // Step #3: cleanup transformations execution
-        GraphRewrite pass;
-        registerAllMatchers(transformations.cleanupTransformations, pass, context);
-        pass.run_on_function(network);
-    }
+    //{
+    //    // Step #3: cleanup transformations execution
+    //    GraphRewrite pass;
+    //    registerAllMatchers(transformations.cleanupTransformations, pass, context);
+    //    pass.run_on_function(network);
+    //}
 
-    {
-        // Step #4: standalone cleanup transformations execution
+    //{
+    //    // Step #4: standalone cleanup transformations execution
 
-        for (auto it : transformations.standaloneCleanupTransformations) {
-            GraphRewrite pass;
-            it.transformation->registerMatcherIn(pass, context);
-            pass.run_on_function(network);
-        }
-    }
+    //    for (auto it : transformations.standaloneCleanupTransformations) {
+    //        GraphRewrite pass;
+    //        it.transformation->registerMatcherIn(pass, context);
+    //        pass.run_on_function(network);
+    //    }
+    //}
 
     network->validate_nodes_and_infer_types();
 }
@@ -468,20 +468,20 @@ void LowPrecisionTransformer::registerAllMatchers(
     std::map<std::string, LayerTransformationPtr> transformations,
     GraphRewrite& pass,
     TransformationContext& context) {
-    for (auto it : transformations) {
-        it.second->registerMatcherIn(pass, context);
-    }
+    //for (auto it : transformations) {
+    //    it.second->registerMatcherIn(pass, context);
+    //}
 }
 
 void LowPrecisionTransformer::registerAllMatchers(
     std::map<std::string, std::vector<std::pair<std::string, LayerTransformationPtr>>> transformations,
     GraphRewrite& pass,
     TransformationContext& context) {
-    for (auto it : transformations) {
+    /*for (auto it : transformations) {
         for (auto transform : it.second) {
             transform.second->registerMatcherIn(pass, context);
         }
-    }
+    }*/
 }
 
 } // namespace low_precision
