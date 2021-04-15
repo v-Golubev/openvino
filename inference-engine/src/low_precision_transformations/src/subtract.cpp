@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include <ngraph/pattern/op/wrap_type.hpp>
+
 #include "low_precision/common/ie_lpt_exception.hpp"
 #include "low_precision/network_helper.hpp"
 
@@ -21,7 +23,7 @@ namespace low_precision {
 SubtractTransformation::SubtractTransformation(const Params& params) : LayerTransformation(params) {
     ngraph::graph_rewrite_callback callback = [this](pattern::Matcher& m) {
         auto op = m.get_match_root();
-        if (!op || m_transformation_callback(op)) {
+        if (!op || transformation_callback(op)) {
             return false;
         }
         return transform(*context, m);
@@ -29,27 +31,15 @@ SubtractTransformation::SubtractTransformation(const Params& params) : LayerTran
 
     this->register_matcher(
         std::make_shared<ngraph::pattern::Matcher>(
-            make_op_pattern<opset1::Subtract>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>() }),
+            pattern::wrap_type<opset1::Subtract>({ pattern::wrap_type<opset1::Multiply>(), pattern::wrap_type<opset1::Constant>() }),
             "SubtractTransformation"),
         callback);
 
     this->register_matcher(
         std::make_shared<ngraph::pattern::Matcher>(
-            make_op_pattern<opset1::Subtract>({ make_op_label<opset1::Convert>(), make_op_label<opset1::Constant>() }),
+            pattern::wrap_type<opset1::Subtract>({ pattern::wrap_type<opset1::Convert>(), pattern::wrap_type<opset1::Constant>() }),
             "SubtractTransformation"),
         callback);
-}
-
-void SubtractTransformation::registerMatcherIn(GraphRewrite &pass, TransformationContext &context) const {
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Subtract>({ make_op_label<opset1::Multiply>(), make_op_label<opset1::Constant>() }));
-
-    addPattern(
-        pass,
-        context,
-        make_op_pattern<opset1::Subtract>({ make_op_label<opset1::Convert>(), make_op_label<opset1::Constant>() }));
 }
 
 bool SubtractTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher &m) const {
