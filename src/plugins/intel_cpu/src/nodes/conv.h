@@ -140,6 +140,9 @@ private:
     MKLDNNMemoryPtr inputZeroPointsMemPtr;
     MKLDNNMemoryPtr weightsZeroPointsMemPtr;
     MKLDNNMemoryPtr outputCompensationMemPtr;
+
+    mkldnn::memory::data_type outputDataType;
+    InferenceEngine::Precision sumPrc = InferenceEngine::Precision::UNSPECIFIED;
 };
 
 }   // namespace intel_cpu

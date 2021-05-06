@@ -291,6 +291,9 @@ bool MKLDNNConvolutionNode::canBeExecutedInInt8() const {
 }
 
 InferenceEngine::Precision MKLDNNConvolutionNode::fusedEltwisePrecision(const MKLDNNNodePtr& fusingNode) const {
+    if (sumPrc != Precision::UNSPECIFIED)
+        return sumPrc;
+
     InferenceEngine::Precision eltwisePrecision;
 
     int fusingPort = fusingNode->getFusingPort();
@@ -338,7 +341,7 @@ void MKLDNNConvolutionNode::getSupportedDescriptors() {
     if (!inputZeroPoints.empty())
         inputDataType = memory::data_type::u8;
 
-    auto outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(getOriginalOutputPrecisionAtPort(0));
+    outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(getOriginalOutputPrecisionAtPort(0));
     eltwisePrecision = MKLDNNExtensionUtils::DataTypeToIEPrecision(outputDataType);
     if (!fusedWith.empty()) {
         outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(fusedWith[fusedWith.size() - 1]->getOriginalOutputPrecisionAtPort(0));
@@ -519,7 +522,8 @@ void MKLDNNConvolutionNode::setPostOps(mkldnn::primitive_attr &attr, const Vecto
         return binaryShape;
     };
 
-    for (auto &node : fusedWith) {
+    for (int i = 0; i < fusedWith.size(); i++) {
+        auto& node = fusedWith[i];
         if (node->getType() == Split || node->getType() == Concatenation)
             continue;
 
@@ -541,11 +545,82 @@ void MKLDNNConvolutionNode::setPostOps(mkldnn::primitive_attr &attr, const Vecto
 
         if (auto* fakeQuantizeNode = dynamic_cast<MKLDNNFakeQuantizeNode *>(node.get())) {
             if (useLegacyPostOps) {
+                if (i == 0) {
+                    bool hasSubsequentSum = false;
+                    bool hasSubsequentFQ = false;
+                    for (int j = i + 1; j < fusedWith.size(); j++) {
+                        auto &nextNode = fusedWith[j];
+
+                        auto *nextEltwiseNode = dynamic_cast<MKLDNNEltwiseNode *>(nextNode.get());
+                        if (nextEltwiseNode && nextEltwiseNode->isSpecialConvolutionAddFusing()) {
+                            hasSubsequentSum = true;
+                        }
+
+                        auto *nextQuantizeNode = dynamic_cast<MKLDNNFakeQuantizeNode *>(nextNode.get());
+                        if (nextQuantizeNode) {
+                            hasSubsequentFQ = true;
+                        }
+                    }
+
+                    if (fakeQuantizeNode->getAlgorithm() == FQCommon &&
+                        hasSubsequentSum &&
+                        hasSubsequentFQ) {
+                        std::vector<float> fqScale = fakeQuantizeNode->getFQScales();
+                        if (!fqScale.empty()) {
+                            size_t size = fqScale.size();
+                            size_t OC = getOutputShapeAtPort(0).getStaticDims()[1];
+                            if (size == 1) {
+                                fqScale.resize(OC);
+                                for (size_t k = 0; k < OC; k++)
+                                    fqScale[k] = fqScale[0];
+                            }
+
+                            attr.set_output_scales(1 << 1, fqScale);
+
+                            continue;
+                        }
+                    }
+                }
+
+                if (node == fusedWith[fusedWith.size() - 1] &&
+                    outputDataType == memory::data_type::u8 &&
+                    fakeQuantizeNode->getAlgorithm() == FQQuantization
+                    /*levels == 256*/) {
+                    auto &cl = fakeQuantizeNode->getCropLow();
+                    auto &isc = fakeQuantizeNode->getInputScale();
+                    auto &ish = fakeQuantizeNode->getInputShift();
+
+                    if (std::all_of(cl.cbegin(), cl.cend(), [](float val) { return val == 0.0f; }) &&
+                        std::all_of(isc.cbegin(), isc.cend(), [&](float val) { return val == isc[0]; }) &&
+                        std::all_of(ish.cbegin(), ish.cend(), [&](float val) { return val == ish[0]; })) {
+                        ops.append_eltwise(1.0f, mkldnn::algorithm::eltwise_linear, isc[0], ish[0]);
+
+                        continue;
+                    }
+//                    } else if (std::all_of(cl.cbegin(), cl.cend(), [](float val) { return val == 0.0f; })) {
+//                        std::vector<float> new_isc = isc;
+//                        new_isc.resize(rnd_up(isc.size(), 16), 0);
+//
+//                        std::vector<float> new_ish = ish;
+//                        new_ish.resize(rnd_up(ish.size(), 16), 0);
+//
+//                        fakeQuantizeNode->setInputScale(new_isc);
+//                        fakeQuantizeNode->setInputShift(new_ish);
+//
+//                        ops.append_depthwise(mkldnn::algorithm::depthwise_scale_shift,
+//                                             &fakeQuantizeNode->getInputScale()[0],
+//                                             &fakeQuantizeNode->getInputShift()[0]);
+//
+//                        continue;
+//                    }
+                }
+
                 fakeQuantizeNode->appendPostOps(ops, dims, postOpsArgs);
+
+                continue;
             } else {
                 fakeQuantizeNode->appendBinPostOps(ops, getBinPostOpShape(), postOpsArgs);
             }
-            continue;
         }
 
         auto* convolutionNode = dynamic_cast<MKLDNNConvolutionNode *>(node.get());
