@@ -69,7 +69,7 @@ const std::vector<LayerTestsDefinitions::ConvolutionBackpropDataTransformationPa
         {256ul, ngraph::Shape{1, 1, 1, 1}, { 5.f }, { 6.f }, { 5.f }, { 6.f }},
         {{ngraph::element::f32}, { {12.f}, ngraph::element::f32, {}, false }, { {4.f}, ngraph::element::f32, {}, false }},
         "",
-                ""
+        ""
     },
     // with incorrect zero point on weights
     {
@@ -88,7 +88,7 @@ const std::vector<ngraph::Shape> outputShapes = {
     { 16, 16 }
 };
 
-INSTANTIATE_TEST_CASE_P(DISABLED_smoke_LPT, ConvolutionBackpropDataTransformation,
+INSTANTIATE_TEST_CASE_P(smoke_LPT, ConvolutionBackpropDataTransformation,
     ::testing::Combine(
         ::testing::ValuesIn(netPrecisions),
         ::testing::ValuesIn(inputShapes),
