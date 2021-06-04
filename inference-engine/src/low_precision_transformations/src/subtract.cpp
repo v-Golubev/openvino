@@ -32,6 +32,10 @@ void SubtractTransformation::registerMatcherIn(GraphRewrite &pass, Transformatio
 
 bool SubtractTransformation::transform(TransformationContext& context, ngraph::pattern::Matcher &m) const {
     std::shared_ptr<opset1::Subtract> subtract = as_type_ptr<opset1::Subtract>(m.get_match_root());
+    if (!subtract) {
+        return false;
+    }
+    
     if (!canBeTransformed(context, subtract)) {
         return false;
     }
