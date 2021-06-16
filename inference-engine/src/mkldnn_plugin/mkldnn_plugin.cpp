@@ -115,6 +115,32 @@ Engine::~Engine() {
 static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
     auto nGraphFunc = clonedNetwork.getFunction();
 
+    std::map<std::string, ngraph::Shape> inputShapes;
+    try {
+        for (auto& input : nGraphFunc->get_parameters()) {
+            const auto originalShape = input->get_shape();
+            inputShapes[input->get_friendly_name()] = originalShape;
+
+            ngraph::PartialShape dynamicShape(originalShape);
+            for (auto& elem : dynamicShape) {
+                elem = ngraph::Dimension::dynamic();
+            }
+
+            const bool setStaticChannels = originalShape.size() == 4ul || originalShape.size() == 5ul;
+            if (setStaticChannels) {
+                dynamicShape[1] = originalShape[1];
+            }
+
+            input->set_partial_shape(dynamicShape);
+        }
+
+        nGraphFunc->validate_nodes_and_infer_types();
+        //ngraph::pass::VisualizeTree("C://models//test.dynamic").run_on_function(nGraphFunc);
+        //clonedNetwork.serialize("C://models//test_dynamic.xml", "C://models//test_dynamic.bin");
+    } catch (...) {
+        throw std::runtime_error("CONVERT TO DYNAMIC SHAPE ERROR");
+    }
+
     ngraph::pass::Manager manager;
     manager.register_pass<ngraph::pass::InitNodeInfo>();
 
@@ -336,6 +362,19 @@ static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
                     LayerTransformation::Params(params).setSupportAsymmetricQuantization(false)));
 
         transformer.transform(nGraphFunc);
+    }
+
+    try {
+        for (auto& input : nGraphFunc->get_parameters()) {
+            ngraph::PartialShape originalShape = inputShapes[input->get_friendly_name()];
+            input->set_partial_shape(originalShape);
+        }
+
+        nGraphFunc->validate_nodes_and_infer_types();
+        //ngraph::pass::VisualizeTree("C://models//test.static").run_on_function(nGraphFunc);
+        //clonedNetwork.serialize("C://models//test_static.xml", "C://models//test_static.bin");
+    } catch (...) {
+        throw std::runtime_error("CONVERT TO STATIC SHAPE ERROR");
     }
 
     ngraph::pass::Manager postLPTPassManager;
