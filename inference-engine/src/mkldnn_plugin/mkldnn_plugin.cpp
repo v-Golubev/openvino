@@ -120,6 +120,26 @@ Engine::~Engine() {
 static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
     auto nGraphFunc = clonedNetwork.getFunction();
 
+    std::map<std::string, ngraph::Shape> inputShapes;
+    try {
+        for (auto& input : nGraphFunc->get_parameters()) {
+            const auto originalShape = input->get_shape();
+            inputShapes[input->get_friendly_name()] = originalShape;
+
+            ngraph::PartialShape dynamicShape(originalShape);
+
+            for (auto& elem : dynamicShape) {
+                elem = ngraph::Dimension::dynamic();
+            }
+
+            input->set_partial_shape(dynamicShape);
+        }
+
+        nGraphFunc->validate_nodes_and_infer_types();
+    } catch (...) {
+        throw std::runtime_error("CONVERT TO DYNAMIC SHAPE ERROR");
+    }
+
     ngraph::pass::Manager manager;
     manager.register_pass<ngraph::pass::InitNodeInfo>();
 
@@ -367,6 +387,17 @@ static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
             return MultiplyToGroupConvolutionTransformation::isDynamicOrScalar(node);
         });
         lptManager.run_passes(nGraphFunc);
+    }
+
+    try {
+        for (auto& input : nGraphFunc->get_parameters()) {
+            ngraph::PartialShape originalShape = inputShapes[input->get_friendly_name()];
+            input->set_partial_shape(originalShape);
+        }
+
+        nGraphFunc->validate_nodes_and_infer_types();
+    } catch (...) {
+        throw std::runtime_error("CONVERT TO STATIC SHAPE ERROR");
     }
 
     ngraph::pass::Manager postLPTPassManager;

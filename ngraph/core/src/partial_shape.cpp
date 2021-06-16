@@ -50,6 +50,7 @@ bool ngraph::PartialShape::is_static() const
 {
     ShapeType shape_type = m_shape_type;
 
+    // issue doesn't reproduce if next line commented
     if (m_shape_type == ShapeType::SHAPE_IS_UNKNOWN || m_shape_type == ShapeType::SHAPE_IS_UPDATED)
     {
         shape_type =
