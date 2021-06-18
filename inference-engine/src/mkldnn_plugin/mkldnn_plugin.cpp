@@ -98,6 +98,12 @@
 # endif
 #endif
 
+#include "transformations/serialize.hpp"
+
+#include <sys/types.h>
+#include <unistd.h>
+
+
 using namespace MKLDNNPlugin;
 using namespace InferenceEngine;
 
@@ -336,6 +342,13 @@ static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
                     LayerTransformation::Params(params).setSupportAsymmetricQuantization(false)));
 
         transformer.transform(nGraphFunc);
+        {
+            const auto processId = getpid();
+            ngraph::pass::Serialize serializer(
+                "/localdisk/vgolubev/temp/cpu.transformed." + std::to_string(processId) + ".xml",
+                "/localdisk/vgolubev/temp/cpu.transformed." + std::to_string(processId) + ".bin");
+            serializer.run_on_function(nGraphFunc);
+        }
     }
 
     ngraph::pass::Manager postLPTPassManager;
