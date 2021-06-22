@@ -32,8 +32,7 @@ bool UnsqueezeTransformation::transform(TransformationContext& context, ngraph::
     auto unsqueezeOnConstant = [](const std::shared_ptr<ngraph::Node>& unsqueeze,
                                 const std::shared_ptr<ngraph::opset1::Constant>& dequantizationOpConstant,
                                 const ngraph::PartialShape& inputShape) {
-        const size_t inputRankValue = inputShape.rank().get_length();
-        if (dequantizationOpConstant->get_shape().size() == inputRankValue) {
+        if (dequantizationOpConstant->get_output_partial_shape(0) == inputShape) {
             return as_type_ptr<opset1::Constant>(fold<opset1::Unsqueeze>(dequantizationOpConstant, unsqueeze->get_input_node_shared_ptr(1)));
         }
         return dequantizationOpConstant;
