@@ -11,6 +11,7 @@
 
 #include <transformations_visibility.hpp>
 
+#include <ngraph/op/convert.hpp>
 #include "ngraph/op/op.hpp"
 
 namespace ngraph {
@@ -161,6 +162,7 @@ public:
     }
 
     void validate_and_infer_types() override;
+    bool evaluate(const HostTensorVector& outputs, const HostTensorVector& inputs) const override;
 
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
 
@@ -169,6 +171,53 @@ private:
         validate_and_infer_types();
     }
 };
+
+template <typename BaseOp>
+bool TypeRelaxed<BaseOp>::evaluate(const HostTensorVector& outputs, const HostTensorVector& inputs) const {
+    auto convert = std::make_shared<ngraph::op::v0::Convert>();
+
+    HostTensorVector casted_inputs(inputs.size());
+    for (size_t i = 0; i < BaseOp::get_input_size(); ++i) {
+        const auto expected_input_type = BaseOp::get_input_element_type(i);
+
+        if (inputs[i]->get_element_type() == expected_input_type) {
+            casted_inputs[i] = inputs[i];
+        } else {
+            convert->set_destination_type(expected_input_type);
+
+            const auto casted_input = std::make_shared<HostTensor>(expected_input_type, inputs[i]->get_shape());
+            if (!convert->evaluate({ casted_input }, { inputs[i] })) {
+                return false;
+            }
+            casted_inputs[i] = casted_input;
+        }
+    }
+
+    HostTensorVector original_outputs(outputs.size());
+    for (size_t i = 0; i < BaseOp::get_output_size(); ++i) {
+        original_outputs[i] = std::make_shared<HostTensor>(BaseOp::get_output_element_type(i), this->shared_from_this()->get_output_shape(i));
+    }
+
+    //BaseOp::evaluate(original_outputs, casted_inputs);
+    if (!BaseOp::evaluate(outputs, casted_inputs)) {
+        return false;
+    }
+
+    //for (size_t i = 0; i < BaseOp::get_output_size(); ++i) {
+    //    const auto expected_output_type = BaseOp::get_output_element_type(i);
+
+    //    if (original_outputs[i]->get_element_type() == expected_output_type) {
+    //        //outputs[i] = original_outputs[i];
+    //    } else {
+    //        convert->set_destination_type(expected_output_type);
+
+    //        const auto casted_output = std::make_shared<HostTensor>(expected_output_type, original_outputs[i]->get_shape());
+    //        convert->evaluate({ casted_output }, { original_outputs[i] });
+    //        //outputs[i] = casted_output;
+    //    }
+    //}
+    return true;
+}
 
 template <typename BaseOp>
 void TypeRelaxed<BaseOp>::validate_and_infer_types() {
