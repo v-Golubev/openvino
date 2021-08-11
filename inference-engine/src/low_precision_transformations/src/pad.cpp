@@ -41,11 +41,42 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     }
 
     const auto pad = as_type_ptr<opset1::Pad>(NetworkHelper::separateInStandaloneBranch(m.get_match_root()));
+    const auto padMode = pad->get_pad_mode();
     auto dequantization = NetworkHelper::getDequantization(pad);
+
+    if (padMode == op::PadMode::CONSTANT) {
+        const auto padsBegin = pad->get_pads_begin();
+        const auto padsEnd = pad->get_pads_end();
+        const auto inputPShape = pad->get_input_partial_shape(0);
+
+        auto bcastConstant = [&](const std::shared_ptr<opset1::Constant>& constant) {
+            size_t padIdx;
+            for (size_t i = 0; i < padsBegin.size(); ++i) {
+                if (padsBegin[i] != 0 || padsEnd[i] != 0) {
+                    padIdx = i;
+                    break;
+                }
+            }
+
+            assert(inputPShape[padIdx].is_static());
+            assert(inputPShape.rank().is_static());
+            auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
+            bcastedShape[padIdx] = inputPShape[padIdx].get_length();
+
+            const auto bCastConst = opset1::Constant::create(element::i32, Shape{ bcastedShape.size() }, bcastedShape);
+            return as_type_ptr<opset1::Constant>(fold<opset1::Broadcast>(constant, bCastConst));
+        };
+
+        if (dequantization.subtract && shape_size(dequantization.subtractConstant->get_shape()) == 1ul) {
+            const auto broadcastedConstant = bcastConstant(dequantization.subtractConstant);
+            replace_node(dequantization.subtractConstant, broadcastedConstant);
+            dequantization.subtractConstant = broadcastedConstant;
+        }
+    }
 
     auto foldConstantIfNecessary = [&pad](const std::shared_ptr<opset1::Constant>& constant) {
         const auto constantShape = constant->get_shape();
-        if (ngraph::shape_size(constantShape) == 1ul) {
+        if (shape_size(constantShape) == 1ul) {
             return NetworkHelper::toScalar(constant);
         }
 
@@ -116,9 +147,71 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
     }
 
     const auto mode = pad->get_pad_mode();
-    // PadTransformation with "CONSTANT" requirements
     if (mode == op::PadMode::CONSTANT) {
-        if (dequantization.subtract) {
+        auto padAndDqByTheSameDimension = [&](const std::shared_ptr<opset1::Constant>& deqConst) {
+            const auto padsBegin = pad->get_pads_begin();
+            const auto padsEnd = pad->get_pads_end();
+
+            int beginNonZeroIdx = -1;
+            for (size_t i = 0; i < padsBegin.size(); ++i) {
+                const bool padDimensionNotUnique = (beginNonZeroIdx != -1) && (padsBegin[i] != 0);
+                if (padDimensionNotUnique) {
+                    return false;
+                }
+
+                if (padsBegin[i] != 0) {
+                    beginNonZeroIdx = i;
+                }
+            }
+
+            int endNonZeroIdx = -1;
+            for (size_t i = 0; i < padsEnd.size(); ++i) {
+                const bool padDimensionNotUnique = (endNonZeroIdx != -1) && (padsEnd[i] != 0);
+                if (padDimensionNotUnique) {
+                    return false;
+                }
+
+                if (padsEnd[i] != 0) {
+                    endNonZeroIdx = i;
+                }
+            }
+
+            if ((beginNonZeroIdx != endNonZeroIdx) && (beginNonZeroIdx != -1) && (endNonZeroIdx != -1)) {
+                return false;
+            }
+
+            const auto padInputPShape = pad->get_input_partial_shape(0);
+            const auto padInputRank = padInputPShape.rank();
+            if (padInputRank.is_dynamic()) {
+                return false;
+            }
+
+
+            const size_t inputRankValue = padInputRank.get_length();
+            auto deqShape = deqConst->get_shape();
+            if (shape_size(deqShape) > 1ul) {
+                while (deqShape.size() < inputRankValue) {
+                    deqShape.insert(deqShape.begin(), 1ul);
+                }
+
+                const auto paddingDimension = beginNonZeroIdx != -1 ? beginNonZeroIdx : endNonZeroIdx;
+                if (padInputPShape[paddingDimension].is_dynamic()) {
+                    return false;
+                }
+
+                for (size_t i = 0; i < deqShape.size(); ++i) {
+                    const bool deqAndPadDimensionsMismatched = (deqShape[i] > 1ul) && (i != paddingDimension);
+                    if (deqAndPadDimensionsMismatched) {
+                        return false;
+                    }
+                }
+            }
+        };
+
+        // we can handle only two cases with subtract:
+        // 1) pad by unique dimension and subtract by the same dimension
+        // 2) pad by unique dimension and per-tensor dequantization
+        if (dequantization.subtract && !padAndDqByTheSameDimension(dequantization.subtractConstant)) {
             return false;
         } else {
             // non zero pad value isn't supported
@@ -132,7 +225,7 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
 
     if (mode == op::PadMode::REFLECT) {
         auto deqShape = dequantization.multiplyConstant->get_shape();
-        if (ngraph::shape_size(deqShape) == 1ul) {
+        if (shape_size(deqShape) == 1ul) {
             return true;
         } else {
             const auto padInputRank = pad->get_input_partial_shape(0).rank();
@@ -141,8 +234,7 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
             }
 
             const size_t inputRankValue = padInputRank.get_length();
-            // case when batch unspecified
-            if (deqShape.size() + 1ul == inputRankValue) {
+            while (deqShape.size() < inputRankValue) {
                 deqShape.insert(deqShape.begin(), 1ul);
             }
 
