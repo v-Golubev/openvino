@@ -41,32 +41,31 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     }
 
     const auto pad = as_type_ptr<opset1::Pad>(NetworkHelper::separateInStandaloneBranch(m.get_match_root()));
+    const auto inputPShape = pad->get_input_partial_shape(0);
+    const auto padsBegin = pad->get_pads_begin();
+    const auto padsEnd = pad->get_pads_end();
     const auto padMode = pad->get_pad_mode();
     auto dequantization = NetworkHelper::getDequantization(pad);
 
-    if (padMode == op::PadMode::CONSTANT) {
-        const auto padsBegin = pad->get_pads_begin();
-        const auto padsEnd = pad->get_pads_end();
-        const auto inputPShape = pad->get_input_partial_shape(0);
-
-        auto bcastConstant = [&](const std::shared_ptr<opset1::Constant>& constant) {
-            size_t padIdx;
-            for (size_t i = 0; i < padsBegin.size(); ++i) {
-                if (padsBegin[i] != 0 || padsEnd[i] != 0) {
-                    padIdx = i;
-                    break;
-                }
+    auto bcastConstant = [&](const std::shared_ptr<opset1::Constant>& constant) {
+        size_t padIdx;
+        for (size_t i = 0; i < padsBegin.size(); ++i) {
+            if (padsBegin[i] != 0 || padsEnd[i] != 0) {
+                padIdx = i;
+                break;
             }
+        }
 
-            assert(inputPShape[padIdx].is_static());
-            assert(inputPShape.rank().is_static());
-            auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
-            bcastedShape[padIdx] = inputPShape[padIdx].get_length();
+        assert(inputPShape[padIdx].is_static());
+        assert(inputPShape.rank().is_static());
+        auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
+        bcastedShape[padIdx] = inputPShape[padIdx].get_length();
 
-            const auto bCastConst = opset1::Constant::create(element::i32, Shape{ bcastedShape.size() }, bcastedShape);
-            return as_type_ptr<opset1::Constant>(fold<opset1::Broadcast>(constant, bCastConst));
-        };
+        const auto bCastConst = opset1::Constant::create(element::i32, Shape{ bcastedShape.size() }, bcastedShape);
+        return as_type_ptr<opset1::Constant>(fold<opset1::Broadcast>(constant, bCastConst));
+    };
 
+    if (padMode == op::PadMode::CONSTANT) {
         if (dequantization.subtract && shape_size(dequantization.subtractConstant->get_shape()) == 1ul) {
             const auto broadcastedConstant = bcastConstant(dequantization.subtractConstant);
             replace_node(dequantization.subtractConstant, broadcastedConstant);
@@ -112,6 +111,9 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     };
 
     if (dequantization.subtract) {
+        if (padMode == op::PadMode::CONSTANT && shape_size(dequantization.subtractConstant->get_shape()) == 1ul) {
+
+        }
         const auto normalizedSubConst = NetworkHelper::normalizeDequantizationShape(dequantization.subtract);
         const auto newSubConstant = foldConstantIfNecessary(normalizedSubConst);
         replace_node(normalizedSubConst, newSubConstant);
