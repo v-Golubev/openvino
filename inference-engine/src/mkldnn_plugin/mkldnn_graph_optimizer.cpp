@@ -648,9 +648,7 @@ void MKLDNNGraphOptimizer::FuseMatMulAndSimpleOperation(MKLDNNGraph &graph) {
     auto& graphNodes = graph.GetNodes();
 
     auto isSutableParentNode = [](const MKLDNNNodePtr& node) {
-        return node->getType() == MatMul &&
-            node->getChildEdges().size() == 1 &&
-            node->getParentEdgeAt(0)->getDims().ndims() < 4;
+        return node->getType() == MatMul && node->getChildEdges().size() == 1;
     };
 
     auto parent = graphNodes.begin();

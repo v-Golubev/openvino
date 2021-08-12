@@ -4,6 +4,7 @@
 
 #include "mkldnn_matmul_node.h"
 
+#include "cpu_blocked_memory_desc.h"
 #include "cpu_types.h"
 #include "mkldnn_eltwise_node.h"
 
@@ -15,11 +16,11 @@
 #include <algorithm>
 #include <cmath>
 #include <mkldnn_types.h>
-#include <mkldnn_extension_utils.h>
 #include "ie_parallel.hpp"
 #include "common/cpu_memcpy.h"
 #include <ngraph/opsets/opset1.hpp>
 #include "utils/general_utils.h"
+#include "cpu_memory_desc_utils.h"
 
 using namespace mkldnn;
 using namespace MKLDNNPlugin;
@@ -56,7 +57,7 @@ bool MKLDNNMatMulNode::isSupportedOperation(const std::shared_ptr<ngraph::Node>&
 }
 
 MKLDNNMatMulNode::MKLDNNMatMulNode(const std::shared_ptr<ngraph::Node>& op, const mkldnn::engine& eng, MKLDNNWeightsSharing::Ptr &cache) :
-        MKLDNNNode(op, eng, cache) {
+    MKLDNNNode(op, eng, cache) {
     std::string errorMessage;
     if (!isSupportedOperation(op, errorMessage))
         IE_THROW(NotImplemented) << errorMessage;
@@ -108,46 +109,47 @@ void MKLDNNMatMulNode::getSupportedDescriptors() {
     auto firstInPortPrec = getOriginalInputPrecisionAtPort(0);
     auto secondInPortPrec = getOriginalInputPrecisionAtPort(1);
 
-    auto minSize = [](const Precision lhs, const Precision rhs) {
-        return lhs.size() < rhs.size();
-    };
+    firstInPortPrec = secondInPortPrec = getMaxPrecision(getOriginalInputPrecisions());
 
-    if (firstInPortPrec != secondInPortPrec)
-        firstInPortPrec = secondInPortPrec = std::min(firstInPortPrec, secondInPortPrec, minSize);
-
-    auto firstInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(firstInPortPrec);
-    auto secondInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(secondInPortPrec);
+    const auto firstInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(firstInPortPrec);
+    const auto secondInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(secondInPortPrec);
     auto outputDataType = firstInDataType;
 
     if (!fusedWith.empty()) {
         outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(fusedWith[fusedWith.size() - 1]->getOriginalOutputPrecisionAtPort(0));
     }
 
-    inDims.reserve(2);
-    inDims[0] = getParentEdgeAt(0)->getDims();
-    inDims[1] = getParentEdgeAt(1)->getDims();
-    outDims[0] = getChildEdgeAt(0)->getDims();
+    inputShapes.reserve(2);
+    inputShapes[0] = getParentEdgeAt(0)->getShape();
+    inputShapes[1] = getParentEdgeAt(1)->getShape();
+    outputShapes[0] = getChildEdgeAt(0)->getShape();
 
-    if (inDims[0].ndims() != inDims[1].ndims() || inDims[0].ndims() != outDims[0].ndims())
+    if (inputShapes[0].getRank() != inputShapes[1].getRank() || inputShapes[0].getRank() != outputShapes[0].getRank())
         IE_THROW()  << errorPrefix << " has invalid dims count";
 
-    int nDims = inDims[0].ndims();
-    auto xAxis = nDims - 1;
-    auto yAxis = nDims - 2;
-    auto xAxis0 = transposeIn[0] ? yAxis : xAxis;
-    auto yAxis0 = transposeIn[0] ? xAxis : yAxis;
-    auto xAxis1 = transposeIn[1] ? yAxis : xAxis;
-    auto yAxis1 = transposeIn[1] ? xAxis : yAxis;
+    const int nDims = inputShapes[0].getRank();
+    const auto xAxis = nDims - 1;
+    const auto yAxis = nDims - 2;
+    const auto xAxis0 = transposeIn[0] ? yAxis : xAxis;
+    const auto yAxis0 = transposeIn[0] ? xAxis : yAxis;
+    const auto xAxis1 = transposeIn[1] ? yAxis : xAxis;
+    const auto yAxis1 = transposeIn[1] ? xAxis : yAxis;
+
+    const auto& inDims0 = inputShapes[0].getStaticDims();
+    const auto& inDims1 = inputShapes[1].getStaticDims();
+    const auto& outDims = outputShapes[0].getStaticDims();
 
     // coverity[copy_paste_error]
-    if (inDims[0][xAxis0] != inDims[1][yAxis1] ||
-        inDims[0][yAxis0] != outDims[0][yAxis] ||
-        inDims[1][xAxis1] != outDims[0][xAxis])
+    if (inDims0[xAxis0] != inDims1[yAxis1] ||
+        inDims0[yAxis0] != outDims[yAxis] ||
+        inDims1[xAxis1] != outDims[xAxis])
         IE_THROW()  << errorPrefix << " has incorrect spatial input and output dimensions";
 
     for (int dim_idx = nDims - 3; dim_idx >= 0; dim_idx--) {
-        if ((inDims[0][dim_idx] != outDims[0][dim_idx] && inDims[0][dim_idx] != 1) ||
-            (inDims[1][dim_idx] != outDims[0][dim_idx] && inDims[1][dim_idx] != 1)) {
+        if ((inDims0[dim_idx] != outDims[dim_idx] &&
+             inDims0[dim_idx] != 1) ||
+            (inDims1[dim_idx] != outDims[dim_idx] &&
+             inDims1[dim_idx] != 1)) {
             IE_THROW()  << errorPrefix << " has incorrect input batch dimensions";
         }
     }
@@ -159,39 +161,43 @@ void MKLDNNMatMulNode::getSupportedDescriptors() {
      * - change shapes configuration as if input already transposed (2x128x512) -> (2x512x128)
      * - provide transposed strides (66536, 128, 1) -> (66536, 1, 512)
      */
-    auto getStridesAndDims = [](MKLDNNDims& dims, const bool transpose) {
-        const auto ndims = dims.ndims();
+    auto getStridesAndDims = [](Shape& shape, const bool transpose) {
+        const auto getRank = shape.getRank();
 
-        mkldnn::memory::dims strides(ndims, 1);
-        for (size_t i = 1; i < ndims; i++) {
-            strides[ndims - i - 1 ] = strides[ndims - i] * dims[ndims - i];
+        std::vector<size_t> strides(getRank, 1);
+        for (size_t i = 1; i < getRank; i++) {
+            strides[getRank - i - 1 ] = strides[getRank - i] * shape.getStaticDims()[getRank - i];
         }
 
-        if (transpose && ndims > 1) {
-            std::swap(dims[ndims - 2], dims[ndims - 1]);
-            strides[ndims - 1] = dims[ndims - 2];
-            strides[ndims - 2] = 1;
+        if (transpose && getRank > 1) {
+            // form new shape
+            auto dims = shape.getStaticDims();
+            std::swap(dims[getRank - 2], dims[getRank - 1]);
+            shape = Shape{dims};
+            // update strides
+            strides[getRank - 1] = shape.getStaticDims()[getRank - 2];
+            strides[getRank - 2] = 1;
         }
 
         return strides;
     };
 
-    mkldnn::memory::dims inStrides0 = getStridesAndDims(inDims[0], transposeIn[0]);
-    mkldnn::memory::dims inStrides1 = getStridesAndDims(inDims[1], transposeIn[1]);
-    mkldnn::memory::dims outStrides = getStridesAndDims(outDims[0], false);
+    const std::vector<size_t> inStrides0 = getStridesAndDims(inputShapes[0], transposeIn[0]);
+    const std::vector<size_t> inStrides1 = getStridesAndDims(inputShapes[1], transposeIn[1]);
+    const std::vector<size_t> outStrides = getStridesAndDims(outputShapes[0], false);
 
-    in_data_d[0] = {inDims[0], firstInDataType, inStrides0};
-    in_data_d[1] = {inDims[1], secondInDataType, inStrides1};
-    out_data_d = {outDims[0], outputDataType, outStrides};
+    inDataDesc[0] = make_unique<MKLDNNMemoryDesc>(inDims0, firstInDataType, inStrides0);
+    inDataDesc[1] = make_unique<MKLDNNMemoryDesc>(inDims1, secondInDataType, inStrides1);
+    outDataDesc   = make_unique<MKLDNNMemoryDesc>(outDims, outputDataType, outStrides);
 
-    createDescriptor({in_data_d[0], in_data_d[1]}, {out_data_d});
+    createDescriptor({inDataDesc[0].get(), inDataDesc[1].get()}, {outDataDesc.get()});
 }
 
-void MKLDNNMatMulNode::createDescriptor(const std::vector<InferenceEngine::TensorDesc> &inputDesc,
-                                        const std::vector<InferenceEngine::TensorDesc> &outputDesc) {
+void MKLDNNMatMulNode::createDescriptor(const std::vector<const MemoryDesc*>& inputDesc,
+                                        const std::vector<const MemoryDesc*>& outputDesc) {
     MKLDNNDescriptor desc{
         std::shared_ptr<matmul::desc>(
-            new matmul::desc(in_data_d[0], in_data_d[1], out_data_d))};
+            new matmul::desc(*inDataDesc[0], *inDataDesc[1], *outDataDesc))};
 
     descs.push_back(desc);
 }
@@ -205,22 +211,22 @@ void MKLDNNMatMulNode::initSupportedPrimitiveDescriptors() {
     for (auto& desc : descs) {
         auto itpd = desc.createPrimitiveDescriptorIterator(getEngine(), *attr);
         while (static_cast<bool>(itpd)) {
-            InferenceEngine::LayerConfig config;
+            NodeConfig config;
             config.dynBatchSupport = true;
-            for (size_t i = 0; i < 2; i++) {
-                InferenceEngine::DataConfig dataConfig;
-                dataConfig.inPlace = -1;
-                dataConfig.constant = false;
-                dataConfig.desc = MKLDNNExtensionUtils::getUninitTensorDesc(getSrcMemDesc(itpd, i));
-                config.inConfs.push_back(dataConfig);
+            for (size_t i = 0; i < descInputNumbers(desc); i++) {
+                PortConfig portConfig;
+                portConfig.inPlace = -1;
+                portConfig.constant = false;
+                portConfig.desc = MemoryDescUtils::applyUndefinedOffset(*getSrcMemDesc(itpd, i));
+                config.inConfs.push_back(portConfig);
             }
 
             for (size_t i = 0; i < descOutputNumbers(desc); i++) {
-                InferenceEngine::DataConfig dataConfig;
-                dataConfig.inPlace = canBeInPlace() ? 0 : -1;
-                dataConfig.constant = false;
-                dataConfig.desc = MKLDNNExtensionUtils::getUninitTensorDesc(getDstMemDesc(itpd, i));
-                config.outConfs.push_back(dataConfig);
+                PortConfig portConfig;
+                portConfig.inPlace = canBeInPlace() ? 0 : -1;
+                portConfig.constant = false;
+                portConfig.desc = MemoryDescUtils::applyUndefinedOffset(*getDstMemDesc(itpd, i));
+                config.outConfs.push_back(portConfig);
             }
 
             impl_desc_type impl_type = parse_impl_name(itpd.impl_info_str());
@@ -260,26 +266,15 @@ void MKLDNNMatMulNode::createPrimitive() {
     primArgs = {{DNNL_ARG_SRC_0, src0}, {DNNL_ARG_WEIGHTS_0, src1}, {DNNL_ARG_DST, dst}};
 }
 
-MKLDNNMemoryDesc MKLDNNMatMulNode::getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) {
-    InferenceEngine::TensorDesc desc = idx > 0 ? MKLDNNMemoryDesc(primitive_desc_it.weights_desc(idx - 1))
+std::unique_ptr<MKLDNNMemoryDesc> MKLDNNMatMulNode::getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) {
+    auto desc = idx > 0 ? MKLDNNMemoryDesc(primitive_desc_it.weights_desc(idx - 1))
         : MKLDNNMemoryDesc(primitive_desc_it.src_desc(idx));
 
-    MKLDNNDims parentDims;
-    parentDims = getParentEdgeAt(idx)->getDims();
+    auto parentShape = getParentEdgeAt(idx)->getShape();
 
-    if (desc.getLayout() == InferenceEngine::Layout::ANY) {
-        return MKLDNNMemoryDesc(InferenceEngine::TensorDesc(desc.getPrecision(),
-                                                            parentDims.ToSizeVector(),
-                                                            desc.getLayout()));
-    } else if (transposeIn[idx]) {
-        return MKLDNNMemoryDesc(InferenceEngine::TensorDesc(desc.getPrecision(),
-                                                            getParentEdgeAt(idx)->getDims().ToSizeVector(),
-                                                            TensorDesc::getLayoutByDims(getParentEdgeAt(idx)->getDims().ToSizeVector())));
-    } else {
-        return MKLDNNMemoryDesc(InferenceEngine::TensorDesc(desc.getPrecision(),
-                                                            parentDims.ToSizeVector(),
-                                                            desc.getBlockingDesc()));
-    }
+    return MKLDNNPlugin::make_unique<MKLDNNMemoryDesc>(MKLDNNMemoryDesc(getParentEdgeAt(idx)->getShape().getStaticDims(),
+                                                                        MKLDNNExtensionUtils::IEPrecisionToDataType(desc.getPrecision()),
+                                                                        MKLDNNMemory::GetPlainFormatByRank(getParentEdgeAt(idx)->getShape().getRank())));
 }
 
 bool MKLDNNMatMulNode::created() const {

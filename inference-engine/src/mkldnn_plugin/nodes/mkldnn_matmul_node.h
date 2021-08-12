@@ -17,15 +17,18 @@ public:
     MKLDNNMatMulNode(const std::shared_ptr<ngraph::Node>& op, const mkldnn::engine& eng, MKLDNNWeightsSharing::Ptr &cache);
 
     void getSupportedDescriptors() override;
-    void createDescriptor(const std::vector<InferenceEngine::TensorDesc> &inputDesc,
-                          const std::vector<InferenceEngine::TensorDesc> &outputDesc) override;
+    void createDescriptor(const std::vector<const MemoryDesc*>& inputDesc,
+                          const std::vector<const MemoryDesc*>& outputDesc) override;
     void initSupportedPrimitiveDescriptors() override;
-    MKLDNNMemoryDesc getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) override;
+    std::unique_ptr<MKLDNNMemoryDesc> getSrcMemDesc(mkldnn::primitive_desc_iterator &primitive_desc_it, size_t idx) override;
     void createPrimitive() override;
     bool canFuse(const MKLDNNNodePtr& node) const override;
     bool created() const override;
     int getMaxBatch() override;
     InferenceEngine::Precision getRuntimePrecision() const override;
+    size_t descInputNumbers(MKLDNNDescriptor desc) override {
+        return getOriginalInputsNumber();
+    }
 
     static bool isSupportedOperation(const std::shared_ptr<ngraph::Node>& op, std::string& errorMessage) noexcept;
 
@@ -40,8 +43,8 @@ private:
     /* whether to transpose input */
     std::array<bool, 2> transposeIn;
 
-    std::array<MKLDNNMemoryDesc, 2> in_data_d;
-    MKLDNNMemoryDesc out_data_d;
+    std::array<std::unique_ptr<MKLDNNMemoryDesc>, 2> inDataDesc;
+    std::unique_ptr<MKLDNNMemoryDesc> outDataDesc;
 };
 
 }  // namespace MKLDNNPlugin

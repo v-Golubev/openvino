@@ -38,15 +38,6 @@ public:
             testing::TestParamInfo<LayerTestsDefinitions::MatMulLayerTestParamsSet>(basicParamsSet, 0));
         result << CpuTestWithFusing::getTestCaseName(fusingParams);
 
-        /* exclude "ENFORCE_BF16, NO" to avoid skipping the test because of "BF16"  */
-        std::string resStr = result.str();
-        const std::string enforceBF16("ENFORCE_BF16, NO");
-        size_t pos = resStr.find(enforceBF16);
-        if (pos != std::string::npos) {
-            resStr.erase(pos, enforceBF16.length());
-            result.str(resStr);
-        }
-
         return result.str();
     }
 
@@ -59,7 +50,6 @@ protected:
         fusingSpecificParams fusingParams;
 
         std::tie(basicParamsSet, nodeType, fusingParams) = this->GetParam();
-        std::tie(postOpMgrPtr, fusedOps) = fusingParams;
 
         ShapeRelatedParams shapeRelatedParams;
         Precision netPrecision;
@@ -77,7 +67,7 @@ protected:
          * Currently nodes are not fused thought Reshape
          * Check can be deleted after this limitation is gone
          */
-        if (nodeType == MatMulNodeType::MatMul && inShapeA.size() == inShapeB.size())
+        if (nodeType == MatMulNodeType::MatMul && inShapeA.size() < 4 && inShapeB.size() < 4)
             std::tie(postOpMgrPtr, fusedOps) = fusingParams;
 
         configuration.insert(additionalConfig.begin(), additionalConfig.end());
@@ -125,7 +115,7 @@ const std::vector<bool> transpose = {
 };
 
 std::vector<std::map<std::string, std::string>> additionalConfig {
-    {{PluginConfigParams::KEY_ENFORCE_BF16, PluginConfigParams::NO}},
+    std::map<std::string, std::string>{/* empty config */},
     {{PluginConfigParams::KEY_ENFORCE_BF16, PluginConfigParams::YES}}
 };
 
@@ -250,7 +240,7 @@ const std::vector<ShapeRelatedParams> IS = {
 
 std::vector<fusingSpecificParams> matmulFusingParams {
         emptyFusingSpec,
-        fusingRelu,
+        fusingElu,
 };
 
 const auto matMulParams = ::testing::Combine(::testing::ValuesIn(IS),

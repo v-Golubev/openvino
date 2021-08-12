@@ -343,7 +343,7 @@ MKLDNNMemoryDesc::MKLDNNMemoryDesc(const std::vector<size_t>& _dims, mkldnn::mem
 MKLDNNMemoryDesc::MKLDNNMemoryDesc(const std::vector<size_t>& _dims, mkldnn::memory::data_type dataType, const std::vector<size_t>& strides)
     : MemoryDesc(Shape(_dims), Mkldnn), desc() {
     if (!strides.empty()) {
-        desc = {_dims, dataType, strides};
+        desc = {MKLDNNExtensionUtils::convertToDnnlDims(_dims), dataType, MKLDNNExtensionUtils::convertToDnnlDims(strides)};
         return;
     }
 

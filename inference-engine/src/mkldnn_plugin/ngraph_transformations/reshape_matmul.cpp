@@ -77,7 +77,7 @@ MKLDNNPlugin::ReshapeMatMul::ReshapeMatMul() {
         auto reshape_output = ngraph::op::util::reshapeTo(matmul_new, output_shape);
         new_ops.push_back(reshape_output);
         reshape_output->set_friendly_name(matmul->get_friendly_name());
-        matmul_new->set_friendly_name(matmul->get_friendly_name());
+        matmul_new->set_friendly_name(matmul->get_friendly_name() + "/MM");
         ngraph::copy_runtime_info(matmul, new_ops);
         ngraph::replace_node(matmul, reshape_output);
 
