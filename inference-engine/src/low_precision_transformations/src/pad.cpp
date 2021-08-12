@@ -41,10 +41,13 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     }
 
     const auto pad = as_type_ptr<opset1::Pad>(NetworkHelper::separateInStandaloneBranch(m.get_match_root()));
-    const auto inputPShape = pad->get_input_partial_shape(0);
+    const auto padConstant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
+    const auto padConstantValue = padConstant->cast_vector<float>()[0];
+
     const auto padsBegin = pad->get_pads_begin();
     const auto padsEnd = pad->get_pads_end();
     const auto padMode = pad->get_pad_mode();
+
     auto dequantization = NetworkHelper::getDequantization(pad);
 
     if (padMode == op::PadMode::CONSTANT) {
@@ -57,6 +60,7 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
                 }
             }
 
+            const auto inputPShape = pad->get_input_partial_shape(0);
             assert(inputPShape[padIdx].is_static());
             assert(inputPShape.rank().is_static());
             auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
@@ -72,9 +76,7 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
             dequantization.subtractConstant = broadcastedConstant;
         }
 
-        const auto constant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
-        const auto constantValue = constant->cast_vector<float>()[0];
-        if (constantValue != 0.f && shape_size(dequantization.multiplyConstant->get_shape()) == 1ul) {
+        if (padConstantValue != 0.f && shape_size(dequantization.multiplyConstant->get_shape()) == 1ul) {
             const auto broadcastedConstant = bcastConstant(dequantization.multiplyConstant);
             replace_node(dequantization.multiplyConstant, broadcastedConstant);
             dequantization.multiplyConstant = broadcastedConstant;
@@ -120,29 +122,29 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
 
     if (dequantization.subtract) {
         const auto normalizedSubConst = NetworkHelper::normalizeDequantizationShape(dequantization.subtract);
-        const auto padConstant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
-        float padConstantValue = padConstant->cast_vector<float>()[0];
+        float padValueForSub = padConstantValue;
         if (padMode == op::PadMode::CONSTANT) {
-            padConstantValue = 0.f;
+            padValueForSub = 0.f;
         }
 
-        const auto newSubConstant = foldConstantIfNecessary(normalizedSubConst, pad, padConstantValue);
+        const auto newSubConstant = foldConstantIfNecessary(normalizedSubConst, pad, padValueForSub);
         replace_node(normalizedSubConst, newSubConstant);
         dequantization.subtractConstant = newSubConstant;
     }
 
-    const auto normalizedMulConst = NetworkHelper::normalizeDequantizationShape(dequantization.multiply);
-    const auto padConstant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
-    float padConstantValue = padConstant->cast_vector<float>()[0];
-    if (padMode == op::PadMode::CONSTANT) {
-        padConstantValue = 1.f;
+    {
+        const auto normalizedMulConst = NetworkHelper::normalizeDequantizationShape(dequantization.multiply);
+        float padValueForMul = padConstantValue;
+        if (padMode == op::PadMode::CONSTANT) {
+            padValueForMul = 1.f;
+        }
+
+        const auto newMulConstant = foldConstantIfNecessary(normalizedMulConst, pad, padValueForMul);
+        replace_node(normalizedMulConst, newMulConstant);
+        dequantization.multiplyConstant = newMulConstant;
     }
 
-    const auto newMulConstant = foldConstantIfNecessary(normalizedMulConst, pad, padConstantValue);
-    replace_node(normalizedMulConst, newMulConstant);
-    dequantization.multiplyConstant = newMulConstant;
-
-    // we need to convert pad value in low precision
+    // we must convert pad value in low precision
     const auto convertedZero = opset1::Constant::create(dequantization.data.get_element_type(), Shape{}, { padConstantValue });
     pad->set_argument(3, convertedZero);
 
@@ -199,9 +201,10 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
                 return false;
             }
 
+            const size_t paddingDimension = beginNonZeroIdx != -1 ? beginNonZeroIdx : endNonZeroIdx;
             const auto padInputPShape = pad->get_input_partial_shape(0);
             const auto padInputRank = padInputPShape.rank();
-            if (padInputRank.is_dynamic()) {
+            if (padInputRank.is_dynamic() || padInputPShape[paddingDimension].is_dynamic()) {
                 return false;
             }
 
@@ -213,13 +216,8 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
                     deqShape.insert(deqShape.begin(), 1ul);
                 }
 
-                const auto paddingDimension = beginNonZeroIdx != -1 ? beginNonZeroIdx : endNonZeroIdx;
-                if (padInputPShape[paddingDimension].is_dynamic()) {
-                    return false;
-                }
-
                 for (size_t i = 0; i < deqShape.size(); ++i) {
-                    const bool deqAndPadDimensionsMismatched = (deqShape[i] > 1ul) && (i != static_cast<size_t>(paddingDimension));
+                    const bool deqAndPadDimensionsMismatched = (deqShape[i] > 1ul) && (i != paddingDimension);
                     if (deqAndPadDimensionsMismatched) {
                         return false;
                     }
@@ -229,18 +227,14 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
             return true;
         };
 
-        // we can handle only two cases with subtract:
-        // 1) pad by unique dimension and subtract by the same dimension
-        // 2) pad by unique dimension and per-tensor dequantization
         if (dequantization.subtract && !padAndDqByTheSameDimension(dequantization.subtractConstant)) {
             return false;
-        } else {
-            // non zero pad value isn't supported
-            const auto constant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
-            const auto constantValue = constant->cast_vector<float>()[0];
-            if (constantValue != 0.f) {
-                return false;
-            }
+        }
+
+        const auto constant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
+        const auto constantValue = constant->cast_vector<float>()[0];
+        if (constantValue != 0.f && !padAndDqByTheSameDimension(dequantization.multiplyConstant)) {
+            return false;
         }
     }
 
