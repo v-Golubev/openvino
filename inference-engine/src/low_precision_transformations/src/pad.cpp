@@ -47,40 +47,48 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     const auto padMode = pad->get_pad_mode();
     auto dequantization = NetworkHelper::getDequantization(pad);
 
-    auto bcastConstant = [&](const std::shared_ptr<opset1::Constant>& constant) {
-        size_t padIdx;
-        for (size_t i = 0; i < padsBegin.size(); ++i) {
-            if (padsBegin[i] != 0 || padsEnd[i] != 0) {
-                padIdx = i;
-                break;
-            }
-        }
-
-        assert(inputPShape[padIdx].is_static());
-        assert(inputPShape.rank().is_static());
-        auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
-        bcastedShape[padIdx] = inputPShape[padIdx].get_length();
-
-        const auto bCastConst = opset1::Constant::create(element::i32, Shape{ bcastedShape.size() }, bcastedShape);
-        return as_type_ptr<opset1::Constant>(fold<opset1::Broadcast>(constant, bCastConst));
-    };
-
     if (padMode == op::PadMode::CONSTANT) {
+        auto bcastConstant = [&](const std::shared_ptr<opset1::Constant> &constant) {
+            size_t padIdx = 0;
+            for (size_t i = 0; i < padsBegin.size(); ++i) {
+                if (padsBegin[i] != 0 || padsEnd[i] != 0) {
+                    padIdx = i;
+                    break;
+                }
+            }
+
+            assert(inputPShape[padIdx].is_static());
+            assert(inputPShape.rank().is_static());
+            auto bcastedShape = Shape(inputPShape.rank().get_length(), 1ul);
+            bcastedShape[padIdx] = inputPShape[padIdx].get_length();
+
+            const auto bCastConst = opset1::Constant::create(element::i32, Shape{bcastedShape.size()}, bcastedShape);
+            return as_type_ptr<opset1::Constant>(fold<opset1::Broadcast>(constant, bCastConst));
+        };
+
         if (dequantization.subtract && shape_size(dequantization.subtractConstant->get_shape()) == 1ul) {
             const auto broadcastedConstant = bcastConstant(dequantization.subtractConstant);
             replace_node(dequantization.subtractConstant, broadcastedConstant);
             dequantization.subtractConstant = broadcastedConstant;
         }
+
+        const auto constant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
+        const auto constantValue = constant->cast_vector<float>()[0];
+        if (constantValue != 0.f && shape_size(dequantization.multiplyConstant->get_shape()) == 1ul) {
+            const auto broadcastedConstant = bcastConstant(dequantization.multiplyConstant);
+            replace_node(dequantization.multiplyConstant, broadcastedConstant);
+            dequantization.multiplyConstant = broadcastedConstant;
+        }
     }
 
-    auto foldConstantIfNecessary = [&pad](const std::shared_ptr<opset1::Constant>& constant) {
+    auto foldConstantIfNecessary = [&padMode, &padsBegin, &padsEnd](
+        const std::shared_ptr<opset1::Constant>& constant,
+        const std::shared_ptr<opset1::Pad>& pad,
+        float padVal) {
         const auto constantShape = constant->get_shape();
         if (shape_size(constantShape) == 1ul) {
             return NetworkHelper::toScalar(constant);
         }
-
-        const auto padsBegin = pad->get_pads_begin();
-        const auto padsEnd = pad->get_pads_end();
 
         std::vector<size_t> padsForConstantBegin(constantShape.size(), 0ul);
         std::vector<size_t> padsForConstantEnd(constantShape.size(), 0ul);
@@ -100,10 +108,10 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
         }
 
         if (foldingIsNecessary) {
-            const auto mode = pad->get_pad_mode();
             const auto beginConst = opset1::Constant::create(element::u32, { padsForConstantBegin.size() }, padsForConstantBegin);
             const auto endConst = opset1::Constant::create(element::u32, { padsForConstantEnd.size() }, padsForConstantEnd);
-            const auto foldedConstant = fold<opset1::Pad>(constant, beginConst, endConst, mode);
+            const auto padValueConstant = opset1::Constant::create(constant->get_element_type(), Shape{}, { padVal });
+            const auto foldedConstant = fold<opset1::Pad>(constant, beginConst, endConst, padValueConstant, padMode);
             return as_type_ptr<opset1::Constant>(foldedConstant);
         } else {
             return constant;
@@ -111,22 +119,31 @@ bool PadTransformation::transform(TransformationContext& context, ngraph::patter
     };
 
     if (dequantization.subtract) {
-        if (padMode == op::PadMode::CONSTANT && shape_size(dequantization.subtractConstant->get_shape()) == 1ul) {
-
-        }
         const auto normalizedSubConst = NetworkHelper::normalizeDequantizationShape(dequantization.subtract);
-        const auto newSubConstant = foldConstantIfNecessary(normalizedSubConst);
+        const auto padConstant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
+        float padConstantValue = padConstant->cast_vector<float>()[0];
+        if (padMode == op::PadMode::CONSTANT) {
+            padConstantValue = 0.f;
+        }
+
+        const auto newSubConstant = foldConstantIfNecessary(normalizedSubConst, pad, padConstantValue);
         replace_node(normalizedSubConst, newSubConstant);
         dequantization.subtractConstant = newSubConstant;
     }
 
     const auto normalizedMulConst = NetworkHelper::normalizeDequantizationShape(dequantization.multiply);
-    const auto newMulConstant = foldConstantIfNecessary(normalizedMulConst);
+    const auto padConstant = as_type_ptr<opset1::Constant>(pad->get_input_node_shared_ptr(3));
+    float padConstantValue = padConstant->cast_vector<float>()[0];
+    if (padMode == op::PadMode::CONSTANT) {
+        padConstantValue = 1.f;
+    }
+
+    const auto newMulConstant = foldConstantIfNecessary(normalizedMulConst, pad, padConstantValue);
     replace_node(normalizedMulConst, newMulConstant);
     dequantization.multiplyConstant = newMulConstant;
 
-    // we need to convert zero pad value in low precision
-    const auto convertedZero = opset1::Constant::create(dequantization.data.get_element_type(), Shape{}, { 0 });
+    // we need to convert pad value in low precision
+    const auto convertedZero = opset1::Constant::create(dequantization.data.get_element_type(), Shape{}, { padConstantValue });
     pad->set_argument(3, convertedZero);
 
     moveDequantizationAfter(context, pad, dequantization, true);
@@ -202,12 +219,14 @@ bool PadTransformation::canBeTransformed(const TransformationContext& context, s
                 }
 
                 for (size_t i = 0; i < deqShape.size(); ++i) {
-                    const bool deqAndPadDimensionsMismatched = (deqShape[i] > 1ul) && (i != paddingDimension);
+                    const bool deqAndPadDimensionsMismatched = (deqShape[i] > 1ul) && (i != static_cast<size_t>(paddingDimension));
                     if (deqAndPadDimensionsMismatched) {
                         return false;
                     }
                 }
             }
+
+            return true;
         };
 
         // we can handle only two cases with subtract:
