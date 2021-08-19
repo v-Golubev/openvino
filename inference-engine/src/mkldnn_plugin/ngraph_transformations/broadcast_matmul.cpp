@@ -17,8 +17,8 @@ NGRAPH_RTTI_DEFINITION(MKLDNNPlugin::BroadcastMatMul, "BroadcastMatMul", 0);
 
 MKLDNNPlugin::BroadcastMatMul::BroadcastMatMul() {
     ngraph::OutputVector twoInputs = {
-        ngraph::pattern::any_input(/* ngraph::pattern::has_static_shape() */),
-        ngraph::pattern::any_input(/* ngraph::pattern::has_static_shape() */)
+        ngraph::pattern::any_input(ngraph::pattern::has_static_shape()),
+        ngraph::pattern::any_input(ngraph::pattern::has_static_shape())
     };
 
     auto matmulPattern = ngraph::pattern::wrap_type<ngraph::op::MatMul>(twoInputs, ngraph::pattern::has_static_shape());
@@ -48,8 +48,9 @@ MKLDNNPlugin::BroadcastMatMul::BroadcastMatMul() {
 
         std::shared_ptr<ngraph::Node> broadcastInput0;
         std::shared_ptr<ngraph::Node> broadcastInput1;
+        ngraph::NodeVector new_ops;
 
-        auto getBroadcast = [](const ngraph::Output<ngraph::Node>& bcFrom, const ngraph::Output<ngraph::Node>& bcTo) {
+        auto getBroadcast = [&](const ngraph::Output<ngraph::Node>& bcFrom, const ngraph::Output<ngraph::Node>& bcTo) {
             const auto& shapeFrom = bcFrom.get_shape();
             const auto& shapeTo = bcTo.get_shape();
 
@@ -64,6 +65,7 @@ MKLDNNPlugin::BroadcastMatMul::BroadcastMatMul() {
 
             auto broadcastInput = ngraph::op::util::broadcastTo(bcFrom, target);
             broadcastInput->set_friendly_name(bcFrom.get_node()->get_friendly_name() + "/BC");
+            new_ops.push_back(broadcastInput);
 
             return broadcastInput;
         };
@@ -79,12 +81,10 @@ MKLDNNPlugin::BroadcastMatMul::BroadcastMatMul() {
                                                           broadcastInput1 ? broadcastInput1 : input1,
                                                           matmul->get_transpose_a(),
                                                           matmul->get_transpose_b());
-
+        new_ops.push_back(matmul_new);
         matmul_new->set_friendly_name(matmul->get_friendly_name());
-        if (broadcastInput0)
-            ngraph::copy_runtime_info(matmul, broadcastInput0);
-        if (broadcastInput1)
-            ngraph::copy_runtime_info(matmul, broadcastInput1);
+
+        ngraph::copy_runtime_info(matmul, new_ops);
         ngraph::replace_node(matmul, matmul_new);
 
         return true;

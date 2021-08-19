@@ -108,12 +108,14 @@ void MKLDNNMatMulNode::getSupportedDescriptors() {
 
     auto firstInPortPrec = getOriginalInputPrecisionAtPort(0);
     auto secondInPortPrec = getOriginalInputPrecisionAtPort(1);
+    auto outPortPrec = getOriginalOutputPrecisionAtPort(0);
 
-    firstInPortPrec = secondInPortPrec = getMaxPrecision(getOriginalInputPrecisions());
+    if (firstInPortPrec.size() != secondInPortPrec.size())
+        firstInPortPrec = secondInPortPrec = getMaxPrecision(getOriginalInputPrecisions());
 
     const auto firstInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(firstInPortPrec);
     const auto secondInDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(secondInPortPrec);
-    auto outputDataType = firstInDataType;
+    auto outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(outPortPrec);
 
     if (!fusedWith.empty()) {
         outputDataType = MKLDNNExtensionUtils::IEPrecisionToDataType(fusedWith[fusedWith.size() - 1]->getOriginalOutputPrecisionAtPort(0));

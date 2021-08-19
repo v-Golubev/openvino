@@ -18,8 +18,8 @@ NGRAPH_RTTI_DEFINITION(MKLDNNPlugin::ReshapeMatMul, "ReshapeMatMul", 0);
 
 MKLDNNPlugin::ReshapeMatMul::ReshapeMatMul() {
     ngraph::OutputVector twoInputs = {
-        ngraph::pattern::any_input(/* ngraph::pattern::has_static_shape() */),
-        ngraph::pattern::any_input(/* ngraph::pattern::has_static_shape() */)
+        ngraph::pattern::any_input(ngraph::pattern::has_static_shape()),
+        ngraph::pattern::any_input(ngraph::pattern::has_static_shape())
     };
 
     auto fcTwoInputs = ngraph::pattern::wrap_type<ngraph::op::MatMul>(twoInputs, ngraph::pattern::has_static_shape());
@@ -61,18 +61,13 @@ MKLDNNPlugin::ReshapeMatMul::ReshapeMatMul() {
             new_ops.push_back(newReshapeInput1);
         }
 
-        auto C = newReshapeInput0 ? newReshapeInput0->get_shape()[0] : newReshapeInput1->get_shape()[0];
-        auto I = input0_shape[1];
-        auto O = input1_shape[2];
-
-        ngraph::Shape output_shape_new{C, I, O};
-
         std::shared_ptr<ngraph::Node> matmul_new;
 
         matmul_new = std::make_shared<ngraph::op::MatMul>(newReshapeInput0 ? newReshapeInput0 : matmul->input_value(0),
                                                           newReshapeInput1 ? newReshapeInput1 : matmul->input_value(1),
                                                           matmul->get_transpose_a(),
                                                           matmul->get_transpose_b());
+        new_ops.push_back(matmul_new);
 
         auto reshape_output = ngraph::op::util::reshapeTo(matmul_new, output_shape);
         new_ops.push_back(reshape_output);
