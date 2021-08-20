@@ -61,12 +61,23 @@ MKLDNNPlugin::ReshapeMatMul::ReshapeMatMul() {
             new_ops.push_back(newReshapeInput1);
         }
 
+        auto matmul_inputs = matmul->input_values();
+        if (newReshapeInput0) {
+            matmul_inputs[0] = newReshapeInput0;
+        }
+
+        if (newReshapeInput1) {
+            matmul_inputs[1] = newReshapeInput1;
+        }
+
         std::shared_ptr<ngraph::Node> matmul_new;
 
-        matmul_new = std::make_shared<ngraph::op::MatMul>(newReshapeInput0 ? newReshapeInput0 : matmul->input_value(0),
+        /*matmul_new = std::make_shared<ngraph::op::MatMul>(newReshapeInput0 ? newReshapeInput0 : matmul->input_value(0),
                                                           newReshapeInput1 ? newReshapeInput1 : matmul->input_value(1),
                                                           matmul->get_transpose_a(),
-                                                          matmul->get_transpose_b());
+                                                          matmul->get_transpose_b());*/
+
+        matmul_new = matmul->clone_with_new_inputs(matmul_inputs);
         new_ops.push_back(matmul_new);
 
         auto reshape_output = ngraph::op::util::reshapeTo(matmul_new, output_shape);

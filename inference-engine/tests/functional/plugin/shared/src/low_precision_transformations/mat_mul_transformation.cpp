@@ -76,8 +76,8 @@ void MatMulTransformation::SetUp() {
 
 void MatMulTransformation::Run() {
     SKIP_IF_CURRENT_TEST_IS_DISABLED()
-
     LayerTestsCommon::Run();
+    executableNetwork.GetExecGraphInfo().serialize("C://models//exec.xml");
 
     const auto params = std::get<3>(GetParam());
     const auto actualType = getRuntimePrecision(params.expectedKernelName);
