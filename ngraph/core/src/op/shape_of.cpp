@@ -99,6 +99,10 @@ bool evaluate_bound_shape(const Node* shape_of_node, const HostTensorVector& out
         pshape_low[i] = interval.get_min_val();
         pshape_up[i] = Dimension(interval.get_max_val()).is_dynamic() ? Dimension(interval.get_max_val() - 1)
                                                                       : interval.get_max_val();
+
+        if (pshape_up[i].get_length() > std::numeric_limits<std::int32_t>::max()) {
+            pshape_up[i] = std::numeric_limits<std::int32_t>::max();
+        }
     }
     NGRAPH_CHECK(pshape_up.is_static() && pshape_low.is_static());
     const auto input_et = shape_of_node->get_input_element_type(0);
