@@ -179,6 +179,18 @@ bool convert_precision(pass::PassBase& pass,
             bool is_output_precision_changed = false;
 
             for (auto& node : ops) {
+                const auto& outputs = node->outputs();
+                //if (std::all_of(outputs.begin(), outputs.end(), [](const ngraph::Output<ngraph::Node> elem) {
+                //        if (op::is_constant(elem.get_node())) {
+                //            return true;
+                //        }
+                //        HostTensorPtr lb, ub;
+                //        std::tie(lb, ub) = evaluate_both_bounds(elem);
+                //        return lb && ub;
+                //    })) {
+                //    continue;
+                //}
+
                 is_output_precision_changed |= convert_node_output_precision(node);
             }
 
