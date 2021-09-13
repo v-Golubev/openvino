@@ -134,15 +134,16 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
         new_matmul->set_friendly_name(matmul->get_friendly_name() + "/Fused");
         ngraph::copy_runtime_info(matmuls, new_matmul);
 
+        const auto matmul_out_rank = matmul->get_output_partial_shape(0).rank().get_length();
+
         std::shared_ptr<ngraph::Node> last_fused_node = new_matmul;
         if (fuse_biases) {
-            std::int64_t biases_concat_axis = 0;
+            auto biases_concat_axis = matmul_out_rank - 1;
+
+            // onnx-importer case
             const auto bias_shape = biases[0]->get_output_shape(0);
-            for (size_t i = 0; i < bias_shape.size(); ++i) {
-                if (bias_shape[i] > 1ul) {
-                    biases_concat_axis = i;
-                    break;
-                }
+            if (bias_shape.size() == 1) {
+                biases_concat_axis = 0;
             }
 
             const auto new_biases = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(biases, biases_concat_axis);
@@ -150,7 +151,6 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
             ngraph::copy_runtime_info(biases, last_fused_node);
         }
 
-        const auto matmul_out_rank = matmul->get_output_partial_shape(0).rank().get_length();
         const auto split_axis = ngraph::opset8::Constant::create(ngraph::element::i64, ngraph::Shape{}, { matmul_out_rank - 1 });
         const auto split = std::make_shared<ngraph::opset8::Split>(last_fused_node, split_axis, matmuls_num);
         ngraph::copy_runtime_info(last_fused_node, split);
