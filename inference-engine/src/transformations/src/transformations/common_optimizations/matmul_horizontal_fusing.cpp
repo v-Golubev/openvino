@@ -68,19 +68,35 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
         }
 
         auto fuse_weights_path = [](const ngraph::NodeVector& matmuls, const bool transpose_weights) {
+            const auto matmul = matmuls[0];
+            const auto weights_shape = matmul->get_input_shape(1);
+            const size_t concat_axis = transpose_weights ? weights_shape.size() - 2 : weights_shape.size() - 1;
+
             ngraph::NodeVector mul_constants;
             ngraph::NodeVector sub_constants;
             std::shared_ptr<ngraph::Node> convert;
             ngraph::NodeVector weights;
 
+            // We must broadcast per-tensor constants before concatenation
+            auto broadcast_if_necessary = [&](const std::shared_ptr<Node> constant) {
+                auto const_shape = constant->get_output_shape(0);
+                if (shape_size(const_shape) > 1) {
+                    return constant;
+                }
+
+                const_shape[concat_axis] = weights_shape[concat_axis];
+                auto reshape_constant = opset8::Constant::create(element::i64, { const_shape.size() }, const_shape);
+                return op::util::make_try_fold<opset8::Broadcast>(constant, reshape_constant);
+            };
+
             for (const auto& elem : matmuls) {
                 auto weights_path = elem->get_input_node_shared_ptr(1);
                 if (ngraph::is_type<ngraph::opset8::Multiply>(weights_path)) {
-                    mul_constants.emplace_back(weights_path->get_input_node_shared_ptr(1));
+                    mul_constants.emplace_back(broadcast_if_necessary(weights_path->get_input_node_shared_ptr(1)));
                     weights_path = weights_path->get_input_node_shared_ptr(0);
                 }
                 if (ngraph::is_type<ngraph::opset8::Subtract>(weights_path)) {
-                    sub_constants.emplace_back(weights_path->get_input_node_shared_ptr(1));
+                    sub_constants.emplace_back(broadcast_if_necessary(weights_path->get_input_node_shared_ptr(1)));
                     weights_path = weights_path->get_input_node_shared_ptr(0);
                 }
                 if (ngraph::is_type<ngraph::opset8::Convert>(weights_path)) {
@@ -92,9 +108,6 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
                 }
             }
 
-            const auto matmul = matmuls[0];
-            const auto weights_shape = matmul->get_input_shape(1);
-            const size_t concat_axis = transpose_weights ? weights_shape.size() - 2 : weights_shape.size() - 1;
             std::shared_ptr<ngraph::Node> new_weights = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(weights, concat_axis);
             ngraph::copy_runtime_info(weights, new_weights);
 
@@ -106,13 +119,11 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
             if (!sub_constants.empty()) {
                 const auto new_sub_const = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(sub_constants, concat_axis);
                 new_weights = std::make_shared<ngraph::opset8::Subtract>(new_weights, new_sub_const);
-                ngraph::copy_runtime_info(sub_constants[0]->output(0).target_inputs()[0], new_weights);
             }
 
             if (!mul_constants.empty()) {
                 const auto new_mul_const = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(mul_constants, concat_axis);
                 new_weights = std::make_shared<ngraph::opset8::Multiply>(new_weights, new_mul_const);
-                ngraph::copy_runtime_info(mul_constants[0]->output(0).target_inputs()[0], new_weights);
             }
 
             return new_weights;

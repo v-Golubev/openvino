@@ -52,7 +52,7 @@ enum AdditionalOp {
 
 struct MatMulHorizontalFusingTestValues {
     element::Type input_precision;
-    ngraph::PartialShape input_shape;
+    PartialShape input_shape;
     AdditionalOp additional_consumer;
     std::vector<MatMulBuilder> matmuls_before;
     std::vector<MatMulBuilder> matmuls_after;
@@ -69,7 +69,7 @@ std::shared_ptr<Function> get(
 
     OutputVector concat_nodes;
     for (const auto& matmul_val : matmul_values) {
-        std::shared_ptr<ngraph::Node> weights;
+        std::shared_ptr<Node> weights;
         if (matmul_val.weights.values.empty()) {
             auto input_2 = std::make_shared<opset8::Parameter>(matmul_val.weights.precision, matmul_val.weights.shape);
             inputs.emplace_back(input_2);
@@ -78,21 +78,23 @@ std::shared_ptr<Function> get(
             auto weights_shape = matmul_val.weights.shape.to_shape();
             weights = opset8::Constant::create(matmul_val.weights.precision, weights_shape, matmul_val.weights.values);
             if (matmul_val.weights.precision != element::f32) {
-                weights = std::make_shared<ngraph::opset8::Convert>(weights, element::f32);
+                weights = std::make_shared<opset8::Convert>(weights, element::f32);
 
                 Shape deq_const_shape(2, 1ul);
-                size_t out_channel_idx = matmul_val.transpose_b ? weights_shape.size() - 2 : weights_shape.size() - 1;
-                deq_const_shape[out_channel_idx] = weights_shape[out_channel_idx];
+                if (matmul_val.weights.values.size() > 1) {
+                    size_t out_channel_idx = matmul_val.transpose_b ? weights_shape.size() - 2 : weights_shape.size() - 1;
+                    deq_const_shape[out_channel_idx] = weights_shape[out_channel_idx];
+                }
 
                 auto sub_const = opset8::Constant::create(element::f32, deq_const_shape, { 0.0001f });
-                weights = std::make_shared<ngraph::opset8::Subtract>(weights, sub_const);
+                weights = std::make_shared<opset8::Subtract>(weights, sub_const);
 
                 auto mul_const = opset8::Constant::create(element::f32, deq_const_shape, { 0.56f });
-                weights = std::make_shared<ngraph::opset8::Multiply>(weights, mul_const);
+                weights = std::make_shared<opset8::Multiply>(weights, mul_const);
             }
         }
 
-        std::shared_ptr<ngraph::Node> last_node = std::make_shared<ngraph::opset8::MatMul>(relu, weights, matmul_val.transpose_a, matmul_val.transpose_b);;
+        std::shared_ptr<Node> last_node = std::make_shared<opset8::MatMul>(relu, weights, matmul_val.transpose_a, matmul_val.transpose_b);
 
         if (!matmul_val.bias.values.empty()) {
             auto bias_const = opset8::Constant::create(element::f32, matmul_val.bias.shape, matmul_val.bias.values);
@@ -135,10 +137,10 @@ public:
 
         f = get(values.input_precision, values.input_shape, values.additional_consumer, values.matmuls_before);
 
-        ngraph::pass::Manager manager;
+        pass::Manager manager;
         auto pass_config = manager.get_pass_config();
-        manager.register_pass<ngraph::pass::InitNodeInfo>();
-        manager.register_pass<ngraph::pass::MatMulHorizontalFusion>();
+        manager.register_pass<pass::InitNodeInfo>();
+        manager.register_pass<pass::MatMulHorizontalFusion>();
         manager.run_passes(f);
 
         f_ref = get(values.input_precision, values.input_shape, values.additional_consumer, values.matmuls_after);
@@ -174,8 +176,8 @@ public:
     }
 
 protected:
-    std::shared_ptr<ngraph::Function> f;
-    std::shared_ptr<ngraph::Function> f_ref;
+    std::shared_ptr<Function> f;
+    std::shared_ptr<Function> f_ref;
 };
 
 TEST_P(MatMulHorizontalFusing, CompareFunctions) {
