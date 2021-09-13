@@ -7,8 +7,6 @@
 
 #include "itt.hpp"
 #include "transformations/init_node_info.hpp"
-#include "transformations/rt_info/fused_names_attribute.hpp"
-#include "transformations/rt_info/primitives_priority_attribute.hpp"
 
 #include <memory>
 #include <vector>
