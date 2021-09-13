@@ -183,6 +183,7 @@ TEST_P(MatMulHorizontalFusing, CompareFunctions) {
     const auto res = fc.compare(f, f_ref);
     ASSERT_TRUE(res.valid) << res.message;
 }
+
 const std::vector<MatMulHorizontalFusingTestValues> test_values {
     {
         element::f32, PartialShape{ 1, 2, 4 }, AdditionalOp::NONE,
@@ -303,6 +304,29 @@ const std::vector<MatMulHorizontalFusingTestValues> test_values {
                                                                                  2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f,
                                                                                  2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f}},
                 MatMulBuilder::BiasPath{Shape{ 1, 1, 8 }, { 15.f, 15.f, 15.f, 15.f, 30.f, 30.f, 30.f, 30.f }},
+                false, false, 2
+            }
+        }
+    },
+    {
+        element::f32, PartialShape{ 1, 2, 4 }, AdditionalOp::NONE,
+        {
+            {
+                MatMulBuilder::WeightsPath{ element::f32, PartialShape{ 4, 4 }, {2} },
+                MatMulBuilder::BiasPath{ Shape{ 4 }, { 15.f} }
+            },
+            {
+                MatMulBuilder::WeightsPath{ element::f32, PartialShape{ 4, 4 }, {4} },
+                MatMulBuilder::BiasPath{ Shape{ 4 }, { 30.f} }
+            },
+        },
+        {
+            {
+                MatMulBuilder::WeightsPath{ element::f32, PartialShape{ 4, 8 }, {2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f,
+                                                                                 2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f,
+                                                                                 2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f,
+                                                                                 2.f, 2.f, 2.f, 2.f, 4.f, 4.f, 4.f, 4.f}},
+                MatMulBuilder::BiasPath{Shape{ 8 }, { 15.f, 15.f, 15.f, 15.f, 30.f, 30.f, 30.f, 30.f }},
                 false, false, 2
             }
         }

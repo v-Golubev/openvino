@@ -56,7 +56,13 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
         biases.reserve(matmuls_num);
         bool fuse_biases = add_nodes.size() == matmuls_num;
         if (fuse_biases) {
+            // we already checked that bias is a constant and it is possible to use its shape
+            ngraph::Shape bias_shape = add_nodes[0]->get_input_shape(1);
             for (const auto& add_node : add_nodes) {
+                if (add_node->get_input_shape(1) != bias_shape) {
+                    fuse_biases = false;
+                    break;
+                }
                 biases.emplace_back(add_node->get_input_node_shared_ptr(1));
             }
         }
@@ -118,13 +124,22 @@ bool ngraph::pass::MatMulHorizontalFusion::run_on_function(std::shared_ptr<ngrap
         ngraph::copy_runtime_info(matmuls, new_matmul);
 
         std::shared_ptr<ngraph::Node> last_fused_node = new_matmul;
-        const auto matmul_out_rank = matmul->get_output_partial_shape(0).rank().get_length();
         if (fuse_biases) {
-            const auto new_biases = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(biases, matmul_out_rank - 1);
+            std::int64_t biases_concat_axis = 0;
+            const auto bias_shape = biases[0]->get_output_shape(0);
+            for (size_t i = 0; i < bias_shape.size(); ++i) {
+                if (bias_shape[i] > 1ul) {
+                    biases_concat_axis = i;
+                    break;
+                }
+            }
+
+            const auto new_biases = ngraph::op::util::make_try_fold<ngraph::opset8::Concat>(biases, biases_concat_axis);
             last_fused_node = std::make_shared<ngraph::opset8::Add>(last_fused_node, new_biases);
             ngraph::copy_runtime_info(biases, last_fused_node);
         }
 
+        const auto matmul_out_rank = matmul->get_output_partial_shape(0).rank().get_length();
         const auto split_axis = ngraph::opset8::Constant::create(ngraph::element::i64, ngraph::Shape{}, { matmul_out_rank - 1 });
         const auto split = std::make_shared<ngraph::opset8::Split>(last_fused_node, split_axis, matmuls_num);
         ngraph::copy_runtime_info(last_fused_node, split);
