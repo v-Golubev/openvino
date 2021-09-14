@@ -29,7 +29,6 @@
 #include "transformations/common_optimizations/relu_fake_quantize_fusion.hpp"
 #include "transformations/common_optimizations/disable_random_uniform_constant_folding.hpp"
 #include "transformations/common_optimizations/add_fake_quantize_fusion.hpp"
-#include "transformations/common_optimizations/matmul_horizontal_fusing.hpp"
 #include "transformations/common_optimizations/mul_fake_quantize_fusion.hpp"
 #include "transformations/common_optimizations/clamp_fusion.hpp"
 #include "transformations/common_optimizations/pad_fusion.hpp"
@@ -116,7 +115,6 @@ bool ngraph::pass::CommonOptimizations::run_on_function(std::shared_ptr<ngraph::
     eliminations->add_matcher<ngraph::pass::NopElimination>(); // may introduce fake dynamism
     eliminations->set_name("ngraph::pass::CommonEliminations");
 
-    manager.register_pass<ngraph::pass::MatMulHorizontalFusion>();
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     auto common_fusions = manager.register_pass<ngraph::pass::GraphRewrite>();

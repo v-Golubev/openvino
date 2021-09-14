@@ -24,6 +24,7 @@
 #include <transformations/common_optimizations/common_optimizations.hpp>
 #include <transformations/common_optimizations/weights_dequantize_to_fake_quantize.hpp>
 #include "transformations/common_optimizations/convert_quantize_dequantize.hpp"
+#include "transformations/common_optimizations/matmul_horizontal_fusing.hpp"
 #include <transformations/common_optimizations/softmax_fusion.hpp>
 #include <transformations/op_conversions/convert_depth_to_space.hpp>
 #include <transformations/op_conversions/convert_shuffle_channels3.hpp>
@@ -170,6 +171,7 @@ static void Transformation(CNNNetwork& clonedNetwork, const Config& conf) {
     manager.register_pass<ngraph::pass::ConvertMulticlassNmsToMulticlassNmsIE>();
     manager.register_pass<ngraph::pass::ConvertMatrixNmsToMatrixNmsIE>();
     manager.register_pass<ngraph::pass::TransposeMatMul>();
+    manager.register_pass<ngraph::pass::MatMulHorizontalFusion>();
     manager.register_pass<ngraph::pass::ConstantFolding>();
 
     if (useLpt) {
