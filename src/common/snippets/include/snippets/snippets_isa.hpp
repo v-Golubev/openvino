@@ -11,6 +11,7 @@
 #include "op/broadcastmove.hpp"
 #include "op/convert_saturation.hpp"
 #include "op/convert_truncation.hpp"
+#include "op/fma.hpp"
 #include "op/kernel.hpp"
 #include "op/load.hpp"
 #include "op/nop.hpp"

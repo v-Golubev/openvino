@@ -17,6 +17,7 @@
 #include "snippets/pass/transform_convert_to_truncation.hpp"
 #include "snippets/pass/insert_convert_on_inputs.hpp"
 #include "snippets/pass/reset_type_relaxed_node_precision.hpp"
+#include "snippets/pass/mul_add_to_fma.hpp"
 
 #include "transformations/common_optimizations/nop_elimination.hpp"
 #include "transformations/utils/utils.hpp"
@@ -316,6 +317,7 @@ void snippets::op::Subgraph::convert_to_snippet_dialect() {
     manager.register_pass<snippets::pass::InsertStore>(count);
     manager.register_pass<snippets::pass::InsertMoveBroadcast>();
     manager.register_pass<snippets::pass::LoadMoveBroadcastToBroadcastLoad>();
+    manager.register_pass<snippets::pass::MulAddToFMA>();
     // Note that, BrodacastMove is typically inserted right after the Load. Such cases are typical for
     // simple subgraphs where one of the ngraph::op's inputs is broadcasted to match the larger one. However, BroadcastMove
     // could also be inserted after the ngraph::op, if the op input don't need broadcasting, but the the output does
