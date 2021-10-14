@@ -71,6 +71,7 @@
 #include <ngraph/runtime/reference/squared_difference.hpp>
 #include <ngraph/runtime/reference/tensor_iterator.hpp>
 #include <ngraph/runtime/reference/utils/nms_common.hpp>
+#include <snippets/op/subgraph.hpp>
 
 #include "backend.hpp"
 #include "ngraph/ops.hpp"
@@ -2655,6 +2656,15 @@ bool evaluate(const shared_ptr<op::v8::Gather>& op, const HostTensorVector& outp
     return true;
 }
 
+template <element::Type_t ET>
+bool evaluate(std::shared_ptr<snippets::op::Subgraph> node,
+              const HostTensorVector& outputs,
+              const HostTensorVector& inputs) {
+    OPENVINO_SUPPRESS_DEPRECATED_START
+    return node->get_body()->evaluate(outputs, inputs);
+    OPENVINO_SUPPRESS_DEPRECATED_END
+}
+
 template <typename T>
 bool evaluate_node(std::shared_ptr<Node> node, const HostTensorVector& outputs, const HostTensorVector& inputs) {
     auto element_type = node->get_output_element_type(0);
@@ -2712,5 +2722,6 @@ runtime::interpreter::EvaluatorsMap& runtime::interpreter::get_evaluators_map() 
 
 #undef NGRAPH_OP
     };
+    evaluatorsMap[snippets::op::Subgraph::get_type_info_static()] = evaluate_node<snippets::op::Subgraph>;
     return evaluatorsMap;
 }

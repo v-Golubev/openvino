@@ -21,7 +21,8 @@ if(COMMAND ie_add_vs_version_file)
 endif()
 
 target_compile_definitions(interpreter_backend PRIVATE INTERPRETER_BACKEND_EXPORTS)
-target_link_libraries(interpreter_backend PUBLIC ngraph_backend)
+target_link_libraries(interpreter_backend PUBLIC ngraph_backend
+                                                 IE::inference_engine_snippets)
 
 install(TARGETS interpreter_backend
         RUNTIME DESTINATION ${IE_CPACK_RUNTIME_PATH} COMPONENT tests EXCLUDE_FROM_ALL
