@@ -477,7 +477,7 @@ static void TransformationUpToCPUSpecificOpSet(std::shared_ptr<ngraph::Function>
         ngraph::pass::Manager tokenization_manager;
         tokenization_manager.register_pass<ngraph::snippets::pass::FilterFused>();
         tokenization_manager.register_pass<ngraph::snippets::pass::TokenizeSnippets>();
-        tokenization_manager.run_passes(nGraphFunc);
+        //tokenization_manager.run_passes(nGraphFunc);
 #if defined (DUMP_TOKENIZATION)
         auto formatNodeName = [](const std::string& original_name) {
             std::string name(original_name);
