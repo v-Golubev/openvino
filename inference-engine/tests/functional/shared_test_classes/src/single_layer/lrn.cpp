@@ -10,42 +10,47 @@ std::string LrnLayerTest::getTestCaseName(const testing::TestParamInfo<lrnLayerT
     double alpha, beta, bias;
     size_t size;
     std::vector<int64_t> axes;
-    InferenceEngine::Precision  netPrecision;
-    InferenceEngine::Precision inPrc, outPrc;
-    std::vector<size_t> inputShapes;
+    ov::test::ElementType netPrecision;
+    ov::test::ElementType inType, outType;
+    ov::test::InputShape inputShapes;
     std::string targetDevice;
-    std::tie(alpha, beta, bias, size, axes, netPrecision, inPrc, outPrc, inputShapes, targetDevice) = obj.param;
+    std::tie(alpha, beta, bias, size, axes, netPrecision, inType, outType, inputShapes, targetDevice) = obj.param;
 
     std::ostringstream result;
     const char separator = '_';
-    result << "IS=" << CommonTestUtils::vec2str(inputShapes) << separator;
+
+    result << "IS=" << CommonTestUtils::partialShape2str({ inputShapes.first }) << separator << "TS=(";
+    for (const auto& shape : inputShapes.second) {
+        result << CommonTestUtils::vec2str(shape) << separator;
+    }
+    result << ")" << separator;
     result << "Alpha=" << alpha << separator;
     result << "Beta=" << beta << separator;
     result << "Bias=" << bias << separator;
     result << "Size=" << size << separator;
     result << "Axes=" << CommonTestUtils::vec2str(axes) << separator;
-    result << "netPRC=" << netPrecision.name() << separator;
-    result << "inPRC=" << inPrc.name() << separator;
-    result << "outPRC=" << outPrc.name() << separator;
+    result << "netPRC=" << netPrecision << separator;
+    result << "inPRC=" << inType << separator;
+    result << "outPRC=" << outType << separator;
     result << "trgDev=" << targetDevice;
 
     return result.str();
 }
 
 void LrnLayerTest::SetUp() {
-    std::vector<size_t> inputShapes;
-    auto netPrecision   = InferenceEngine::Precision::UNSPECIFIED;
+    ov::test::InputShape inputShapes;
+    ov::test::ElementType netPrecision;
     double alpha, beta, bias;
     size_t size;
     std::vector<int64_t> axes;
-    std::tie(alpha, beta, bias, size, axes, netPrecision, inPrc, outPrc, inputShapes, targetDevice) = GetParam();
+    std::tie(alpha, beta, bias, size, axes, netPrecision, inType, outType, inputShapes, targetDevice) = GetParam();
 
-    auto ngPrc = FuncTestUtils::PrecisionUtils::convertIE2nGraphPrc(netPrecision);
-    auto params = ngraph::builder::makeParams(ngPrc, {inputShapes});
-    auto paramIn =
-        ngraph::helpers::convert2OutputVector(ngraph::helpers::castOps2Nodes<ngraph::op::Parameter>(params));
+    init_input_shapes({ inputShapes });
 
-    auto axes_node = std::make_shared<ngraph::op::Constant>(ngraph::element::i64, ngraph::Shape{axes.size()}, axes.data());
+    auto params = ngraph::builder::makeDynamicParams(netPrecision, inputDynamicShapes);
+    auto paramIn = ngraph::helpers::convert2OutputVector(ngraph::helpers::castOps2Nodes<ngraph::op::Parameter>(params));
+
+    auto axes_node = ngraph::op::Constant::create(ngraph::element::i64, ngraph::Shape{axes.size()}, axes.data());
     auto lrn = std::make_shared<ngraph::opset3::LRN>(paramIn[0], axes_node, alpha, beta, bias, size);
     ngraph::ResultVector results {std::make_shared<ngraph::opset3::Result>(lrn)};
     function = std::make_shared<ngraph::Function>(results, params, "lrn");

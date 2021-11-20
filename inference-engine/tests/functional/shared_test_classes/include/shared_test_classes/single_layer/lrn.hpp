@@ -11,27 +11,27 @@
 
 #include "ngraph_functions/builders.hpp"
 #include "ngraph_functions/utils/ngraph_helpers.hpp"
+#include "shared_test_classes/base/ov_subgraph.hpp"
 
 #include "shared_test_classes/base/layer_test_utils.hpp"
 
 namespace LayerTestsDefinitions {
-
-typedef std::tuple<
+using lrnLayerTestParamsSet = std::tuple<
         double,                        // Alpha
         double,                        // Beta
         double,                        // Bias
         size_t,                        // Size
         std::vector<int64_t>,          // Reduction axes
-        InferenceEngine::Precision,    // Network precision
-        InferenceEngine::Precision,    // Input precision
-        InferenceEngine::Precision,    // Output precision
-        InferenceEngine::SizeVector,   // Input shapes
+        ov::test::ElementType,         // Network precision
+        ov::test::ElementType,         // Input precision
+        ov::test::ElementType,         // Output precision
+        ov::test::InputShape,          // Input shapes
         std::string                    // Device name
-> lrnLayerTestParamsSet;
+>;
 
 class LrnLayerTest
         : public testing::WithParamInterface<lrnLayerTestParamsSet>,
-          virtual public LayerTestsUtils::LayerTestsCommon {
+          virtual public ov::test::SubgraphBaseTest {
 public:
     static std::string getTestCaseName(const testing::TestParamInfo<lrnLayerTestParamsSet>& obj);
 

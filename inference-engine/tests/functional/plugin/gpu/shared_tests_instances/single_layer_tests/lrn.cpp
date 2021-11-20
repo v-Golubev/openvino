@@ -9,10 +9,10 @@
 #include "common_test_utils/test_constants.hpp"
 
 using namespace LayerTestsDefinitions;
+using namespace ov::test;
 
 namespace {
-const std::vector<InferenceEngine::Precision> netPrecisions = {InferenceEngine::Precision::FP32,
-                                                               InferenceEngine::Precision::FP16};
+const std::vector<ElementType> netPrecisions = { ElementType::f32, ElementType::f16 };
 
 const std::vector<std::vector<int64_t>> axes = {{1}, {2, 3}};
 
@@ -30,8 +30,7 @@ INSTANTIATE_TEST_SUITE_P(smoke_LrnCheck, LrnLayerTest,
                                            ::testing::ValuesIn(netPrecisions),
                                            ::testing::Values(InferenceEngine::Precision::UNSPECIFIED),
                                            ::testing::Values(InferenceEngine::Precision::UNSPECIFIED),
-                                           ::testing::Values(std::vector<size_t>({10, 10, 3, 2})),
+                                           ::testing::Values(InputShape{{}, {{10, 10, 3, 2}}}),
                                            ::testing::Values(CommonTestUtils::DEVICE_GPU)),
                         LrnLayerTest::getTestCaseName);
-
 }  // namespace
