@@ -21,11 +21,14 @@
 #include "transformations/utils/utils.hpp"
 #include "rnn_sequences_optimization.hpp"
 
+#include "affinity_switcher.hpp"
+
 namespace MKLDNNPlugin {
 
 inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphFunc) {
     ngraph::pass::Manager manager;
     manager.register_pass<ngraph::pass::ConstantFolding>();
+    manager.register_pass<AffinitySwitcher>();
     manager.register_pass<Reshape1DConvolution>();
     manager.register_pass<Reshape1DGroupConvolution>();
     manager.register_pass<Reshape1DAvgPool>();
@@ -43,6 +46,7 @@ inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphF
     manager.register_pass<OptimizeGRUSequenceTransposes>();
     manager.register_pass<OptimizeLSTMSequenceTransposes>();
     manager.register_pass<OptimizeRNNSequenceTransposes>();
+
     if (!ngraph::op::util::has_op_with_type<ngraph::op::FakeQuantize>(nGraphFunc)) {
         manager.register_pass<ReshapeFullyConnectedFusion>();
     }
@@ -52,6 +56,10 @@ inline void ConvertToCPUSpecificOpset(std::shared_ptr<ngraph::Function> &nGraphF
     // TODO: remove after dynamic shapes support in FullyConnectedNode
     manager.get_pass_config()->set_callback<ConvertMatMulToFC>([](const std::shared_ptr<const ngraph::Node>& node) -> bool {
         return node->get_input_partial_shape(0).is_dynamic();
+    });
+
+    manager.get_pass_config()->set_callback<AffinitySwitcher>([](const std::shared_ptr<const ngraph::Node>& node) -> bool {
+        return node->get_friendly_name() == "resnet_model/add_9/fq_input_1";
     });
 
     manager.run_passes(nGraphFunc);
