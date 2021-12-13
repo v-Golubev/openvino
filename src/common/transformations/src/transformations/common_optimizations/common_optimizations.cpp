@@ -55,6 +55,7 @@
 #include "transformations/common_optimizations/matmul_multiply_fusion.hpp"
 #include "transformations/common_optimizations/concat_reduce_fusion.hpp"
 #include "transformations/op_conversions/bidirectional_sequences_decomposition.hpp"
+#include "transformations/common_optimizations/concat_reduce_fusion.hpp"
 #include "transformations/op_conversions/convert_pad_to_group_conv.hpp"
 #include "transformations/op_conversions/convert_divide.hpp"
 #include "transformations/op_conversions/convert_gather_downgrade.hpp"
