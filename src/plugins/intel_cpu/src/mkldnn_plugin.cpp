@@ -394,9 +394,10 @@ static void TransformationUpToCPUSpecificOpSet(std::shared_ptr<ngraph::Function>
     if (useLpt) {
         pass_config->set_callback<ngraph::pass::AddFakeQuantizeFusion,
                                   ngraph::pass::MulFakeQuantizeFusion,
-                                  ngraph::pass::FakeQuantizeMulFusion>([](const_node_ptr &node) -> bool {
+                                  ngraph::pass::FakeQuantizeMulFusion>([](const_node_ptr& node) -> bool {
             std::string errMsg;
-            return !MKLDNNFakeQuantizeNode::isSupportedOperation(node, errMsg);
+            return !MKLDNNFakeQuantizeNode::isSupportedOperation(node, errMsg) &&
+                   !ngraph::is_type<ngraph::opset1::Constant>(node->get_input_node_shared_ptr(0));
         });
 
         pass_config->set_callback<ngraph::pass::ConvertQuantizeDequantize>([](const_node_ptr &node) -> bool {
