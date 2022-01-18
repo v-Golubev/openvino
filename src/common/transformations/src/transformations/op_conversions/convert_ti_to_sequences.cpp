@@ -238,7 +238,7 @@ ngraph::pass::ConvertTensorIteratorToLSTMSequence::ConvertTensorIteratorToLSTMSe
         // create a pattern for the TensorIterator body
         auto data = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(3));
         auto pattern_1 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
-        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape>({ data, pattern_1 });
+        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape, ngraph::opset5::Squeeze>({data, pattern_1});
 
         auto input_H_state = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(2));
         auto input_C_state = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(2));
@@ -246,7 +246,7 @@ ngraph::pass::ConvertTensorIteratorToLSTMSequence::ConvertTensorIteratorToLSTMSe
         auto input_R = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(2));
         auto input_B = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
 
-        ngraph::OutputVector cell_inputs{ squeeze, input_H_state, input_C_state, input_W, input_R, input_B };
+        ngraph::OutputVector cell_inputs{squeeze, input_H_state, input_C_state, input_W, input_R, input_B};
         auto cell = ngraph::pattern::wrap_type<ngraph::opset1::LSTMCell, ngraph::opset5::LSTMCell>(cell_inputs);
 
         auto pattern_2 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
@@ -297,14 +297,14 @@ ngraph::pass::ConvertTensorIteratorToRNNSequence::ConvertTensorIteratorToRNNSequ
         // create a pattern for the TensorIterator body
         auto data = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(3));
         auto pattern_1 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
-        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape>({ data, pattern_1 });
+        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape, ngraph::opset5::Squeeze>({data, pattern_1});
 
         auto input_H_state = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(2));
         auto input_W = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(2));
         auto input_R = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(2));
         auto input_B = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
 
-        ngraph::OutputVector cell_inputs{ squeeze, input_H_state, input_W, input_R, input_B };
+        ngraph::OutputVector cell_inputs{squeeze, input_H_state, input_W, input_R, input_B};
         auto cell = ngraph::pattern::wrap_type<ngraph::opset5::RNNCell>(cell_inputs);
 
         auto pattern_2 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
@@ -354,14 +354,14 @@ ngraph::pass::ConvertTensorIteratorToGRUSequence::ConvertTensorIteratorToGRUSequ
         // create a pattern for the TensorIterator body
         auto data = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(3));
         auto pattern_1 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
-        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape>({ data, pattern_1 });
+        auto squeeze = ngraph::pattern::wrap_type<ngraph::opset5::Reshape, ngraph::opset5::Squeeze>({data, pattern_1});
 
         auto input_H_state = ngraph::pattern::wrap_type<ngraph::opset5::Parameter>(ngraph::pattern::rank_equals(2));
         auto input_W = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(2));
         auto input_R = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(2));
         auto input_B = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));
 
-        ngraph::OutputVector cell_inputs{ squeeze, input_H_state, input_W, input_R, input_B };
+        ngraph::OutputVector cell_inputs{squeeze, input_H_state, input_W, input_R, input_B};
         auto cell = ngraph::pattern::wrap_type<ngraph::opset5::GRUCell>(cell_inputs);
 
         auto pattern_2 = ngraph::pattern::wrap_type<ngraph::opset5::Constant>(ngraph::pattern::rank_equals(1));

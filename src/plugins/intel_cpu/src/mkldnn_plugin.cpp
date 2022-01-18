@@ -183,6 +183,7 @@ static void TransformationUpToCPUSpecificOpSet(std::shared_ptr<ngraph::Function>
     manager.register_pass<ngraph::pass::ConvertOpSet3ToOpSet2>();
     manager.register_pass<ngraph::pass::ConvertOpSet2ToOpSet1>();
     manager.register_pass<ngraph::pass::ConvertTensorIteratorToSequence>();
+    manager.register_pass<ngraph::pass::ConvertGather1ToGather7>();
     manager.register_pass<ngraph::pass::LSTMCellDecomposition>();
     manager.register_pass<ngraph::pass::GRUCellDecomposition>();
     manager.register_pass<ngraph::pass::RNNCellDecomposition>();
