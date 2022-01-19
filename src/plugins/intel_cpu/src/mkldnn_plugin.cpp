@@ -143,6 +143,10 @@ Engine::~Engine() {
 
 static void TransformationUpToCPUSpecificOpSet(std::shared_ptr<ngraph::Function> nGraphFunc, const bool _enableLPT,
                                                const bool _enableSnippets) {
+    for (auto&& param : nGraphFunc->get_parameters()) {
+        param->set_partial_shape(ngraph::PartialShape::dynamic(param->get_partial_shape().rank()));
+    }
+    nGraphFunc->validate_nodes_and_infer_types();
     ngraph::pass::Manager manager;
     manager.set_per_pass_validation(false);
     manager.register_pass<ngraph::pass::InitNodeInfo>();
