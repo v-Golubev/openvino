@@ -102,12 +102,9 @@ bool convertTensorIteratorToSequence(
         std::make_shared<ngraph::opset5::Unsqueeze>(ti_inputs[ordered_in_descs[2]->m_input_index], axis_1);
 
     const size_t batch_dim = slice_axis == 0 ? 1 : 0;
-    //TODO: replace to ngraph::op::util::node_to_get_shape_value_of_indices_from_shape_node(target_param, { batch_dimension });
-    auto shape_node = ngraph::op::util::make_try_fold<ngraph::opset5::ShapeOf>(ti_inputs[ordered_in_descs[0]->m_input_index]);
-    auto batch_dimension = ngraph::op::util::make_try_fold<ngraph::opset5::Gather>(
-        shape_node,
-        ngraph::opset5::Constant::create(ngraph::element::i64, { 1 }, { batch_dim }),
-        ngraph::opset5::Constant::create(ngraph::element::i64, {}, { 0 }));
+    auto batch_dimension = ngraph::op::util::node_to_get_shape_value_of_indices_from_shape_source(
+        ti_inputs[ordered_in_descs[0]->m_input_index],
+        {batch_dim});
 
     auto seq_lengths_scalar = ngraph::opset5::Constant::create(ngraph::element::i32, {}, { ti->get_num_iterations() });
     auto seq_lengths = ngraph::op::util::make_try_fold<ngraph::opset5::Broadcast>(seq_lengths_scalar, batch_dimension);
@@ -211,7 +208,6 @@ bool convertTensorIteratorToSequence(
         new_nodes.emplace_back(initial_cell_state);
     }
     if (!std::dynamic_pointer_cast<ngraph::opset5::Constant>(seq_lengths)) {
-        new_nodes.emplace_back(shape_node);
         new_nodes.emplace_back(batch_dimension);
         new_nodes.emplace_back(seq_lengths_scalar);
         new_nodes.emplace_back(seq_lengths);
