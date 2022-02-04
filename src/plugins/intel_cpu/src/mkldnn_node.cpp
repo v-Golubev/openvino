@@ -1500,11 +1500,18 @@ void MKLDNNNode::updateLastInputDims() {
 
 bool MKLDNNNode::canFuseSimpleOperation(const MKLDNNNodePtr& node) const {
     if (node->getType() == FakeQuantize) {
-        bool ret = node->getAlgorithm() != FQBinarization;
-        for (size_t i = 1; i < node->getParentEdges().size(); i++) {
-            ret &= node->getParentEdgesAtPort(i)[0]->getParent()->getChildEdges().size() == 1;
+        if (node->getAlgorithm() == FQBinarization) {
+            return false;
         }
-        return ret;
+        const size_t channelAxis = getFusingAxis();
+        const auto& dataShape = getInputShapeAtPort(0).getDims();
+        for (size_t i = 1; i < node->getParentEdges().size(); i++) {
+            if (node->getParentEdgesAtPort(i)[0]->getParent()->getChildEdges().size() != 1 ||
+                !isPerTensorOrPerChannelBroadcastable(dataShape, node->getInputShapeAtPort(i).getDims(), channelAxis, true)) {
+                return false;
+            }
+        }
+        return true;
     } else if (node->getType() == Eltwise) {
         return one_of(node->getAlgorithm(),
                       EltwiseRelu, EltwiseGelu, EltwiseElu, EltwiseSigmoid, EltwiseClamp, EltwiseTanh,
