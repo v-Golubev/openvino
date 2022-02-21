@@ -100,7 +100,8 @@ bool switchToImageAffinity(const std::set<ov::Input<ov::Node>>& starts,
         for (auto& elem : concatenate_map) {
             const auto& orig_out = elem.first;
             const auto& clone_with_opt_batch = cloned_nodes.find(orig_out.get_node());
-            // TODO: exception if not found
+            if (clone_with_opt_batch == cloned_nodes.end())
+                OPENVINO_UNREACHABLE("Mixed Affinity: clone with optimal batch wasn't found");
 
             elem.second[batch_idx] = clone_with_opt_batch->second->output(orig_out.get_index());
         }
