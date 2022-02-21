@@ -35,20 +35,18 @@ size_t get_hueristic_optimal_batch(const std::shared_ptr<ov::Node>& node) {
 }  // namespace
 
 ov::intel_cpu::MarkupOptimalBS::MarkupOptimalBS() {
-    auto has_static_batch = [](const ov::Output<ov::Node>& output) {
-        return ngraph::pattern::has_static_rank()(output) && output.get_partial_shape()[0].is_static();
-    };
     auto conv_m = ngraph::pattern::wrap_type<ngraph::opset1::Convolution,
                                              ngraph::opset1::ConvolutionBackpropData,
-                                             ov::intel_cpu::FullyConnectedNode>(has_static_batch);
+                                             ov::intel_cpu::FullyConnectedNode>(ngraph::pattern::has_static_dim(0));
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         auto node = m.get_match_root();
         const size_t optimal_bs = get_hueristic_optimal_batch(node);
 
-        //if (optimal_bs > 0) {
+        const auto cur_bs = m.get_match_value().get_partial_shape()[0].get_length();
+        if (cur_bs > optimal_bs) {
             ov::intel_cpu::set_optimal_bs(node, optimal_bs);
-        //}
+        }
         return false;
     };
 
