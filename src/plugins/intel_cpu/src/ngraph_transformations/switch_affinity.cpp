@@ -122,22 +122,8 @@ NGRAPH_RTTI_DEFINITION(ov::intel_cpu::SwitchAffinity, "SwitchAffinity", 0);
 
 bool ov::intel_cpu::SwitchAffinity::run_on_model(const std::shared_ptr<ov::Model>& m) {
     bool rewritten = false;
-
-    for (const auto& subgraph : subgraphs) {
-        std::cout << "SUBGRAPH" << std::endl;
-        std::cout << "Batch size: " << subgraph.first << std::endl;
-        std::cout << "Starts: " << std::endl;
-        for (const auto& start : subgraph.second.starts) {
-            std::cout << start << std::endl;
-        }
-        std::cout << "Ends: " << std::endl;
-        for (const auto& end : subgraph.second.ends) {
-            std::cout << end.get_node_shared_ptr() << std::endl;
-        }
-        std::cout << "\n\n" << std::endl;
-        switchToImageAffinity(subgraph.second.starts, subgraph.second.ends, subgraph.first, share_constants);
-    }
-
+    for (const auto& subgraph : subgraphs)
+        rewritten = rewritten || switchToImageAffinity(subgraph.second.starts, subgraph.second.ends, subgraph.first, share_constants);
     return rewritten;
 }
 

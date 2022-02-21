@@ -32,19 +32,17 @@ std::unordered_map<size_t, ov::intel_cpu::Subgraph> formSubgraphs(const std::sha
     };
 
     auto add_start = [&subgraphs](const ov::Input<ov::Node>& start, const size_t opt_bs) {
-        if (subgraphs.count(opt_bs)) {
+        if (subgraphs.count(opt_bs))
             subgraphs[opt_bs].starts.insert(start);
-        } else {
+        else
             subgraphs[opt_bs] = ov::intel_cpu::Subgraph{{start}, {}};
-        }
     };
 
     auto add_end = [&subgraphs](const ov::Output<ov::Node>& end, const size_t opt_bs) {
-        if (subgraphs.count(opt_bs)) {
+        if (subgraphs.count(opt_bs))
             subgraphs[opt_bs].ends.insert(end);
-        } else {
+        else
             subgraphs[opt_bs] = ov::intel_cpu::Subgraph{{}, {end}};
-        }
     };
 
     for (const auto& node : m->get_ordered_ops()) {
@@ -52,10 +50,6 @@ std::unordered_map<size_t, ov::intel_cpu::Subgraph> formSubgraphs(const std::sha
             continue;
 
         const size_t opt_bs = ov::intel_cpu::get_optimal_bs(node);
-        // TODO: remove this WA
-        if (opt_bs == 0)
-            continue;
-
         for (const auto& input : node->inputs()) {
             const auto node = input.get_source_output().get_node_shared_ptr();
 
