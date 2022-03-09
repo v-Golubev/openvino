@@ -18,7 +18,7 @@ ov::intel_cpu::PropagateOptimalBS::PropagateOptimalBS() {
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         const auto node = m.get_match_root();
-        if (has_optimal_bs(node)) {
+        if (has_optimal_bs(node) || is_type<ngraph::opset1::Result>(node)) {
             return false;
         }
 

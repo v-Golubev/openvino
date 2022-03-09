@@ -123,8 +123,10 @@ NGRAPH_RTTI_DEFINITION(ov::intel_cpu::SwitchAffinity, "SwitchAffinity", 0);
 
 bool ov::intel_cpu::SwitchAffinity::run_on_model(const std::shared_ptr<ov::Model>& m) {
     bool rewritten = false;
-    for (const auto& subgraph : subgraphs)
-        rewritten = rewritten || switchToImageAffinity(subgraph.second.starts, subgraph.second.ends, subgraph.first, share_constants);
+    for (const auto& subgraph : subgraphs) {
+        bool status = switchToImageAffinity(subgraph.second.starts, subgraph.second.ends, subgraph.first, share_constants);
+        rewritten |= status;
+    }
     return rewritten;
 }
 
