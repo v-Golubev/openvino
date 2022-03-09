@@ -24,13 +24,37 @@ size_t get_hueristic_optimal_batch(const std::shared_ptr<ov::Node>& node) {
                                  "resnet_model/conv2d_15/Conv2D"};
 
     const auto name = node->get_friendly_name();
-    if (batch1.count(name)) {
+
+    if (batch1.count(name))
         return 1;
-    }
-    if (batch2.count(name)) {
+    else if (batch2.count(name))
         return 2;
-    }
-    return 0;
+    else
+        return 0;
+}
+
+size_t get_hueristic_optimal_batch2(const std::shared_ptr<ov::Node>& node) {
+    auto output_shape = node->get_output_shape(0);
+    const size_t original_batch = output_shape[0];
+    if (ov::is_type<ov::intel_cpu::FullyConnectedNode>(node))
+        return output_shape[0];
+    output_shape[0] = 1;
+
+    const auto weights_shape = node->get_input_shape(1);
+    const auto div =
+        static_cast<double>(ngraph::shape_size(weights_shape)) / static_cast<double>(ngraph::shape_size(output_shape));
+
+    size_t new_batch = original_batch;
+    if (div < 0.6)
+        new_batch = 1;
+    else if (div < 2.3)
+        new_batch = 2;
+    else if (div < 4.02)
+        new_batch = 4;
+    else
+        new_batch = 8;
+
+    return original_batch % new_batch == 0 ? new_batch : original_batch;
 }
 }  // namespace
 
@@ -41,10 +65,10 @@ ov::intel_cpu::MarkupOptimalBS::MarkupOptimalBS() {
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         auto node = m.get_match_root();
-        const size_t optimal_bs = get_hueristic_optimal_batch(node);
+        const size_t optimal_bs = get_hueristic_optimal_batch2(node);
 
         const auto cur_bs = m.get_match_value().get_partial_shape()[0].get_length();
-        if (cur_bs > optimal_bs) {
+        if (cur_bs >= optimal_bs) {
             ov::intel_cpu::set_optimal_bs(node, optimal_bs);
         }
         return false;
