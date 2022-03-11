@@ -18,10 +18,11 @@ ov::intel_cpu::PropagateOptimalBS::PropagateOptimalBS() {
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         const auto node = m.get_match_root();
-        if (has_optimal_bs(node) || is_type<ngraph::opset1::Result>(node)) {
+        if (has_optimal_bs(node) || is_type<ngraph::opset1::Result>(node))
             return false;
-        }
-
+        const auto& pshape = m.get_match_value().get_partial_shape();
+        if (pshape.size() == 0)
+            return false;
 
         auto set_parent_opt_bs = [&node](const std::shared_ptr<ov::Node>& parent) {
             if (!has_optimal_bs(parent)) {
@@ -32,7 +33,7 @@ ov::intel_cpu::PropagateOptimalBS::PropagateOptimalBS() {
             return true;
         };
 
-        const auto node_batch = m.get_match_value().get_partial_shape()[0].get_length();
+        const auto node_batch = pshape[0].get_length();
         for (const auto& input : node->input_values()) {
             const auto& input_ps = input.get_partial_shape();
             if (!input_ps.rank().is_static() || input_ps.size() == 0 || input_ps[0].get_length() != node_batch)
