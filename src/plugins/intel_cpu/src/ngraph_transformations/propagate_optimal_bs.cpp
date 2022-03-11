@@ -14,7 +14,7 @@ using namespace ov::intel_cpu;
 NGRAPH_RTTI_DEFINITION(PropagateOptimalBS, "PropagateOptimalBS", 0);
 
 ov::intel_cpu::PropagateOptimalBS::PropagateOptimalBS() {
-    auto root = ngraph::pattern::any_input(ngraph::pattern::has_static_dim(0));
+    auto root = ngraph::pattern::any_input(ngraph::pattern::has_static_shape());
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         const auto node = m.get_match_root();

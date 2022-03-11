@@ -38,6 +38,7 @@ size_t get_hueristic_optimal_batch2(const std::shared_ptr<ov::Node>& node) {
     const size_t original_batch = output_shape[0];
     if (ov::is_type<ov::intel_cpu::FullyConnectedNode>(node))
         return output_shape[0];
+
     output_shape[0] = 1;
 
     const auto weights_shape = node->get_input_shape(1);
@@ -61,7 +62,7 @@ size_t get_hueristic_optimal_batch2(const std::shared_ptr<ov::Node>& node) {
 ov::intel_cpu::MarkupOptimalBS::MarkupOptimalBS() {
     auto conv_m = ngraph::pattern::wrap_type<ngraph::opset1::Convolution,
                                              ngraph::opset1::ConvolutionBackpropData,
-                                             ov::intel_cpu::FullyConnectedNode>(ngraph::pattern::has_static_dim(0));
+                                             ov::intel_cpu::FullyConnectedNode>(ngraph::pattern::has_static_shape());
 
     ngraph::matcher_pass_callback callback = [=](ngraph::pattern::Matcher& m) {
         auto node = m.get_match_root();
