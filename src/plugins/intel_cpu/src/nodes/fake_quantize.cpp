@@ -1915,6 +1915,63 @@ void MKLDNNFakeQuantizeNode::appendBinPostOps(mkldnn::post_ops& ops, const Vecto
     appendBinary(mkldnn::algorithm::binary_add, outputShiftSize, outputShiftMemory, &outputShiftData.shifts_[0]);
 }
 
+
+void MKLDNNFakeQuantizeNode::appendBinPostOpsOptimized(mkldnn::post_ops& ops, const VectorDims &postOpDims, std::vector<MKLDNNMemoryPtr>& binaryPostOpsMem,
+                                                       bool isLastPostOp, mkldnn::memory::data_type outDataType) {
+    static const size_t bufferAlignment = 1;
+
+    initializePostOpData(postOpDims, bufferAlignment);
+
+    VectorDims broadcastBinaryShape(postOpDims.size(), 1);
+
+    auto appendBinary = [&](const mkldnn::algorithm alg, const size_t dataSize, MKLDNNMemoryPtr &memPtr, const void *data) {
+        DnnlBlockedMemoryDesc memoryDesc(Precision::FP32, dataSize == 1 ? Shape(broadcastBinaryShape) : Shape(postOpDims));
+        ops.append_binary(alg, memoryDesc.getDnnlDesc());
+
+        if (!memPtr) {
+            memPtr.reset(new MKLDNNMemory(getEngine()));
+            memPtr->Create(memoryDesc, data);
+
+            binaryPostOpsMem.push_back(memPtr);
+        }
+    };
+
+    mkldnn::algorithm alg = getAlgorithm() == FQCommon || getAlgorithm() == FQRequantization ? mkldnn::algorithm::quantization_quantize_dequantize :
+                            mkldnn::algorithm::quantization_quantize;
+
+    if (isLastPostOp &&
+        outDataType == memory::data_type::u8 &&
+        getAlgorithm() == FQQuantization
+        /*levels == 256*/) {
+        auto &cl = getCropLow();
+        auto &isc = getInputScale();
+        auto &ish = getInputShift();
+
+        if (std::all_of(cl.cbegin(), cl.cend(), [](float val) { return val == 0.0f; }) &&
+            std::all_of(isc.cbegin(), isc.cend(), [&](float val) { return val == isc[0]; }) &&
+            std::all_of(ish.cbegin(), ish.cend(), [&](float val) { return val == ish[0]; })) {
+            ops.append_eltwise(1.0f, mkldnn::algorithm::eltwise_linear, isc[0], ish[0]);
+
+            return;
+        } else if (std::all_of(cl.cbegin(), cl.cend(), [](float val) { return val == 0.0f; })) {
+            appendBinary(mkldnn::algorithm::binary_mul, inputScaleSize, inputScaleMemory, &inputScaleData.scales_[0]);
+            appendBinary(mkldnn::algorithm::binary_add, inputShiftSize, inputShiftMemory, &inputShiftData.shifts_[0]);
+
+            return;
+        }
+    }
+
+    appendBinary(mkldnn::algorithm::binary_min, cropHighSize, cropHighMemory, &cropHighData.shifts_[0]);
+    appendBinary(mkldnn::algorithm::binary_max, cropLowSize, cropLowMemory, &cropLowData.shifts_[0]);
+    appendBinary(mkldnn::algorithm::binary_mul, inputScaleSize, inputScaleMemory, &inputScaleData.scales_[0]);
+    appendBinary(mkldnn::algorithm::binary_add, inputShiftSize, inputShiftMemory, &inputShiftData.shifts_[0]);
+    if (alg == mkldnn::algorithm::quantization_quantize_dequantize) {
+        ops.append_eltwise(1.0f, mkldnn::algorithm::eltwise_round_half_to_even, 0, 0);
+    }
+    appendBinary(mkldnn::algorithm::binary_mul, outputScaleSize, outputScaleMemory, &outputScaleData.scales_[0]);
+    appendBinary(mkldnn::algorithm::binary_add, outputShiftSize, outputShiftMemory, &outputShiftData.shifts_[0]);
+}
+
 MKLDNNFakeQuantizeNode::FakeQuantizeJitExecutor::FakeQuantizeJitExecutor(const jit_quantize_params &_jqp) {
     bool isBinarization = _jqp.op_type == FQBinarization;
     if (mayiuse(cpu::x64::avx512_common)) {

@@ -126,6 +126,8 @@ public:
     void appendPostOps(mkldnn::post_ops& ops, const VectorDims &postOpDims, std::vector<MKLDNNMemoryPtr>& postOpsMem) override;
     void appendPostOps(mkldnn::post_ops& ops, const VectorDims &postOpDims, std::vector<const void*>& postOpsMem) override;
     void appendBinPostOps(mkldnn::post_ops& ops, const VectorDims &postOpDims, std::vector<MKLDNNMemoryPtr>& binaryPostOpsMem) override;
+    void appendBinPostOpsOptimized(mkldnn::post_ops& ops, const VectorDims &postOpDims, std::vector<MKLDNNMemoryPtr>& binaryPostOpsMem,
+            bool isLastPostOp, mkldnn::memory::data_type outDataType);
 
     static bool isSupportedOperation(const std::shared_ptr<const ngraph::Node>& op, std::string& errorMessage) noexcept;
 
