@@ -65,7 +65,7 @@ ov::intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_
     // jitters[ngraph::opset1::FakeQuantize::get_type_info_static()] = CREATE_EMITTER(); // not supported
 
     // ternary
-    jitters[ngraph::snippets::op::FMA::get_type_info_static()] = CREATE_EMITTER(ov::intel_cpu::jit_mul_add_emitter);
+    jitters[ngraph::snippets::op::FusedMulAdd::get_type_info_static()] = CREATE_EMITTER(ov::intel_cpu::jit_mul_add_emitter);
 
     // binary
     jitters[ngraph::opset1::Add::get_type_info_static()] = CREATE_EMITTER(ov::intel_cpu::jit_add_emitter);

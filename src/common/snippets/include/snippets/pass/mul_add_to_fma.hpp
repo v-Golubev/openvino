@@ -13,7 +13,7 @@ namespace pass {
 
 /**
 * @interface MulAddToFMA
-* @brief Replaces mul and add with FMA node
+* @brief Replaces mul and add with FusedMulAdd node
 * @ingroup snippets
 */
 class MulAddToFMA : public ngraph::pass::MatcherPass {

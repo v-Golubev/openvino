@@ -6,7 +6,7 @@
 
 #include "snippets/pass/mul_add_to_fma.hpp"
 #include "snippets/snippets_isa.hpp"
-#include "snippets/op/fma.hpp"
+#include "snippets/op/fused_mul_add.hpp"
 
 #include <ngraph/opsets/opset1.hpp>
 #include <ngraph/rt_info.hpp>
@@ -34,7 +34,7 @@ ngraph::snippets::pass::MulAddToFMA::MulAddToFMA() {
         const auto& b = multiply->input_value(1);
         const auto& c = pattern_map.at(add_input_2);
 
-        const auto fma = std::make_shared<ngraph::snippets::op::FMA>(a, b, c);
+        const auto fma = std::make_shared<ngraph::snippets::op::FusedMulAdd>(a, b, c);
         ngraph::copy_runtime_info({ a.get_node_shared_ptr(), b.get_node_shared_ptr(), c.get_node_shared_ptr() }, fma);
         ngraph::replace_node(add, fma);
 
