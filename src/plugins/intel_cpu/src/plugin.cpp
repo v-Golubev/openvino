@@ -544,10 +544,14 @@ static void TransformationUpToCPUSpecificOpSet(std::shared_ptr<ngraph::Function>
     }
 }
 
-static void Transformation(CNNNetwork& clonedNetwork, const bool _enableLPT, const bool _enableSnippets, const bool isLegacyApi) {
+static void Transformation(CNNNetwork& clonedNetwork,
+                           const bool _enableLPT,
+                           const bool _enableSnippets,
+                           const bool isLegacyApi,
+                           const bool enableDynamicBatch) {
     auto nGraphFunc = clonedNetwork.getFunction();
     TransformationUpToCPUSpecificOpSet(nGraphFunc, _enableLPT, _enableSnippets, isLegacyApi);
-    ConvertToCPUSpecificOpset(nGraphFunc);
+    ConvertToCPUSpecificOpset(nGraphFunc, enableDynamicBatch);
 }
 
 static bool streamsSet(const std::map<std::string, std::string>& config) {
@@ -693,7 +697,7 @@ Engine::LoadExeNetworkImpl(const InferenceEngine::CNNNetwork &network, const std
 
     ApplyPerformanceHints(config, nGraphFunc);
 
-    ConvertToCPUSpecificOpset(nGraphFunc);
+    ConvertToCPUSpecificOpset(nGraphFunc, enableDynamicBatch);
 
     // update the props after the perf mode translated to configs
     // TODO: Clarify the behavior of SetConfig method. Skip eng_config or not?
@@ -918,7 +922,7 @@ QueryNetworkResult Engine::QueryNetwork(const CNNNetwork& network, const std::ma
                                || Config::LPTransformsMode::On == engConfig.lpTransformsMode /* or already enabled */;
         const bool enableSnippets = !(conf.cache_dir.empty() || conf.enableDynamicBatch || (conf.enforceBF16
                 && dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core)));
-        Transformation(clonedNetwork, enableLPT, enableSnippets, isLegacyAPI());
+        Transformation(clonedNetwork, enableLPT, enableSnippets, isLegacyAPI(), conf.enableDynamicBatch);
         auto ops = clonedNetwork.getFunction()->get_ordered_ops();
         std::unordered_set<std::string> supported;
         std::unordered_set<std::string> unsupported;
