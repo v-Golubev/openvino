@@ -57,6 +57,7 @@ public:
     }
 };
 
+void cleanMemoryFormats(const std::shared_ptr<ngraph::Node>& node);
 
 class InputMemoryFormats : public MemoryFormats<InputMemoryFormats> {
 public:
