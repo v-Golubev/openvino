@@ -170,9 +170,6 @@ bool ConvolutionTransformation::transform(TransformationContext &context, ngraph
         }
 
         const auto copyNode = convolution->clone_with_new_inputs({ dequantization.multiply->input_value(0), convolution->input_value(1) });
-        copyNode->set_friendly_name(convolution->get_friendly_name());
-        ngraph::copy_runtime_info(convolution, copyNode);
-
         std::shared_ptr<Node> relaxedNewConvolution;
         if (auto conv = ov::as_type_ptr<opset1::Convolution>(copyNode)) {
             relaxedNewConvolution = std::make_shared<op::TypeRelaxed<opset1::Convolution>>(
@@ -197,14 +194,8 @@ bool ConvolutionTransformation::transform(TransformationContext &context, ngraph
         convolution = newMultiplyAfter->input_value(0).get_node_shared_ptr();
 
         if (ov::is_type<opset1::Convert>(convolution->get_input_node_ptr(0))) {
-            auto newConvolution = convolution->clone_with_new_inputs({
-                convolution->get_input_node_ptr(0)->input_value(0),
-                convolution->input_value(1)});
-            newConvolution->set_friendly_name(convolution->get_friendly_name());
-            ngraph::copy_runtime_info(convolution, newConvolution);
-            replace_node(convolution, newConvolution);
-            NetworkHelper::copyInfo(convolution, newConvolution);
-            convolution = newConvolution;
+            ngraph::replace_output_update_name(convolution->input_value(0),
+                                               convolution->get_input_node_ptr(0)->input_value(0));
         }
     }
 
@@ -300,17 +291,11 @@ bool ConvolutionTransformation::transform(TransformationContext &context, ngraph
         if (convertFromWeights != nullptr) {
             // remove Convert on weights
             std::shared_ptr<Node> childNode = reshapeFromWeights == nullptr ? convolution : reshapeFromWeights;
-
-            auto newConvolution = convolution->clone_with_new_inputs({
-                convolution->input_value(0),
-                childNode.get() == convolution.get() ?
-                    convolution->get_input_node_ptr(1)->input_value(0) :
-                    childNode->clone_with_new_inputs({convertFromWeights->input_value(0), childNode->input_value(1)})});
-            newConvolution->set_friendly_name(convolution->get_friendly_name());
-            ngraph::copy_runtime_info(convolution, newConvolution);
-            replace_node(convolution, newConvolution);
-            NetworkHelper::copyInfo(convolution, newConvolution);
-            convolution = newConvolution;
+            const auto new_weights_input =
+                childNode.get() == convolution.get()
+                    ? convolution->get_input_node_ptr(1)->input_value(0)
+                    : childNode->clone_with_new_inputs({convertFromWeights->input_value(0), childNode->input_value(1)});
+            ngraph::replace_output_update_name(convolution->input_value(1), new_weights_input);
         }
 
         reshapeFromWeights = ov::as_type_ptr<opset1::Reshape>(convolution->get_input_node_shared_ptr(1));
