@@ -40,7 +40,7 @@ class Tensor;
 }  // namespace runtime
 
 template <typename T>
-std::string join(const T& v, const std::string& sep = ", ") {
+std::string join(const T& v, const std::string& sep = "; ") {
     std::ostringstream ss;
     size_t count = 0;
     for (const auto& x : v) {

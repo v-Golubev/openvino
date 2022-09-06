@@ -827,7 +827,23 @@ void Graph::Allocate() {
 
 void Graph::CreatePrimitives() {
     OV_ITT_SCOPED_TASK(itt::domains::intel_cpu, "Graph::CreatePrimitives");
+    std::cout << "Dump information:\nLayerName,LayerType,Data,DataVolume,Weights,WeightsVolume,Out,OutVolume\n";
+
     for (auto& node : graphNodes) {
+        if (node->getType() == ov::intel_cpu::Type::Convolution ||
+            node->getType() == ov::intel_cpu::Type::Deconvolution ||
+            node->getType() == ov::intel_cpu::Type::MatMul ||
+            node->getType() == ov::intel_cpu::Type::FullyConnected) {
+            const auto& dataShape = ov::Shape(node->getInputShapeAtPort(0).getDims());
+            const auto& weightsShape = ov::Shape(node->getInputShapeAtPort(1).getDims());
+            const auto& outShape = ov::Shape(node->getOutputShapeAtPort(0).getDims());
+
+            const std::string separator = ",";
+            std::cout << node->getName() << separator << ov::intel_cpu::NameFromType(node->getType()) << separator
+                      << dataShape << separator << ov::shape_size(dataShape) << separator << weightsShape << separator
+                      << ov::shape_size(weightsShape) << separator << outShape << separator << ov::shape_size(outShape)
+                      << std::endl;
+            }
         OV_ITT_SCOPE(FIRST_INFERENCE, itt::domains::intel_cpu_LT, node->profiling.createPrimitive);
         DEBUG_LOG(*node);
         node->createPrimitive();
