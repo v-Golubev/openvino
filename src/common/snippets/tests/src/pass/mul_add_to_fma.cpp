@@ -12,29 +12,29 @@ namespace ov {
 namespace test {
 namespace snippets {
 
-void FMAFusionTests::run() {
+void MulAddToFMATests::run() {
     ASSERT_TRUE(function);
     std::string name;
     manager.register_pass<ngraph::snippets::pass::MulAddToFMA>();
 }
 
-TEST_F(FMAFusionTests, smoke_Snippets_FMAFusionMulAs0AddInput) {
+TEST_F(MulAddToFMATests, smoke_Snippets_MulAddToFMAMulAs0AddInput) {
     const size_t in_idx_for_add = 1ul;
-    const auto &f = EltwiseMulAddFunction(std::vector<Shape> {{1, 3, 2, 2}, {1, 3, 2, 2}, {1, 3, 2, 2}}, in_idx_for_add);
+    const auto &f = EltwiseWithMulAddFunction(std::vector<Shape> {{1, 3, 2, 2}, {1, 3, 2, 2}, {1, 3, 2, 2}}, in_idx_for_add);
     function = f.getOriginal();
     function_ref = f.getReference();
     run();
 }
 
-TEST_F(FMAFusionTests, smoke_Snippets_FMAFusionMulAs1AddInput) {
+TEST_F(MulAddToFMATests, smoke_Snippets_MulAddToFMAMulAs1AddInput) {
     const size_t in_idx_for_add = 1ul;
-    const auto &f = EltwiseMulAddFunction(std::vector<Shape> {{1, 3, 2, 2}, {1, 3, 2, 2}, {1, 3, 2, 2}}, in_idx_for_add);
+    const auto &f = EltwiseWithMulAddFunction(std::vector<Shape> {{1, 3, 2, 2}, {1, 3, 2, 2}, {1, 3, 2, 2}}, in_idx_for_add);
     function = f.getOriginal();
     function_ref = f.getReference();
     run();
 }
 
-TEST_F(FMAFusionTests, smoke_Snippets_FMAFusionNegative) {
+TEST_F(MulAddToFMATests, smoke_Snippets_MulAddToFMANegative) {
     auto get_f = [&]() {
         auto data0 = std::make_shared<op::v0::Parameter>(ov::element::f32, ov::PartialShape{1, 3, 2, 2});
         auto data1 = std::make_shared<op::v0::Parameter>(ov::element::f32, ov::PartialShape{1, 3, 2, 2});

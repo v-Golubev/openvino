@@ -281,24 +281,30 @@ std::shared_ptr<ov::Model> TwoInputsAndOutputsFunction::initOriginal() const {
     return std::make_shared<Model>(NodeVector{hswish, sin3}, ParameterVector{data0, data1});
 }
 
-std::shared_ptr<ov::Model> EltwiseMulAddFunction::initOriginal() const {
+std::shared_ptr<ov::Model> EltwiseWithMulAddFunction::initOriginal() const {
     auto data0 = std::make_shared<op::v0::Parameter>(precision, input_shapes[0]);
     auto data1 = std::make_shared<op::v0::Parameter>(precision, input_shapes[1]);
     auto data2 = std::make_shared<op::v0::Parameter>(precision, input_shapes[2]);
+    auto sin0 = std::make_shared<op::v0::Sin>(data0);
+    auto sin1 = std::make_shared<op::v0::Sin>(data1);
+    auto sin2 = std::make_shared<op::v0::Sin>(data2);
 
-    auto mul = std::make_shared<op::v1::Multiply>(data0, data1);
-    const auto& fst_input = add_input_idx == 0 ? mul->output(0) : data2->output(0);
-    const auto& sec_input = add_input_idx == 0 ? data2->output(0) : mul->output(0);
+    auto mul = std::make_shared<op::v1::Multiply>(sin0, sin1);
+    const auto& fst_input = add_input_idx == 0 ? mul->output(0) : sin2->output(0);
+    const auto& sec_input = add_input_idx == 0 ? sin2->output(0) : mul->output(0);
     auto add = std::make_shared<op::v1::Add>(fst_input, sec_input);
 
     return std::make_shared<Model>(NodeVector{add}, ParameterVector{data0, data1, data2});
 }
 
-std::shared_ptr<Model> EltwiseMulAddFunction::initReference() const {
+std::shared_ptr<Model> EltwiseWithMulAddFunction::initReference() const {
     auto data0 = std::make_shared<op::v0::Parameter>(precision, input_shapes[0]);
     auto data1 = std::make_shared<op::v0::Parameter>(precision, input_shapes[1]);
     auto data2 = std::make_shared<op::v0::Parameter>(precision, input_shapes[2]);
-    auto fma = std::make_shared<ngraph::snippets::op::FusedMulAdd>(data0, data1, data2);
+    auto sin0 = std::make_shared<op::v0::Sin>(data0);
+    auto sin1 = std::make_shared<op::v0::Sin>(data1);
+    auto sin2 = std::make_shared<op::v0::Sin>(data2);
+    auto fma = std::make_shared<ngraph::snippets::op::FusedMulAdd>(sin0, sin1, sin2);
     return std::make_shared<Model>(NodeVector{fma}, ParameterVector{data0, data1, data2});
 }
 

@@ -10,7 +10,7 @@ namespace ov {
 namespace test {
 namespace snippets {
 
-class FMAFusionTests : public TransformationTestsF {
+class MulAddToFMATests : public TransformationTestsF {
 public:
     virtual void run();
 };

@@ -39,7 +39,7 @@ void snippets::op::FusedMulAdd::validate_and_infer_types() {
                               element_type == get_input_element_type(i),
                               "Argument element types are inconsistent.");
         NODE_VALIDATION_CHECK(this,
-                              PartialShape::broadcast_merge_into(pshape, get_input_partial_shape(i), ov::op::AutoBroadcastType::NUMPY),
+                              pshape == get_input_partial_shape(i),
                               "Argument shapes are inconsistent.");
     }
 

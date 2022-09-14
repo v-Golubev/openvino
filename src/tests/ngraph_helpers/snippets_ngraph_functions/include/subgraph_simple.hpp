@@ -202,9 +202,9 @@ protected:
 //  Multiply   in3 or    in3    Multiply
 //          Add             Add
 //        Result           Result
-class EltwiseMulAddFunction : public SnippetsFunctionBase {
+class EltwiseWithMulAddFunction : public SnippetsFunctionBase {
 public:
-    explicit EltwiseMulAddFunction(const std::vector<Shape>& inputShapes,
+    explicit EltwiseWithMulAddFunction(const std::vector<Shape>& inputShapes,
                                    const size_t add_input_idx = 0) : SnippetsFunctionBase(inputShapes), add_input_idx(add_input_idx) {
         NGRAPH_CHECK(input_shapes.size() == 3, "Got invalid number of input shapes");
         NGRAPH_CHECK(add_input_idx < 2, "Got invalid input idx for add operation");
