@@ -195,6 +195,26 @@ public:
 protected:
     std::shared_ptr<ov::Model> initOriginal() const override;
 };
+
+/// Simple Eltwise graph fully convertible to Subgraph.
+/// Tokenized simply by attaching eltwises.
+// in1   in2                   in1     in2
+//  Multiply   in3 or    in3    Multiply
+//          Add             Add
+//        Result           Result
+class EltwiseMulAddFunction : public SnippetsFunctionBase {
+public:
+    explicit EltwiseMulAddFunction(const std::vector<Shape>& inputShapes,
+                                   const size_t add_input_idx = 0) : SnippetsFunctionBase(inputShapes), add_input_idx(add_input_idx) {
+        NGRAPH_CHECK(input_shapes.size() == 3, "Got invalid number of input shapes");
+        NGRAPH_CHECK(add_input_idx < 2, "Got invalid input idx for add operation");
+    }
+protected:
+    std::shared_ptr<ov::Model> initOriginal() const override;
+    std::shared_ptr<ov::Model> initReference() const override;
+private:
+    size_t add_input_idx;
+};
 }  // namespace snippets
 }  // namespace test
 }  // namespace ov

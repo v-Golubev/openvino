@@ -36,6 +36,7 @@ ngraph::snippets::pass::MulAddToFMA::MulAddToFMA() {
 
         const auto fma = std::make_shared<ngraph::snippets::op::FusedMulAdd>(a, b, c);
         ngraph::copy_runtime_info({ a.get_node_shared_ptr(), b.get_node_shared_ptr(), c.get_node_shared_ptr() }, fma);
+        fma->set_friendly_name(add->get_friendly_name());
         ngraph::replace_node(add, fma);
 
         return true;
