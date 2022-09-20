@@ -172,6 +172,7 @@ bool ngraph::pass::low_precision::MarkupOptimizations::run_on_model(const std::s
     ngraph::pass::Manager markup(get_pass_config());
     markup.set_per_pass_validation(false);
     markup.register_pass<low_precision::MarkupCanBeQuantized>(params.defaultPrecisions);
+    markup.register_pass<ngraph::pass::VisualizeTree>("/home/openvino-ci-29/golubevv/models/before.svg");
     if (!precisionRestrictions.empty()) {
         markup.register_pass<low_precision::MarkupPrecisions>(precisionRestrictions, params.defaultPrecisions);
     }
@@ -186,6 +187,7 @@ bool ngraph::pass::low_precision::MarkupOptimizations::run_on_model(const std::s
         markup.register_pass<low_precision::AlignQuantizationIntervals>(params.defaultPrecisions);
         markup.register_pass<low_precision::AlignQuantizationParameters>(params.defaultPrecisions);
     }
+    markup.register_pass<ngraph::pass::VisualizeTree>("/home/openvino-ci-29/golubevv/models/after.svg");
     markup.run_passes(f);
     return false;
 }

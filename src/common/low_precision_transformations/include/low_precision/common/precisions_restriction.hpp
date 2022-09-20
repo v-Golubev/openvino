@@ -19,35 +19,41 @@ namespace ngraph {
 namespace pass {
 namespace low_precision {
 
+class Ports : public std::vector<size_t> {
+public:
+    Ports(const size_t port) : std::vector<size_t>{ port } {}
+    Ports(const std::initializer_list<size_t>& ports_list) : std::vector<size_t>(ports_list) {}
+};
+
 class PrecisionsRestriction {
 public:
-    using PrecisionsByPort = std::vector<std::pair<size_t, std::vector<ngraph::element::Type>>>;
+    using PrecisionsByPorts = std::vector<std::pair<Ports, std::vector<ngraph::element::Type>>>;
 
     ngraph::Node::type_info_t operationType;
     bool specifyVersion;
-    std::vector<std::pair<size_t, std::vector<ngraph::element::Type>>> precisionsByPort;
+    PrecisionsByPorts precisionsByPorts;
 
     PrecisionsRestriction() = default;
     PrecisionsRestriction(
         const ngraph::Node::type_info_t operationType,
         const bool specifyVersion,
-        const PrecisionsByPort& precisionsByPort) :
+        const PrecisionsByPorts& precisionsByPorts) :
         operationType(operationType),
         specifyVersion(specifyVersion),
-        precisionsByPort(precisionsByPort) {}
+        precisionsByPorts(precisionsByPorts) {}
 
     template <typename T>
     static PrecisionsRestriction create(
-        const PrecisionsByPort& precisionsByPort,
+        const PrecisionsByPorts& precisionsByPorts,
         const bool specifyVersion = false) {
-        return PrecisionsRestriction(T::get_type_info_static(), specifyVersion, precisionsByPort);
+        return PrecisionsRestriction(T::get_type_info_static(), specifyVersion, precisionsByPorts);
     }
 
     template <typename T>
-    static PrecisionsByPort getPrecisionsByOperationType(std::vector<PrecisionsRestriction>& restrictions) {
+    static PrecisionsByPorts getPrecisionsByOperationType(std::vector<PrecisionsRestriction>& restrictions) {
         for (const auto& restriction : restrictions) {
             if (restriction.operationType == T::get_type_info_static()) {
-                return restriction.precisionsByPort;
+                return restriction.precisionsByPorts;
             }
         }
         return {};
