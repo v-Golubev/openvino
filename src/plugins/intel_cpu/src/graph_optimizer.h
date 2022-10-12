@@ -36,7 +36,9 @@ private:
     void FuseNormalizeL2AndSimpleOperation(Graph &graph);
     void FuseReduceAndSimpleOperation(Graph &graph);
 
-    void DropDoubleReorders(Graph& graph);
+    void VerticalReorderFusion(NodePtr& node, Graph& graph, std::set<NodePtr>& processed);
+    void HorizontalReorderFusion(NodePtr& node, Graph& graph, std::vector<EdgePtr>& graphEdges, std::set<NodePtr>& processed);
+    void DropRedundantReorders(Graph& graph);
     void FuseConvolutionAndZeroPoints(Graph &graph);
     void FuseBroadcastAndEltwise(Graph &graph);
     void FuseEltwiseAndSimple(Graph &graph);

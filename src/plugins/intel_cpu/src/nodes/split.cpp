@@ -165,6 +165,8 @@ void Split::initSupportedPrimitiveDescriptors() {
             if (axis < 2) {
                 pdIndexesToReuse.emplace_back(supportedPrimitiveDescriptors.size() - 1);
             }
+        } else if (axis == 0 && itr->first == LayoutType::nspc) {
+            pdIndexesToReuse.emplace_back(supportedPrimitiveDescriptors.size() - 1);
         }
     }
 

@@ -164,7 +164,7 @@ void GraphOptimizer::ApplyCommonGraphOptimizations(Graph &graph) {
 void GraphOptimizer::ApplyImplSpecificGraphOptimizations(Graph &graph) {
     OV_ITT_SCOPE(FIRST_INFERENCE, itt::domains::intel_cpu_LT, "GraphOptimizer::ApplyImplSpecificGraphOptimizations");
 
-    DropDoubleReorders(graph);
+    DropRedundantReorders(graph);
     graph.RemoveDroppedNodes();
 
     MergeTransposeAndReorder(graph);
@@ -199,23 +199,26 @@ void GraphOptimizer::FuseConvolutionMatMulDeconvAndBias(Graph &graph) {
             return false;
 
         const auto biasNode = childNode->getParentEdgesAtPort(1)[0]->getParent();
-        if (biasNode->getType() != Type::Input || !biasNode->isConstant() || biasNode->getChildEdges().size() != 1)
+        if (biasNode->getType() != Type::Input || !biasNode->isConstant())
+            // TODO: is it always valid to skip this check?
+            // || biasNode->getChildEdges().size() != 1)
             return false;
 
         const auto parentOutDims = parentNode->getOutputShapeAtPort(0).getDims();
-        const auto biasDims = getNormalizedDimsBySize(biasNode->getOutputShapeAtPort(0).getDims(),
-                                                parentOutDims.size());
-        // TODO [NM]: Legacy ConvBias fusion transformation supports both per-tensor (via explicit broadcasing) and per-channel cases.
-        // Most of the real models contain per-channel bias, so we need to reavaluate the need to support per-tensor variant.
-        if (parentOutDims.size() != biasDims.size() || biasDims.size() < 2)
+        const auto biasDims = biasNode->getOutputShapeAtPort(0).getRank() == 1
+                                ? biasNode->getOutputShapeAtPort(0).getDims()
+                                : getNormalizedDimsBySize(biasNode->getOutputShapeAtPort(0).getDims(), parentOutDims.size());
+
+        if (!one_of(biasDims.size(), 1, parentOutDims.size()))
             return false;
 
         const auto channelAxis = parentNode->getFusingAxis();
-        if (!dimsEqualStrong(biasDims[channelAxis], parentOutDims[channelAxis]))
+        const auto biasAxis = biasDims.size() == 1 ? 0 : channelAxis;
+        if (!dimsEqualStrong(biasDims[biasAxis], parentOutDims[channelAxis]))
             return false;
 
         for (int i = 0; i < biasDims.size(); i++) {
-            if (biasDims[i] != 1 && i != channelAxis)
+            if (biasDims[i] != 1 && i != biasAxis)
                 return false;
         }
 
@@ -1311,10 +1314,16 @@ void GraphOptimizer::FuseConvolutionSumAndConvolutionSumActivation(Graph &graph)
         // be overwritten. Should verify that all other consumer already read it and
         // we can spoil input data.
         // TODO: rewrite once we add "Inplace" reporting mechanism
-        for (auto & edge : peerNode->getChildEdges()) {
+        auto peerOutPort = 0;
+        for (auto& edge : peerNode->getChildEdges()) {
+            if (edge.lock()->getChild() == sum)
+                peerOutPort = edge.lock()->getInputNum();
+        }
+
+        for (auto & edge : peerNode->getChildEdgesAtPort(peerOutPort)) {
             if (!fuse_allowed)
                 break;
-            fuse_allowed &= is_data_dependency(edge.lock()->getChild(), sum);
+            fuse_allowed &= is_data_dependency(edge->getChild(), sum);
         }
         if (!fuse_allowed) continue;
 
@@ -1686,44 +1695,148 @@ void GraphOptimizer::FuseEltwiseAndSimple(Graph &graph) {
     }
 }
 
-void GraphOptimizer::DropDoubleReorders(Graph &graph) {
+void GraphOptimizer::VerticalReorderFusion(NodePtr& node, Graph& graph, std::set<NodePtr>& processed) {
+    auto nextNode = node->getChildEdgeAt(0)->getChild();
+    Reorder* n = dynamic_cast<Reorder*>(node.get());
+    if (n == nullptr)
+        IE_THROW() << "Cannot get reorder layer " << node->getName();
+    Reorder* nn = dynamic_cast<Reorder*>(nextNode.get());
+    if (nn == nullptr)
+        IE_THROW() << "Cannot get reorder layer " << nextNode->getName();
+
+    NodePtr p = n->getParentEdgesAtPort(0)[0]->getParent();
+    NodePtr c = nn->getChildEdgesAtPort(0)[0]->getChild();
+
+    auto oldEdgeNum = n->getParentEdgesAtPort(0)[0]->getInputNum();
+
+    graph.DropNode(node);
+    graph.DropNode(nextNode);
+
+    processed.insert(node);
+    processed.insert(nextNode);
+
+    EdgePtr edge;
+    for (auto cur : p->getChildEdgesAtPort(oldEdgeNum)) {
+        if (cur->getChild() == c)
+            edge = cur;
+    }
+    if (!edge) IE_THROW() << "Inappropriate graph processing";
+
+
+    std::string layerName = edge->getParent()->getName() + "_ScaleReorder_" + edge->getChild()->getName();
+    graph.InsertReorder(edge, layerName, n->getInput(), nn->getOutput(), false);
+    graph.GetEdges().erase(std::remove(graph.GetEdges().begin(), graph.GetEdges().end(), edge), graph.GetEdges().end());
+}
+
+// Handle case when node has multiple output edges with (equivalent) reorders, e.g.:
+//              +---------+
+//              |  node1  |
+//              +---------+
+//                 |   |
+//          -------    -------
+//          |                |
+//          v                v
+//    +-----------+    +-----------+
+//    |  reorder  |    |  reorder  |
+//    +-----------+    +-----------+
+//          |                |
+//          v                v
+//     +---------+      +---------+
+//     |  node2  |      |  node3  |
+//     +---------+      +---------+
+//
+// gets converted to:
+//              +---------+
+//              |  node1  |
+//              +---------+
+//                   |
+//                   v
+//             +-----------+
+//             |  reorder  |
+//             +-----------+
+//                 |   |
+//          -------    -------
+//          |                |
+//          v                v
+//     +---------+      +---------+
+//     |  node2  |      |  node3  |
+//     +---------+      +---------+
+void GraphOptimizer::HorizontalReorderFusion(NodePtr& node, Graph& graph,
+                                                   std::vector<EdgePtr>& graphEdges,
+                                                   std::set<NodePtr>& processed) {
+    // Below is a map where key is built from reorder input format, reorder output format and reorder input port id
+    // Map value is a list of node edges indices that point to the redundant reorders
+    std::unordered_map<std::string, std::vector<size_t>> reorders;
+    auto childEdges = node->getChildEdges();
+    for (size_t edgeId = 0; edgeId < childEdges.size(); edgeId++) {
+        const auto edge = childEdges[edgeId].lock();
+        if (edge->getChild()->getType() != Type::Reorder)
+            continue;
+
+        const auto reorder = edge->getChild();
+        auto key = Reorder::getReorderArgs(edge->getInputDesc(), reorder->getChildEdgeAt(0)->getOutputDesc());
+        key += "_port_" + std::to_string(edge->parent_port);
+        if (reorders.count(key) > 0)
+            reorders[key].push_back(edgeId);
+        else
+            reorders[key] = {edgeId};
+    }
+    for (auto it : reorders) {
+        const auto& edges = it.second;
+        if (edges.size() == 1)
+            continue;
+
+        auto firstReorderEdge = childEdges[edges[0]].lock();
+        auto firstReorder = firstReorderEdge->getChild();
+        const auto& firstReorderOutputDesc = firstReorder->getChildEdgeAt(0)->getOutputDesc();
+        for (size_t j = 1; j < edges.size(); j++) {
+            auto edgeId = edges[j];
+            auto reorderEdge = childEdges[edgeId].lock();
+            auto reorderNode = reorderEdge->getChild();
+            bool canRemove = true;
+            for (auto childEdge : reorderNode->getChildEdges()) {
+                auto reorderChildEdge = childEdge.lock();
+                const auto& desc = reorderChildEdge->getOutputDesc();
+                auto reorderChild = reorderChildEdge->getChild();
+                if (!firstReorderOutputDesc.isCompatible(desc) ||
+                    !isPhysicalMemCompatible(firstReorderOutputDesc, desc) ||
+                    reorderChildEdge->inPlace(Edge::LOOK_DOWN)) {
+                    canRemove = false;
+                    continue;
+                }
+                reorderChild->removeEdge(childEdge);
+                EdgePtr newEdge(new Edge(firstReorder, reorderChild, 0, reorderChildEdge->child_port));
+                firstReorder->addEdge(newEdge);
+                graphEdges.push_back(newEdge);
+                graph.RemoveEdge(reorderChildEdge);
+            }
+            if (canRemove) {
+                node->removeEdge(reorderEdge);
+                graph.RemoveEdge(reorderEdge);
+                graph.DropNode(reorderNode);
+                processed.insert(reorderNode);
+            }
+        }
+    }
+    processed.insert(node);
+}
+
+void GraphOptimizer::DropRedundantReorders(Graph &graph) {
     std::set<NodePtr> processed;
+    auto& graphEdges = graph.GetEdges();
     std::size_t graphNodesSize = graph.GetNodes().size();
     for (std::size_t i = 0; i < graphNodesSize; i++) {
         NodePtr& node = graph.GetNodes()[i];
-        if (processed.find(node) == processed.end() && node->getType() == Type::Reorder
+        if (processed.find(node) != processed.end()) {
+            continue;
+        }
+        if (node->getType() == Type::Reorder
             && node->getChildEdges().size() == 1
-            && node->getChildEdgeAt(0)->getChild()->getType() == Type::Reorder ) {
-            auto nextNode = node->getChildEdgeAt(0)->getChild();
-            Reorder* n = dynamic_cast<Reorder*>(node.get());
-            if (n == nullptr)
-                IE_THROW() << "Cannot get reorder layer " << node->getName();
-            Reorder* nn = dynamic_cast<Reorder*>(nextNode.get());
-            if (nn == nullptr)
-                IE_THROW() << "Cannot get reorder layer " << nextNode->getName();
-
-            NodePtr p = n->getParentEdgesAtPort(0)[0]->getParent();
-            NodePtr c = nn->getChildEdgesAtPort(0)[0]->getChild();
-
-            auto oldEdgeNum = n->getParentEdgesAtPort(0)[0]->getInputNum();
-
-            graph.DropNode(node);
-            graph.DropNode(nextNode);
-
-            processed.insert(node);
-            processed.insert(nextNode);
-
-            EdgePtr edge;
-            for (auto cur : p->getChildEdgesAtPort(oldEdgeNum)) {
-                if (cur->getChild() == c)
-                    edge = cur;
-            }
-            if (!edge) IE_THROW() << "Inappropriate graph processing";
-
-
-            std::string layerName = edge->getParent()->getName() + "_ScaleReorder_" + edge->getChild()->getName();
-            graph.InsertReorder(edge, layerName, n->getInput(), nn->getOutput(), false);
-            graph.GetEdges().erase(std::remove(graph.GetEdges().begin(), graph.GetEdges().end(), edge), graph.GetEdges().end());
+            && node->getChildEdgeAt(0)->getChild()->getType() == Type::Reorder) {
+            VerticalReorderFusion(node, graph, processed);
+        }
+        if (node->getChildEdges().size() > 1) {
+            HorizontalReorderFusion(node, graph, graphEdges, processed);
         }
     }
 }

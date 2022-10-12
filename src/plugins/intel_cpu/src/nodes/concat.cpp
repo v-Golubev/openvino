@@ -168,7 +168,7 @@ void Concat::initSupportedPrimitiveDescriptors() {
             }
         }
         supportedPrimitiveDescriptors.emplace_back(config, impl_desc_type::ref);
-        if (itr->first != LayoutType::nspc) {
+        if (!(axis != 0 && itr->first == LayoutType::nspc)) {
             pdIndexesToReuse.push_back(supportedPrimitiveDescriptors.size() - 1);
         }
     }

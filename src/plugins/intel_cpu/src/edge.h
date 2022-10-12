@@ -23,6 +23,8 @@ class Edge;
 using EdgePtr = std::shared_ptr<Edge>;
 using EdgeWeakPtr = std::weak_ptr<Edge>;
 
+bool isPhysicalMemCompatible(const MemoryDesc& lhsMemDesc, const MemoryDesc& rhsMemDesc);
+
 class Edge {
 public:
     Edge(const std::shared_ptr<Node>& parent,
@@ -110,6 +112,7 @@ private:
     void allocateCommon(const std::function<void(const MemoryPtr&, const MemoryDesc&)>& allocate);
 
     friend class Graph;
+    friend class GraphOptimizer;
 };
 
 }   // namespace intel_cpu
