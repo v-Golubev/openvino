@@ -11,7 +11,6 @@
 namespace ngraph {
 namespace snippets {
 namespace op {
-
 Brgemm::Brgemm(const Output<Node>& A, const Output<Node>& B,
                const size_t offset_a, const size_t offset_b, const size_t offset_c) : MemoryAccess({A, B}, 2, 1) {
     set_output_size(1);
@@ -19,6 +18,10 @@ Brgemm::Brgemm(const Output<Node>& A, const Output<Node>& B,
     set_input_offset(offset_b, 1);
     set_output_offset(offset_c, 0);
     constructor_validate_and_infer_types();
+}
+
+size_t Brgemm::get_M_block_size() const {
+    return m_optimal_M_block_size;
 }
 
 void Brgemm::validate_and_infer_types() {
