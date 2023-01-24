@@ -40,6 +40,9 @@ file(GLOB_RECURSE HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
 addVersionDefines(${CMAKE_CURRENT_SOURCE_DIR}/src/plugin.cpp CI_BUILD_NUMBER)
 
 add_subdirectory(thirdparty)
+if(ENABLE_TESTS OR ENABLE_FUNCTIONAL_TESTS)
+    add_subdirectory(tests/helpers)
+endif()
 if(ENABLE_TESTS)
     add_subdirectory(tests/unit)
 endif()
