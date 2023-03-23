@@ -19,7 +19,7 @@ LoadStoreInsertion::LoadStoreInsertion(size_t vector_size) : m_vector_size(vecto
 void LoadStoreInsertion::update_loops(const LoweredExprIR::LoweredLoopManagerPtr& loop_manager, const std::vector<size_t>& loop_ids,
                                       const LoweredExprPort& actual_port, const std::vector<LoweredExprPort>& target_ports, bool is_entry) {
     for (auto loop_id : loop_ids) {
-        if (loop_id != LoweredExpr::LOOP_NULL_ID)
+        if (loop_id < LoweredExpr::LOOP_NULL_ID)
             update_loop(loop_manager->get_loop_info(loop_id), actual_port, target_ports, is_entry);
     }
 }
@@ -46,19 +46,19 @@ bool LoadStoreInsertion::insert_load(LoweredExprIR& linear_ir, const LoweredExpr
         const auto& consumer_expr = consumer_input.expr;
         const auto port = consumer_input.port;
         const auto& consumer = consumer_expr->get_node();
-        if (ov::is_type<op::Load>(consumer) || ov::is_type<op::Brgemm>(consumer))
+        if (ov::is_type<op::Load>(consumer))
             continue;
 
         // Find Inner Loop
         const auto& loop_ids = consumer_expr->get_loop_ids();
         size_t inner_loop = LoweredExpr::LOOP_NULL_ID;
         for (int i = loop_ids.size() - 1; i >= 0; --i) {
-            if (loop_ids[i] != LoweredExpr::LOOP_NULL_ID) {
+            if (loop_ids[i] < LoweredExpr::LOOP_NULL_ID) {
                 inner_loop = loop_ids[i];
                 break;
             }
         }
-        OPENVINO_ASSERT(inner_loop != LoweredExpr::LOOP_NULL_ID, "Loop hasn't been found!");
+        OPENVINO_ASSERT(inner_loop < LoweredExpr::LOOP_NULL_ID, "Loop hasn't been found!");
 
 
         const auto load_td = std::make_shared<TensorDescriptor>(output_td->get_tensor(),
@@ -91,19 +91,19 @@ bool LoadStoreInsertion::insert_store(LoweredExprIR& linear_ir, const LoweredExp
     const auto& parent_expr = parent_output.expr;
     const auto port = parent_output.port;
     const auto& parent = parent_expr->get_node();
-    if (ov::is_type<op::Store>(parent) || ov::is_type<op::Brgemm>(parent))
+    if (ov::is_type<op::Store>(parent))
         return false;
 
     // Find Inner Loop
     const auto& loop_ids = parent_expr->get_loop_ids();
     size_t inner_loop = LoweredExpr::LOOP_NULL_ID;
     for (int i = loop_ids.size() - 1; i >= 0; --i) {
-        if (loop_ids[i] != LoweredExpr::LOOP_NULL_ID) {
+        if (loop_ids[i] < LoweredExpr::LOOP_NULL_ID) {
             inner_loop = loop_ids[i];
             break;
         }
     }
-    OPENVINO_ASSERT(inner_loop != LoweredExpr::LOOP_NULL_ID, "Loop hasn't been found!");
+    OPENVINO_ASSERT(inner_loop < LoweredExpr::LOOP_NULL_ID, "Loop hasn't been found!");
 
 
     const auto store_td = std::make_shared<TensorDescriptor>(input_td->get_tensor(),

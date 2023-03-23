@@ -11,6 +11,7 @@
 #include "snippets/pass/lowered/assign_registers.hpp"
 #include "snippets/pass/lowered/insert_tail_loop.hpp"
 #include "snippets/pass/lowered/loop_markup.hpp"
+#include "snippets/pass/lowered/loop_splitting.hpp"
 #include "snippets/pass/lowered/loop_fusion.hpp"
 #include "snippets/pass/lowered/loop_init.hpp"
 #include "snippets/pass/lowered/buffer_insertion.hpp"
@@ -19,6 +20,7 @@
 #include "snippets/pass/lowered/load_movebroadcast_to_broadcastload.hpp"
 #include "snippets/pass/lowered/buffer_propagate_offset_and_reset.hpp"
 #include "snippets/pass/lowered/propagate_layout.hpp"
+#include "snippets/pass/lowered/cleanup_brgemm_load_store.hpp"
 #include "snippets/pass/lowered/cleanup_loop_offsets.hpp"
 #include "snippets/pass/lowered/softmax_decomposition.hpp"
 #include "snippets/pass/lowered/move_scalar_to_consumer.hpp"
@@ -36,8 +38,8 @@ Generator::LoweringResult Generator::generate(std::shared_ptr<ov::Model>& m, con
 
     auto linear_ir = LoweredExprIR(m, config);
     const size_t vector_size = get_target_machine()->get_lanes();
-    const int32_t buffer_allocation_rank = static_cast<int32_t>(config.m_loop_depth);
-
+    const auto buffer_allocation_rank = static_cast<int32_t>(config.m_loop_depth);
+    ov::pass::Serialize("snsdebug_lowered.xml", "snsdebug_lowered.bin").run_on_model(m);
     // Note: The pass LoopInit uses LoopInfo that contains entry and exit points of the corresponding Loop.
     //       To avoid the Loop information corruption, we should call the passes with Load/Store work
     //       (for example, LoadMoveBroadcastToBroadcastLoad()) after explicit Loop insertion (LoopInit())
@@ -45,6 +47,7 @@ Generator::LoweringResult Generator::generate(std::shared_ptr<ov::Model>& m, con
     std::vector<std::shared_ptr<pass::lowered::LinearIRTransformation>> transformation_pipeline {
             std::make_shared<pass::lowered::LoopMarkup>(vector_size),
             std::make_shared<pass::lowered::SoftmaxDecomposition>(vector_size),
+            std::make_shared<pass::lowered::LoopSplitting>(),
             std::make_shared<pass::lowered::LoopFusion>(),
             std::make_shared<pass::lowered::BufferInsertion>(buffer_allocation_rank),
             std::make_shared<pass::lowered::LoadStoreInsertion>(vector_size),
@@ -55,13 +58,46 @@ Generator::LoweringResult Generator::generate(std::shared_ptr<ov::Model>& m, con
             std::make_shared<pass::lowered::LoadMoveBroadcastToBroadcastLoad>(),
             std::make_shared<pass::lowered::PropagateLayout>(),
             propagate_buffer_offsets,
+            std::make_shared<pass::lowered::CleanupBrgemmLoadStore>(),
             std::make_shared<pass::lowered::CleanupLoopOffsets>(),
             std::make_shared<pass::lowered::AssignRegisters>(),
             std::make_shared<pass::lowered::InsertTailLoop>()
     };
+//    std::cerr << "Initial : \n";
+//    linear_ir.debug_print(true);
+//    std::cerr << "\n=======================\n";
     for (const auto& transform : transformation_pipeline) {
+        std::string name = transform->get_type_name();
         transform->run(linear_ir);
+        if (name == "LoopFusion" ||
+            name == "SetScalarCountForLoadStore" ||
+            name == "LoopInit") {
+            std::cerr << name << ": \n";
+            linear_ir.debug_print(true);
+            std::cerr << "\n=======================\n";
+            linear_ir.debug_print(false);
+            std::cerr << "\n=======================\n";
+            linear_ir.serialize("snsdebug_linear.xml", "snsdebug_linear.bin");
+            const auto& loop_manager = linear_ir.get_loop_manager();
+            for (const auto& p : loop_manager->get_map()) {
+                const auto& info = p.second;
+                std::cerr << p.first << " : " << info->work_amount << " : " << info->increment << " : ";
+                std::cerr << "(";
+                for (const auto& e : info->entry_exprs)
+                    std::cerr << e.expr->get_node()->get_friendly_name() << " #" << e.port << ", ";
+                std::cerr << ") : ";
+                std::cerr << "(";
+                for (const auto& e : info->exit_exprs)
+                    std::cerr << e.expr->get_node()->get_friendly_name() << " #" << e.port << ", ";
+                std::cerr << ")\n" << std::flush;
+            }
+            std::cerr << "\n=======================\n";
+//            throw std::runtime_error("FINITA");
+        }
     }
+    linear_ir.debug_print(false);
+    linear_ir.serialize("snsdebug_linear.xml", "snsdebug_linear.bin");
+//    throw std::runtime_error("FINITA");
 
     const auto buffer_scratchpad_size = propagate_buffer_offsets->get_scratchpad_size();
     linear_ir.init_emitters(target);

@@ -110,6 +110,7 @@ KernelEmitter::KernelEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     const auto& io_exprs = body.get_IO_ops();
     num_inputs = 0;
     num_outputs = 0;
+    std::vector<std::vector<size_t>> node_shapes;
     for (const auto& expr : io_exprs) {
         TensorDescriptorPtr td {};
         element::Type etype;
@@ -129,9 +130,25 @@ KernelEmitter::KernelEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
                 IE_THROW() << "Kernel detected unsupported io_type";
             }
         }
+        node_shapes.push_back(expr->get_node()->get_shape());
         io_shapes.push_back(td->get_tensor());
         io_data_layouts.push_back(td->get_layout());
         io_data_sizes.push_back(etype.size());
+    }
+    // Todo: create a ticket and add a number
+    // Note: Currently TensorDescriptor and Node's shape ranks could be different only in case of Blocking
+    // Blocking supports only planar i/o layouts. In this case we can safely adopt the Node's shape and remove
+    // last dim from layout.
+    for (size_t i = 0; i < num_inputs + num_outputs; i++) {
+        if (node_shapes[i].size() != io_shapes[i].size()) {
+            io_shapes[i] = node_shapes[i];
+            auto& orig_layout = io_data_layouts[i];
+            for (size_t j = 1; j < orig_layout.size() - 1; j++)
+                if (orig_layout[j] - orig_layout[j - 1] != 1)
+                    IE_THROW() << "Tensor descriptor and Node shapes mismatch "
+                               << "supported only for blocking of planar layouts";
+            orig_layout.pop_back();
+        }
     }
 
     // Initialize pools of gp and vec registers
@@ -721,8 +738,8 @@ void StoreConvertEmitter::emit_isa(const std::vector<size_t> &in, const std::vec
 void StoreConvertEmitter::emit_data() const {
     store_emitter->emit_data();
 }
-size_t BrgemmEmitter::getBrgIdx(size_t mIdx, size_t kIdx, size_t nIdx) const {
-    return mIdx * 4 + kIdx * 2 + nIdx;
+size_t BrgemmEmitter::getBrgIdx(size_t kIdx, size_t nIdx) const {
+    return kIdx * 2 + nIdx;
 }
 BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl::cpu::x64::cpu_isa_t isa,
                                          const std::shared_ptr<ov::Node>& node) : jit_emitter(h, isa, node) {
@@ -764,11 +781,9 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     const auto& C_shape = io_values[2].get_shape();
     const auto& C_layout = io_layouts[2];
 
-    M = C_shape[C_layout[2]];
     K = A_shape[A_layout[3]];
-    M_blk = matmulOptimalM;
-    M_tail = M % M_blk;
-    // B_shape[B_layout[3]]
+    const auto& brgemm_td = ngraph::snippets::get_tensor_descriptor_ptr(brgemm_node);
+    M = std::min(brgemm_node->get_count(), brgemm_td->get_subtensor().front());
     N = C_shape[C_layout[3]];
 
     auto brg0Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(0));
@@ -784,34 +799,28 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
                          : K;
     K_tail = K % K_blk;
 
-    size_t brg0BaseIdx = -1;
-    for (size_t m = 0; m < 2; m++) {
-        for (size_t k = 0; k < 2; k++) {
-            for (size_t n = 0; n < 2; n++) {
-                auto& brgemmCtx = brgCtxs0[getBrgIdx(m, k, n)];
+    for (size_t k = 0; k < 2; k++) {
+        for (size_t n = 0; n < 2; n++) {
+            auto& brgemmCtx = brgCtxs0[getBrgIdx(k, n)];
 
-                auto M_ = m ? M_tail
-                            : M < M_blk ? 0 : M_blk;
-                auto N_ = n ? N_tail : N - N_tail;
-                auto K_ = k ? K_tail : K - K_tail;
-                auto beta = k && brgCtxs0[getBrgIdx(m, 0, n)].K != 0 ? 1.0f : 0.0f;
+            auto M_ = M;
+            auto N_ = n ? N_tail : N - N_tail;
+            auto K_ = k ? K_tail : K - K_tail;
+            auto beta = k && brgCtxs0[getBrgIdx(0, n)].K != 0 ? 1.0f : 0.0f;
 
-                brgemmCtx.M = M_;
-                brgemmCtx.N = N_;
-                brgemmCtx.K = K_;
-                brgemmCtx.LDA = leading_dimensions[0];
-                brgemmCtx.LDB = leading_dimensions[1];
-                brgemmCtx.LDC = leading_dimensions[2];
-                brgemmCtx.dt_in0 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg0Prc));
-                brgemmCtx.dt_in1 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg1Prc));
-                brgemmCtx.beta = beta;
+            brgemmCtx.M = M_;
+            brgemmCtx.N = N_;
+            brgemmCtx.K = K_;
+            brgemmCtx.LDA = leading_dimensions[0];
+            brgemmCtx.LDB = leading_dimensions[1];
+            brgemmCtx.LDC = leading_dimensions[2];
+            brgemmCtx.dt_in0 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg0Prc));
+            brgemmCtx.dt_in1 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg1Prc));
+            brgemmCtx.beta = beta;
 
-                // don't create brgemm kernels for empty tiles
-                if (M_ != 0 && K_ != 0 && N_ != 0) {
-                    if (brg0BaseIdx == -1)
-                        brg0BaseIdx = getBrgIdx(m, k, n);
-                    initBrgemm(brgemmCtx, brgKernels0[getBrgIdx(m, k, n)], brg0WithAMX);
-                }
+            // don't create brgemm kernels for empty tiles
+            if (M_ != 0 && K_ != 0 && N_ != 0) {
+                initBrgemm(brgemmCtx, brgKernels0[getBrgIdx(k, n)], brg0WithAMX);
             }
         }
     }
@@ -861,16 +870,16 @@ void BrgemmEmitter::emit_brgemm_kernel_call(const brgemm_kernel_t *brgKernel, in
                                             const size_t in0_kernel_offset, const size_t in1_kernel_offset, const size_t out0_kernel_offset) const {
     using Vmm = typename dnnl::impl::utils::conditional3<isa == cpu::x64::sse41, Xmm, isa == cpu::x64::avx2, Ymm, Zmm>::type;
     size_t gpr_size = 8;
-    Xbyak::Operand gprs_to_save[] = {h->r8, h->r9, h->r10, h->r11, h->rax,
+    std::vector<Xbyak::Operand> gprs_to_save {h->r8, h->r9, h->r10, h->r11, h->rax,
                                      h->rcx, h->rdx, h->rdi, h->rsi, h->rbp, h->rbx};
-    size_t n_gprs_to_save = sizeof(gprs_to_save) / sizeof(gprs_to_save[0]);
+    int n_gprs_to_save = static_cast<int>(gprs_to_save.size());
 
     h->sub(h->rsp, n_gprs_to_save * gpr_size);
     for (size_t i = 0; i < n_gprs_to_save; ++i)
         h->mov(h->ptr[h->rsp + i * gpr_size], gprs_to_save[i]);
 
     // caller obligation to save k-regs as callee may use them
-    size_t n_k_regs_to_save = 8;
+    int n_k_regs_to_save = 8;
     if (isa == cpu::x64::avx512_core) {
         h->sub(h->rsp, n_k_regs_to_save * k_mask_size);
         for (size_t i = 0; i < n_k_regs_to_save; ++i) {
@@ -970,35 +979,30 @@ void BrgemmEmitter::emit_isa(const std::vector<size_t> &in, const std::vector<si
     Reg64 input_1(static_cast<int>(in[1]));
     Reg64 output_0(static_cast<int>(out[0]));
 
-    for (size_t mb = 0; mb < div_up(M, M_blk); mb++) {
-        const bool is_M_tail = (M - mb * M_blk < M_blk);
+    size_t brgIdx0 = getBrgIdx(0, 0);
+    size_t K0_step0 = brgCtxs0[brgIdx0].K;
+    size_t K0_step1 = brgCtxs0[brgIdx0].K * brgCtxs0[brgIdx0].LDB;
+    size_t N0_step0 = brgCtxs0[brgIdx0].N * brg0VnniFactor;
+    size_t N0_step1 = brgCtxs0[brgIdx0].N;
+    for (size_t n = 0; n < 2; n++) {
+        for (size_t k = 0; k < 2; k++) {
+            auto& brgemmCtx = brgCtxs0[getBrgIdx(k, n)];
 
-        size_t brgIdx0 = getBrgIdx(0, 0, 0);
-        size_t K0_step0 = brgCtxs0[brgIdx0].K;
-        size_t K0_step1 = brgCtxs0[brgIdx0].K * brgCtxs0[brgIdx0].LDB;
-        size_t N0_step0 = brgCtxs0[brgIdx0].N * brg0VnniFactor;
-        size_t N0_step1 = brgCtxs0[brgIdx0].N;
-        for (size_t n = 0; n < 2; n++) {
-            for (size_t k = 0; k < 2; k++) {
-                size_t mIdx = is_M_tail ? 1 : 0;
-                auto& brgemmCtx = brgCtxs0[getBrgIdx(mIdx, k, n)];
+            if (brgemmCtx.K != 0 && brgemmCtx.N != 0) {
+                const size_t in0_offset = load_offset_a + k * K0_step0 * io_data_size[0];
+                const size_t in1_offset = load_offset_b + (k * K0_step1 + n * N0_step0) * io_data_size[1];
+                const size_t out0_offset = store_offset_c + n * N0_step1 * io_data_size[2];
 
-                if (brgemmCtx.K != 0 && brgemmCtx.N != 0) {
-                    const size_t in0_offset = load_offset_a + (k * K0_step0 + mb * M_blk * brgemmCtx.LDA) * io_data_size[0];
-                    const size_t in1_offset = load_offset_b + (k * K0_step1 + n * N0_step0) * io_data_size[1];
-                    const size_t out0_offset = store_offset_c + (n * N0_step1 + mb * M_blk * brgemmCtx.LDC) * io_data_size[2];
-
-                    emit_brgemm_kernel_call<isa>(brgKernels0[getBrgIdx(mIdx, k, n)].get(),
-                                                 1,
-                                                 input_0,
-                                                 input_1,
-                                                 nullptr,
-                                                 output_0,
-                                                 nullptr,
-                                                 in0_offset,
-                                                 in1_offset,
-                                                 out0_offset);
-                }
+                emit_brgemm_kernel_call<isa>(brgKernels0[getBrgIdx(k, n)].get(),
+                                             1,
+                                             input_0,
+                                             input_1,
+                                             nullptr,
+                                             output_0,
+                                             nullptr,
+                                             in0_offset,
+                                             in1_offset,
+                                             out0_offset);
             }
         }
     }

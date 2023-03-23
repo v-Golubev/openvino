@@ -27,17 +27,18 @@ void filter_ports(LoweredExprIR& linear_ir,
         if (is_type<op::Load>(node) || is_type<op::BroadcastLoad>(node)) {
             const auto& parent_expr = linear_ir.get_expr_by_output(expr->get_inputs()[port]).expr;
             const auto& parent = parent_expr->get_node();
-            // Todo: Sometimes several Load in one Loop read data from the same Node
+            // Todo: Sometimes several Load in one Loop read data from the same Node.
             if (loop_parents.find(parent) == loop_parents.end()) {
-                loop_parents.insert(parent);
-                new_loop_entries.push_back(loop_entry_point);
+                    loop_parents.insert(parent);
+                    new_loop_entries.push_back(loop_entry_point);
             }
         }
     }
 
     for (const auto& loop_exit_point : loop_exits) {
-        const auto expr = loop_exit_point.expr;
-        if (is_type<op::Store>(expr->get_node())) {
+        const auto& expr = loop_exit_point.expr;
+        const auto& node = expr->get_node();
+        if (is_type<op::Store>(node)) {
             new_loop_exits.push_back(loop_exit_point);
         }
     }
@@ -75,44 +76,48 @@ std::vector<int64_t> LoopInit::init_ptr_increments(const std::vector<LoweredExpr
     size_t max_relevant_dim_size = 0;
     for (const auto& loop_input : loop_inputs) {
         const auto& expr = loop_input.expr;
+        int fake_loop_correction = expr->get_loop_ids().back() == LoweredExpr::LOOP_FAKE_ID ? -1 : 0;
         const auto out_td = expr->get_outputs().front();
         const auto& layout = out_td->get_layout();
         const auto& tensor = out_td->get_tensor();
-        const auto& dim = *(layout.rbegin() + dim_idx);
+        const auto& dim = *(layout.rbegin() + dim_idx + fake_loop_correction);
         max_relevant_dim_size = std::max(tensor[dim], max_relevant_dim_size);
     }
     for (const auto& loop_output : loop_outputs) {
         const auto& expr = loop_output.expr;
+        bool has_fake_loop = expr->get_loop_ids().back() == LoweredExpr::LOOP_FAKE_ID;
         const auto in_td = expr->get_inputs().front();
         const auto& layout = in_td->get_layout();
         const auto& tensor = in_td->get_tensor();
-        const auto& dim = *(layout.rbegin() + dim_idx);
+        const auto& dim = *(layout.rbegin() + dim_idx - has_fake_loop);
         max_relevant_dim_size = std::max(tensor[dim], max_relevant_dim_size);
     }
     for (const auto& loop_input : loop_inputs) {
         const auto& expr = loop_input.expr;
+        bool has_fake_loop = expr->get_loop_ids().back() == LoweredExpr::LOOP_FAKE_ID;
         const auto out_td = expr->get_outputs().front();
         const auto& layout = out_td->get_layout();
         const auto& tensor = out_td->get_tensor();
-        const auto& dim = *(layout.rbegin() + dim_idx);
+        const auto& dim = *(layout.rbegin() + dim_idx - has_fake_loop);
         int64_t ptr_increment = 0;
         // If relevant dim is not broadcasted, then ptr_increment is the dim stride in the new layout
         if (!(tensor[dim] == 1 && max_relevant_dim_size != 1))
-            ptr_increment = get_dim_stride(dim, loop_layout, tensor);
+            ptr_increment = get_dim_stride(dim, has_fake_loop ? loop_layout : layout, tensor);
         ptr_increments.push_back(ptr_increment);
     }
     // Note: Le already accounted for loop_input vs inside loops layout mismatch. So we need non-dense output
     // ptr_increments only if loop_input_layout doesn't match loop_output_layout
     for (const auto& loop_output : loop_outputs) {
         const auto& expr = loop_output.expr;
+        bool has_fake_loop = expr->get_loop_ids().back() == LoweredExpr::LOOP_FAKE_ID;;
         const auto in_td = expr->get_inputs().front();
         const auto& layout = in_td->get_layout();
         const auto& tensor = in_td->get_tensor();
-        const auto& dim = *(layout.rbegin() + dim_idx);
+        const auto& dim = *(layout.rbegin() + dim_idx - has_fake_loop);
         int64_t ptr_increment = 0;
         // If relevant dim is not broadcasted, then ptr_increment is the dim stride in the new layout
         if (!(tensor[dim] == 1 && max_relevant_dim_size != 1))
-            ptr_increment = get_dim_stride(dim, layout, tensor);
+            ptr_increment = get_dim_stride(dim, has_fake_loop ? loop_layout : layout, tensor);
         ptr_increments.push_back(ptr_increment);
     }
 
@@ -199,13 +204,14 @@ bool LoopInit::run(LoweredExprIR& linear_ir) {
         const auto loop_depth = expr_loops.size();
         for (size_t i = 0; i < loop_depth; ++i) {
             const auto loop_id = expr_loops[i];
-            if (loop_id == LoweredExpr::LOOP_NULL_ID)
+            if (loop_id >= LoweredExpr::LOOP_NULL_ID)
                 continue;
             bool need_to_insert = inserted_loops.find(loop_id) == inserted_loops.end();
             if (need_to_insert) {
                 const auto loop_info = loop_manager->get_loop_info(loop_id);
                 const bool has_outer_loop = i > 0 && inserted_loops.find(expr_loops[i - 1]) != inserted_loops.end();
-                const auto status = insertion(linear_ir, loop_info, loop_id, loop_depth - i - 1, has_outer_loop);
+                const auto status = insertion(linear_ir, loop_info, loop_id,
+                                              loop_depth - 1 - i, has_outer_loop);
                 if (status)
                     inserted_loops.insert(loop_id);  // save Loop ID
                 inserted_loops.insert(loop_id);

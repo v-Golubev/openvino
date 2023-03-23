@@ -35,10 +35,6 @@ bool LoopMarkup::run(LoweredExprIR& linear_ir) {
         const auto& node = expr->get_node();
         if (is_not_start_point(node))
             continue;
-        if (ov::is_type<op::Brgemm>(node)) {
-            loop_manager->skipped_mark(expr_it, std::next(expr_it), loop_depth);
-            continue;
-        }
 
         auto loop_begin_pos = expr_it;
         auto loop_end_pos = loop_begin_pos;
@@ -58,8 +54,7 @@ bool LoopMarkup::run(LoweredExprIR& linear_ir) {
             // If iterator is the last, we should finish Loop
             const auto& current_expr = *loop_end_pos;
             const auto& current_node = current_expr->get_node();
-            if (ov::is_type<op::Brgemm>(current_node) ||
-                ov::is_type<opset1::Softmax>(current_node) ||
+            if (ov::is_type<opset1::Softmax>(current_node) ||
                 ov::is_type<opset1::Result>(current_node) ||
                 ov::is_type<opset1::Constant>(current_node))
                 break;
@@ -67,12 +62,11 @@ bool LoopMarkup::run(LoweredExprIR& linear_ir) {
             // If the next expr isn't real customer of prev expr we should finish Loop
             const auto& ins = loop_end_pos->get()->get_inputs();
             auto connected = [&](const TensorDescriptorPtr& td) {return linear_ir.get_expr_by_output(td).expr == prev_expr;};
-            if (std::none_of(ins.begin(), ins.end(), connected))
-                break;
+            auto compatible = [&](const TensorDescriptorPtr& td) {return  td->get_layout() == loop_inner_layout &&
+                                                                        td->get_subtensor() == loop_inner_subtensor;};
 
-            const auto& layout = ins.front()->get_layout();
-            const auto& subtensor = ins.front()->get_subtensor();
-            is_inside &= layout == loop_inner_layout && subtensor == loop_inner_subtensor;
+            is_inside &= std::any_of(ins.begin(), ins.end(), connected) &&
+                         std::all_of(ins.begin(), ins.end(), compatible);
         } while (is_inside);
 
         loop_manager->mark_loop(linear_ir, loop_begin_pos, loop_end_pos, loop_depth, m_vector_size);

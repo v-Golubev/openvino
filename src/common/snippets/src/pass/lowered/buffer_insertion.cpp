@@ -68,8 +68,8 @@ void BufferInsertion::insertion(LoweredExprIR& linear_ir, const LoweredExprIR::L
             const auto current_loop_lvl = std::distance(current_loops.begin(), std::find(current_loops.begin(), current_loops.end(), loop_id));
             for (size_t i = current_loop_lvl; i < current_loop_count; i++) {
                 if (current_loops[i] != parent_loops[i] &&
-                    current_loops[i] != LoweredExpr::LOOP_NULL_ID &&
-                    parent_loops[i] != LoweredExpr::LOOP_NULL_ID) {
+                    current_loops[i] < LoweredExpr::LOOP_NULL_ID &&
+                    parent_loops[i] < LoweredExpr::LOOP_NULL_ID) {
                     is_buffer_needed = true;
                     break;
                 }
@@ -116,18 +116,18 @@ void BufferInsertion::insertion(LoweredExprIR& linear_ir, const LoweredExprIR::L
                 buffers.insert(child_expr);
                 continue;
             }
-            if (ov::is_type<op::Brgemm>(child) || ov::is_type<op::Brgemm>(node)) {
-                potential_consumers.insert(child_expr_input);
-                continue;
-            }
+//            if (ov::is_type<op::Brgemm>(child) || ov::is_type<op::Brgemm>(node)) {
+//                potential_consumers.insert(child_expr_input);
+//                continue;
+//            }
 
             const auto child_loops = child_expr->get_loop_ids();
             const auto child_loop_count = child_loops.size();
             OPENVINO_ASSERT(current_loop_count == child_loop_count, "The Loop IDs must be normalized!");
             for (size_t i = current_loop_lvl; i < child_loop_count; i++) {
                 if (current_loops[i] != child_loops[i] &&
-                    current_loops[i] != LoweredExpr::LOOP_NULL_ID &&
-                    child_loops[i] != LoweredExpr::LOOP_NULL_ID) {
+                    current_loops[i] < LoweredExpr::LOOP_NULL_ID &&
+                    child_loops[i] < LoweredExpr::LOOP_NULL_ID) {
                     potential_consumers.insert(child_expr_input);
                     break;
                 }

@@ -17,7 +17,8 @@
 namespace ngraph {
 namespace snippets {
 
-size_t LoweredExpr::LOOP_NULL_ID = SIZE_MAX;
+size_t LoweredExpr::LOOP_NULL_ID = SIZE_MAX - 1;
+size_t LoweredExpr::LOOP_FAKE_ID = SIZE_MAX;
 
 LoweredExpr::LoweredExpr(const std::shared_ptr<Node>& n) : m_source_node{n}, m_emitter{nullptr}, m_reg_info{{}, {}} {
     for (const auto& in : n->inputs())
@@ -231,13 +232,18 @@ void LoweredExprIR::debug_print(bool tds_as_pointers) const {
         const auto& node = expr->get_node();
         std::cerr << counter++ << " : " <<
                      node->get_friendly_name() << " :  ";
+        for (const auto id : expr->get_loop_ids())
+            std::cerr << id << " ";
+        std::cerr << ": ";
         if (tds_as_pointers) {
             for (const auto& in : expr->get_inputs()) {
                 if (td2int.count(in) == 0)
                     throw ngraph_error("Undefined input descriptor for op");
                 std::cerr << td2int.at(in) << ", ";
             }
-            std::cerr << "\b\b => ";
+            if (!expr->get_inputs().empty())
+                std::cerr << "\b\b";
+            std::cerr << " => ";
             for (const auto& out : expr->get_outputs()) {
                 if (td2int.count(out) == 0)
                     td2int.insert({out, td_counter++});
@@ -246,11 +252,14 @@ void LoweredExprIR::debug_print(bool tds_as_pointers) const {
         } else {
             for (const auto& in : expr->get_inputs())
                 std::cerr << *in << ", ";
-            std::cerr << "\b\b => ";
+            if (!expr->get_inputs().empty())
+                std::cerr << "\b\b";
+            std::cerr << " => ";
             for (const auto& out : expr->get_outputs())
                     std::cerr << *out << ", ";
         }
-        std::cerr << "\b\b";
+        if (!expr->get_inputs().empty())
+            std::cerr << "\b\b";
         const auto& rinfo = expr->get_reg_info();
         if (!rinfo.first.empty() || !rinfo.second.empty())
             print_rinfo(expr->get_reg_info());
@@ -604,7 +613,9 @@ void LoweredExprIR::LoweredLoopManager::mark_loop(LoweredExprIR& linear_ir,
                                                 const std::vector<LoweredExprPort>& exits) {
     const auto loop_info = std::make_shared<LoweredLoopManager::LoweredLoopInfo>(
             work_amount, work_amount_increment, entries, exits);
-    const auto loop_id = this->add_loop_info(loop_info);
+    const auto loop_id = work_amount_increment == TensorDescriptor::ENTIRE_DIM ?
+                         LoweredExpr::LOOP_NULL_ID :
+                         this->add_loop_info(loop_info);
     exprs_marking(loop_begin_pos, loop_end_pos, loop_id, idx);
 }
 
