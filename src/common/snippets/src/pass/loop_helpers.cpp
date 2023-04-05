@@ -56,7 +56,7 @@ std::shared_ptr<LoopEnd> insertLoopEndBeforeInputs(const std::vector<Input<Node>
     auto loop_end = std::make_shared<LoopEnd>(originalParentOutputs, work_amount, increment,
                                               std::move(ptr_increments), std::move(finalization_offsets));
 
-    for (int i = 0; i < originalInputs.size(); i++) {
+    for (size_t i = 0; i < originalInputs.size(); i++) {
         originalInputs[i].replace_source_output(loop_end->output(i));
     }
     return loop_end;

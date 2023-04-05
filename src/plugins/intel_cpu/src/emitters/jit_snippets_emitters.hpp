@@ -346,7 +346,6 @@ private:
     static void kernel_execute(const dnnl::impl::cpu::x64::brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp);
 
     static constexpr size_t BRGEMM_KERNELS_NUM = 4;
-    static constexpr size_t matmulOptimalM = 32;
     brgemmCtx m_brgCtxs0[BRGEMM_KERNELS_NUM];
     std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t> m_brgKernels0[BRGEMM_KERNELS_NUM];
 

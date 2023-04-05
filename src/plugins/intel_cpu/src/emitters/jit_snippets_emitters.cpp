@@ -739,27 +739,19 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     const OutputVector io_values {brgemm_node->input_value(0),
                                   brgemm_copy ? brgemm_copy->input_value(0) : brgemm_node->input_value(1),
                                   brgemm_node->output(0)};
-    std::vector<size_t> leading_dimensions;
+    // Todo: check the case of brgemm copy before the merge
+    std::vector<size_t> leading_dimensions{brgemm_node->get_leading_dim_a(),
+                                           brgemm_node->get_leading_dim_b(),
+                                           brgemm_node->get_leading_dim_c()};
     std::vector<std::vector<size_t>> io_layouts;
     for (const auto& val : io_values) {
         const auto& layout = ngraph::snippets::utils::get_node_output_layout(val.get_node_shared_ptr());
-        const auto& io_shape = val.get_shape();
         if (layout.empty()) {
             // empty value indicates a planar layout
-            leading_dimensions.push_back(io_shape.back());
-            std::vector<size_t> default_layout(io_shape.size());
+            std::vector<size_t> default_layout(val.get_shape().size());
             std::iota(default_layout.begin(), default_layout.end(), 0);
             io_layouts.push_back(default_layout);
         } else {
-            // The idea here is to find "2" (for 4D shapes) in the layout and multiply dimensions that are to the right
-            // This implies that "3" is the last layout value, otherwise this layout is not supported.
-            // counting from the end since shape could be prepended with ones
-            const int64_t num_last_dims = layout.end() - std::find(layout.begin(), layout.end(), layout.size() - 2) - 1;
-            if (layout.back() != layout.size() - 1 || num_last_dims < 1)
-                IE_THROW() << "BrgemmEmitter detected invalid layout values: " <<
-                    "check that this shape + layout combination is schedulable";
-            leading_dimensions.emplace_back(
-                    std::accumulate(io_shape.end() - num_last_dims, io_shape.end(), 1, std::multiplies<size_t>()));
             io_layouts.push_back(layout);
         }
     }

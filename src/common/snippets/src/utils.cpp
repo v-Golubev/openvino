@@ -67,7 +67,7 @@ auto get_non_scalar_constant_count_for_fq(const std::shared_ptr<opset1::FakeQuan
         return 0;
     }
 }
-std::vector<size_t> get_node_output_layout(const std::shared_ptr<Node>& node) {
+std::vector<size_t> get_node_output_layout(const std::shared_ptr<const Node>& node) {
     return get_node_output_layout(node.get());
 }
 std::vector<size_t> get_node_output_layout(const Node* node) {

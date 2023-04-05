@@ -136,6 +136,28 @@ ov::PartialShape Brgemm::get_output_partial_shape(const std::vector<ov::PartialS
     return output_shape;
 }
 
+size_t Brgemm::get_leading_dimension(const Output<const Node>& in) {
+    auto in_node = in.get_node_shared_ptr();
+    // If input is LoopBegin then it has multiple outputs and doesn't store output layout,
+    // so we have to check the original input node rt_info
+    if (ov::is_type<ngraph::snippets::op::LoopBegin>(in_node)) {
+        in_node = in_node->get_input_node_shared_ptr(in.get_index());;
+    }
+    auto layout = ngraph::snippets::utils::get_node_output_layout(in_node);
+    const auto& io_shape = in.get_shape();
+    if (layout.empty()) {
+        // empty value indicates a planar layout
+        return io_shape.back();
+    }
+    // The idea here is to find "layout.size() - 2" (2 for 4D shapes) in the layout and multiply dimensions that are to the right
+    // This implies that "3" is the last layout value, otherwise this layout is not supported.
+    // counting from the end since shape could be prepended with ones
+    const int64_t num_last_dims = layout.end() - std::find(layout.begin(), layout.end(), layout.size() - 2) - 1;
+    if (layout.back() != layout.size() - 1 || num_last_dims < 1)
+        throw ngraph::ngraph_error("Brgemm detected unschedulable shape + layout combination");
+    return std::accumulate(io_shape.end() - num_last_dims, io_shape.end(), 1, std::multiplies<size_t>());
+}
+
 } // namespace op
 } // namespace snippets
 } // namespace ngraph
