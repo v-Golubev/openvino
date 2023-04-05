@@ -55,14 +55,18 @@ pass::BrgemmToBrgemmCPU::BrgemmToBrgemmCPU() {
         const auto offset_b = brgemm->get_offset_b();
         const auto offset_c = brgemm->get_offset_c();
 
-        std::shared_ptr<ov::Node> brgemm_cpu = nullptr;
+        std::shared_ptr<BrgemmCPU> brgemm_cpu = nullptr;
         if (element_type_a == ov::element::f32) {
             brgemm_cpu = std::make_shared<BrgemmCPU>(brgemm->input_value(0), brgemm->input_value(1), BrgemmCPU::Type::Floating,
                                                      offset_a, offset_b, offset_c);
+            brgemm_cpu->set_input_count(brgemm->get_input_count(0), 0);
+            brgemm_cpu->set_input_count(brgemm->get_input_count(1), 1);
+            brgemm_cpu->set_output_count(brgemm->get_output_count(0), 0);
         } else {
             const auto layoutIn1 = ngraph::snippets::utils::get_node_output_layout(brgemm->input_value(1).get_node_shared_ptr());
             const auto copy_b_type = with_comp ? BrgemmCopyB::WithCompensations : BrgemmCopyB::OnlyRepacking;
             const auto brgemmRepackIn1 = std::make_shared<BrgemmCopyB>(brgemm->input_value(1), element_type_a, copy_b_type, offset_b);
+            brgemmRepackIn1->set_input_count(brgemm->get_input_count(1), 0);
             const auto buffer = std::make_shared<ngraph::snippets::op::Buffer>(brgemmRepackIn1->output(0));
 
             if (with_amx) {
@@ -79,6 +83,8 @@ pass::BrgemmToBrgemmCPU::BrgemmToBrgemmCPU() {
             } else {
                 IE_THROW() << "Invalid configuration for BRGEMM CPU";
             }
+            brgemm_cpu->set_input_count(brgemm->get_input_count(0), 0);
+            brgemm_cpu->set_output_count(brgemm->get_output_count(0), 0);
         }
 
         brgemm_cpu->set_friendly_name(brgemm->get_friendly_name());

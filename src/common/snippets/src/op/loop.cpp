@@ -134,11 +134,16 @@ void LoopEnd::set_ptr_increments(std::vector<int64_t> new_ptr_increments) {
     ptr_increments = std::move(new_ptr_increments);
 }
 
-void LoopEnd::update_ptr_increments(int64_t new_increment) {
-    std::transform(ptr_increments.begin(), ptr_increments.end(), ptr_increments.begin(),
-                   [new_increment](int64_t old_increment){
-                        return old_increment != 0 ? new_increment : 0;
-                   });
+void LoopEnd::update_increments(int64_t new_increment) {
+    for (auto &p : ptr_increments) {
+        // Assumption: ptr_increments are proportional to the loop work amount increment
+        if (p % static_cast<int64_t>(work_amount_increment) != 0)
+            throw ngraph_error("It's illegal to call update_ptr_increments"
+                               " if ptr_increment is not proportional to work_amount_increment");
+        // If the assumption holds, ptr_increments should be rescaled, since tail loop has a different increment
+        p = (p / static_cast<int64_t>(work_amount_increment)) * static_cast<int64_t>(new_increment);
+    }
+    work_amount_increment = new_increment;
 }
 
 void LoopEnd::set_work_amount(size_t new_work_amount) {
@@ -179,6 +184,15 @@ void LoopEnd::validate_and_infer_types() {
     // All outputs are by-passed from inputs, except for the last one - it connects LoopBegin and LoopEnd
     for (size_t i = 0; i < num_inputs - 1; i++)
         get_output_descriptor(i).set_tensor_ptr(get_input_descriptor(i).get_output().get_tensor_ptr());
+}
+
+bool LoopEnd::visit_attributes(AttributeVisitor& visitor) {
+    LoopBase::visit_attributes(visitor);
+    for (size_t i = 0; i < ptr_increments.size(); ++i) {
+        visitor.on_attribute("ptr_increment_" + std::to_string(i), ptr_increments[i]);
+        visitor.on_attribute("finalization_offsets_" + std::to_string(i), finalization_offsets[i]);
+    }
+    return true;
 }
 
 } // namespace op

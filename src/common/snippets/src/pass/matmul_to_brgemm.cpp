@@ -37,6 +37,9 @@ MatMulToBrgemm::MatMulToBrgemm() {
         brgemm->set_friendly_name(matmul->get_friendly_name());
         ngraph::copy_runtime_info(matmul, nodes);
         ngraph::replace_node(matmul, nodes.back());
+        const auto& shape_A = brgemm->get_input_partial_shape(0);
+        const auto M_rows = shape_A[shape_A.size() - 2].get_length();
+        brgemm->set_input_count(M_rows, 0);
         return true;
     };
 

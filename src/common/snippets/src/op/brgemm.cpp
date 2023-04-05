@@ -11,13 +11,12 @@
 namespace ngraph {
 namespace snippets {
 namespace op {
-
 Brgemm::Brgemm(const Output<Node>& A, const Output<Node>& B,
                const size_t offset_a, const size_t offset_b, const size_t offset_c) : MemoryAccess({A, B}, 2, 1) {
     set_output_size(1);
     set_input_offset(offset_a, 0);
     set_input_offset(offset_b, 1);
-    set_output_offset(offset_a, 0);
+    set_output_offset(offset_c, 0);
     constructor_validate_and_infer_types();
 }
 
@@ -42,25 +41,36 @@ void Brgemm::validate_and_infer_types() {
 std::shared_ptr<Node> Brgemm::clone_with_new_inputs(const OutputVector& new_args) const {
     INTERNAL_OP_SCOPE(Brgemm_clone_with_new_inputs);
     check_new_args_count(this, new_args);
-    return std::make_shared<Brgemm>(new_args.at(0), new_args.at(1), get_offset_a(), get_offset_b(), get_offset_c());
+    auto new_node = std::make_shared<Brgemm>(new_args.at(0), new_args.at(1), get_offset_a(), get_offset_b(), get_offset_c());
+    new_node->set_input_count(get_input_count(0), 0);
+    new_node->set_input_count(get_input_count(1), 1);
+    new_node->set_output_count(get_output_count(0), 0);
+    return new_node;
 }
 
-ov::element::Type Brgemm::get_output_type() const {
-    const auto element_type_a = get_input_element_type(0);
-    const auto element_type_b = get_input_element_type(1);
-    const bool is_f32 = utils::everyone_is(element::f32, element_type_a, element_type_b);
-    const bool is_int8 = utils::one_of(element_type_a, element::i8, element::u8) && element_type_b == element::i8;
-    const bool is_bf16 = utils::everyone_is(element::bf16, element_type_a, element_type_b);
+ov::element::Type Brgemm::get_output_type(const ov::element::Type& in_type0, const ov::element::Type& in_type1) {
+    const bool is_f32 = utils::everyone_is(element::f32, in_type0, in_type1);
+    const bool is_int8 = utils::one_of(in_type0, element::i8, element::u8) && in_type1 == element::i8;
+    const bool is_bf16 = utils::everyone_is(element::bf16, in_type0, in_type1);
     if (is_f32 || is_bf16) {
-       return element::f32;
+        return element::f32;
     } else if (is_int8) {
         return element::i32;
     } else {
-        throw ngraph_error("BrgemmCPU node has incompatible input element types: " +
-                            element_type_a.get_type_name() +
-                            " and " +
-                            element_type_b.get_type_name());
+        return element::undefined;
     }
+}
+
+ov::element::Type Brgemm::get_output_type() const {
+    auto output_type = get_output_type(get_input_element_type(0), get_input_element_type(1));
+    if (output_type == element::undefined) {
+        throw ngraph_error("BrgemmCPU node has incompatible input element types: " +
+                           get_input_element_type(0).get_type_name() +
+                           " and " +
+                           get_input_element_type(1).get_type_name());
+    }
+
+    return output_type;
 }
 
 ov::PartialShape Brgemm::get_output_partial_shape(const std::vector<ov::PartialShape>& input_shapes) const {
@@ -124,6 +134,28 @@ ov::PartialShape Brgemm::get_output_partial_shape(const std::vector<ov::PartialS
         output_shape.erase(output_shape.begin() + output_shape.size() - 1);
     }
     return output_shape;
+}
+
+size_t Brgemm::get_leading_dimension(const Output<const Node>& in) {
+    auto in_node = in.get_node_shared_ptr();
+    // If input is LoopBegin then it has multiple outputs and doesn't store output layout,
+    // so we have to check the original input node rt_info
+    if (ov::is_type<ngraph::snippets::op::LoopBegin>(in_node)) {
+        in_node = in_node->get_input_node_shared_ptr(in.get_index());;
+    }
+    auto layout = ngraph::snippets::utils::get_node_output_layout(in_node);
+    const auto& io_shape = in.get_shape();
+    if (layout.empty()) {
+        // empty value indicates a planar layout
+        return io_shape.back();
+    }
+    // The idea here is to find "layout.size() - 2" (2 for 4D shapes) in the layout and multiply dimensions that are to the right
+    // This implies that "3" is the last layout value, otherwise this layout is not supported.
+    // counting from the end since shape could be prepended with ones
+    const int64_t num_last_dims = layout.end() - std::find(layout.begin(), layout.end(), layout.size() - 2) - 1;
+    if (layout.back() != layout.size() - 1 || num_last_dims < 1)
+        throw ngraph::ngraph_error("Brgemm detected unschedulable shape + layout combination");
+    return std::accumulate(io_shape.end() - num_last_dims, io_shape.end(), 1, std::multiplies<size_t>());
 }
 
 } // namespace op
