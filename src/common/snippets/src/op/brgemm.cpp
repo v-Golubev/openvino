@@ -45,7 +45,11 @@ void Brgemm::validate_and_infer_types() {
 std::shared_ptr<Node> Brgemm::clone_with_new_inputs(const OutputVector& new_args) const {
     INTERNAL_OP_SCOPE(Brgemm_clone_with_new_inputs);
     check_new_args_count(this, new_args);
-    return std::make_shared<Brgemm>(new_args.at(0), new_args.at(1), get_offset_a(), get_offset_b(), get_offset_c());
+    auto new_node = std::make_shared<Brgemm>(new_args.at(0), new_args.at(1), get_offset_a(), get_offset_b(), get_offset_c());
+    new_node->set_input_count(get_input_count(0), 0);
+    new_node->set_input_count(get_input_count(1), 1);
+    new_node->set_output_count(get_output_count(0), 0);
+    return new_node;
 }
 
 ov::element::Type Brgemm::get_output_type(const ov::element::Type& in_type0, const ov::element::Type& in_type1) {

@@ -13,9 +13,6 @@
 namespace ov {
 namespace intel_cpu {
 namespace pass {
-namespace {
-
-} //namespace
 
 
 InsertBrgemmLoops::InsertBrgemmLoops() {
@@ -43,9 +40,7 @@ InsertBrgemmLoops::InsertBrgemmLoops() {
             brgemm->set_input_count(M_block_size, 0);
             return true;
         }
-        // todo: this is not the right place to set input count
-        brgemm->set_input_count(M_rows, 0);
-        return true;
+        return false;
     };
 
     auto m = std::make_shared<ngraph::pattern::Matcher>(brgemm_pattern, matcher_name);

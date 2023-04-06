@@ -15,9 +15,9 @@ namespace {
 std::vector<std::vector<ov::PartialShape>> input_shapes{
         {{2, 1, 3, 5}, {1, 3, 5, 3}},
         {{3, 1, 96, 14}, {1, 2, 14, 32}},
-//        {{1, 2, 37, 23}, {2, 1, 23, 37}},
-//        {{1, 1, 37, 23}, {1, 2, 23, 33}},
-//        {{1, 16, 384, 64}, {1, 16, 64, 384}}
+        {{1, 2, 37, 23}, {2, 1, 23, 37}},
+        {{1, 1, 37, 23}, {1, 2, 23, 33}},
+        {{1, 16, 384, 64}, {1, 16, 64, 384}}
 };
 static inline std::vector<std::vector<element::Type>> precisions(bool only_fp32 = true) {
     std::vector<std::vector<element::Type>> prc = {
