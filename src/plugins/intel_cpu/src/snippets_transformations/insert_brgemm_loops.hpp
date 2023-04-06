@@ -19,7 +19,7 @@ namespace pass {
 class InsertBrgemmLoops: public ngraph::pass::MatcherPass {
 public:
     OPENVINO_RTTI("InsertBrgemmLoops", "0");
-    InsertBrgemmLoops();
+    InsertBrgemmLoops(size_t M_block_size);
 };
 
 }  // namespace pass

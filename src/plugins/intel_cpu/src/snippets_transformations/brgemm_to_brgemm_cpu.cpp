@@ -66,6 +66,7 @@ pass::BrgemmToBrgemmCPU::BrgemmToBrgemmCPU() {
             const auto layoutIn1 = ngraph::snippets::utils::get_node_output_layout(brgemm->input_value(1).get_node_shared_ptr());
             const auto copy_b_type = with_comp ? BrgemmCopyB::WithCompensations : BrgemmCopyB::OnlyRepacking;
             const auto brgemmRepackIn1 = std::make_shared<BrgemmCopyB>(brgemm->input_value(1), element_type_a, copy_b_type, offset_b);
+            brgemmRepackIn1->set_input_count(brgemm->get_input_count(1), 0);
             const auto buffer = std::make_shared<ngraph::snippets::op::Buffer>(brgemmRepackIn1->output(0));
 
             if (with_amx) {
@@ -82,6 +83,8 @@ pass::BrgemmToBrgemmCPU::BrgemmToBrgemmCPU() {
             } else {
                 IE_THROW() << "Invalid configuration for BRGEMM CPU";
             }
+            brgemm_cpu->set_input_count(brgemm->get_input_count(0), 0);
+            brgemm_cpu->set_output_count(brgemm->get_output_count(0), 0);
         }
 
         brgemm_cpu->set_friendly_name(brgemm->get_friendly_name());

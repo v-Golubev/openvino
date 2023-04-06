@@ -538,8 +538,10 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
     pre_dialect.register_pass<ConvertToSwishCPU>();
 
     ov::pass::Manager post_dialect;
-    if (original_snippet->has_domain_sensitive_ops())
+    if (original_snippet->has_domain_sensitive_ops()) {
+        post_dialect.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>(32);
         post_dialect.register_pass<ov::intel_cpu::pass::BrgemmToBrgemmCPU>();
+    }
 
     ov::pass::Manager post_precision;
     post_precision.register_pass<ov::intel_cpu::pass::RemoveConverts>();
@@ -560,8 +562,6 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
                 return true;
             });
     post_precision.register_pass<ov::intel_cpu::pass::MulAddToFMA>();
-    if (original_snippet->has_domain_sensitive_ops())
-        post_precision.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>();
     // todo: this is for debug purposes. Please remove before the merge
     post_precision.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
 

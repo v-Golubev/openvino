@@ -20,10 +20,6 @@ Brgemm::Brgemm(const Output<Node>& A, const Output<Node>& B,
     constructor_validate_and_infer_types();
 }
 
-size_t Brgemm::get_M_block_size() const {
-    return m_optimal_M_block_size;
-}
-
 void Brgemm::validate_and_infer_types() {
     INTERNAL_OP_SCOPE(Brgemm_validate_and_infer_types);
     // If no leading dimensions are provided, assume dense row-major inputs-outputs

@@ -35,6 +35,13 @@ snippets::op::Buffer::Buffer(const ov::Output<ov::Node>& arg, int32_t allocation
 
 bool snippets::op::Buffer::visit_attributes(AttributeVisitor& visitor) {
     INTERNAL_OP_SCOPE(Buffer_visit_attributes);
+    std::string type;
+    switch (m_type) {
+        case Type::IntermediateMemory: type = "IntermediateMemory"; break;
+        case Type::NewMemory: type = "NewMemory"; break;
+        default: type = "Unknown";
+    }
+    visitor.on_attribute("type", type);
     visitor.on_attribute("allocation_shape", m_shape);
     visitor.on_attribute("id", m_id);
     return true;

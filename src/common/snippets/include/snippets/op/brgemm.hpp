@@ -35,7 +35,6 @@ public:
 
     void validate_and_infer_types() override;
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
-    size_t get_M_block_size() const;
 
     bool has_evaluate() const override { return false; }
 
@@ -43,8 +42,6 @@ protected:
     ov::element::Type get_output_type() const;
     ov::PartialShape get_output_partial_shape(const std::vector<ov::PartialShape>& input_shapes) const;
     static size_t get_leading_dimension(const Output<const Node>& in);
-
-    size_t m_optimal_M_block_size = 32;
 };
 
 } // namespace op
