@@ -79,6 +79,10 @@ ngraph::snippets::pass::ResetBufferState::ResetBufferState() {
 
         // If after Loop there is immediately Buffer, we should reset the Buffer ptr for the next calculations
         for (size_t i = 0; i < o_size; ++i) {
+            // Note: if finalization offset is not zero, then it must've already been set to compensate for a buffer,
+            // so we just ignore such cases here
+            if (finalization_offsets[i_size + i] != 0)
+                continue;
             // check for first target input is enough for Buffer searching because operations can have only single Buffer per each output port as op
             const auto consumer = loop_end->output(i).get_target_inputs().begin()->get_node();
             if (const auto buffer = ov::as_type_ptr<ngraph::snippets::op::Buffer>(consumer->shared_from_this())) {
