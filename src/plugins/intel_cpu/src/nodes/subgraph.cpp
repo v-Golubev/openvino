@@ -539,8 +539,8 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
 
     ov::pass::Manager post_dialect;
     if (original_snippet->has_domain_sensitive_ops()) {
-        post_dialect.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>(32);
         post_dialect.register_pass<ov::intel_cpu::pass::BrgemmToBrgemmCPU>();
+        post_dialect.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>(32);
     }
 
     ov::pass::Manager post_precision;
@@ -563,7 +563,7 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
             });
     post_precision.register_pass<ov::intel_cpu::pass::MulAddToFMA>();
     // todo: this is for debug purposes. Please remove before the merge
-    post_precision.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
+//    post_precision.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
 
     schedule = snippet->generate(
         pre_dialect,

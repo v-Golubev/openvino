@@ -93,28 +93,17 @@ std::vector<bool> BufferIdentification::create_adjacency_matrix(const BufferIden
         const auto& target_inputs = buffer->output(0).get_target_inputs();
         const auto& child = target_inputs.begin()->get_node()->shared_from_this();
         if (const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(child)) {
-            for (const auto& out : loop_begin->outputs()) {
-                for (const auto& target : out.get_target_inputs()) {
-                    if (const auto& brgemm = as_type_ptr<op::Brgemm>(target.get_node()->shared_from_this())) {
-                        for (size_t j = 1; j < brgemm->get_input_size(); j++) {
-                            if (const auto neighbour_buffer = is_intermediate_buffer(brgemm->get_input_node_shared_ptr(j)))
-                                update_adj_matrix(buffer, i, neighbour_buffer);
-                        }
-                    }
+            for (const auto& out : loop_begin->input_values()) {
+                if (const auto& another_buffer = as_type_ptr<op::Buffer>(out.get_node_shared_ptr())) {
+                    // Note: When two buffers share a common parent (e.g. BrgemmCopy case), they can count
+                    // as non-adjacent, since the corresponding pointers will never be incremented separately
+                    if (buffer == another_buffer ||
+                        buffer->get_input_node_shared_ptr(0) == another_buffer->get_input_node_shared_ptr(0))
+                        continue;
+                    if (const auto neighbour_buffer = is_intermediate_buffer(another_buffer))
+                        update_adj_matrix(buffer, i, neighbour_buffer);
                 }
             }
-        }
-        if (const auto brgemm = ov::as_type_ptr<op::Brgemm>(child)) {
-            auto consumer_in = *brgemm->get_output_target_inputs(0).begin();
-            auto port_idx = consumer_in.get_index();
-            auto consumer = consumer_in.get_node()->shared_from_this();
-            while (std::dynamic_pointer_cast<op::LoopEnd>(consumer)) {
-                auto consumer_in = *consumer->get_output_target_inputs(port_idx).begin();
-                port_idx = consumer_in.get_index();
-                consumer = consumer_in.get_node()->shared_from_this();
-            }
-            if (const auto neighbour_buffer = is_intermediate_buffer(consumer))
-                update_adj_matrix(buffer, i, neighbour_buffer);
         }
     }
 

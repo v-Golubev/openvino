@@ -27,9 +27,9 @@ InsertBrgemmLoops::InsertBrgemmLoops(size_t M_block_size) {
         // Note: We always insert Loop around Brgemm even if there is a single iteration.
         // In this case the loop is needed to apply finalization offsets if the Brgemm is followed by a buffer.
         const auto& loop_begin = ngraph::snippets::op::insertLoopBegin(brgemm->input_values());
-        const std::vector<int64_t> ptr_increments {static_cast<int64_t>(M_block_size *  brgemm->get_leading_dim_a()),
-                                                   0,
-                                                   static_cast<int64_t>(M_block_size * brgemm->get_leading_dim_c())};
+        std::vector<int64_t> ptr_increments(brgemm->get_input_size() + brgemm->get_output_size(), 0);
+        ptr_increments.front() = static_cast<int64_t>(M_block_size *  brgemm->get_leading_dim_a());
+        ptr_increments.back() =  static_cast<int64_t>(M_block_size * brgemm->get_leading_dim_c());
         std::vector<int64_t> finalization_offsets(ptr_increments.size(), 0);
         // Note: need to reset output data pointer if is connected to a Buffer
         for (const auto& consumer_in : brgemm->get_output_target_inputs(0)) {
