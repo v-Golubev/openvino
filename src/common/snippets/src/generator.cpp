@@ -62,8 +62,10 @@ auto tail_transformations(NodeVector& tail, const size_t tail_size, const ngraph
         }
         return fill;
     };
-
-    for (auto& op : tail) {
+    const auto& outer_loop_end = ov::as_type_ptr<ngraph::snippets::op::LoopEnd>(tail.back());
+    updated_tile.push_back(tail.front());
+    for (size_t op_num = 1; op_num < tail.size() - 1; op_num++) {
+        auto& op = tail[op_num];
         // We should fill vector regs by float_min and zero to have
         // correct math calculations for ReduceMax and ReduceSum in scalar case.
         // Note: We find Maximum and Add ops because HorizonMax and HorizonSum are outside Loop,
@@ -87,10 +89,23 @@ auto tail_transformations(NodeVector& tail, const size_t tail_size, const ngraph
                     memory_access->set_output_count(tail_size, i);
                 }
             }
+        } else if (const auto& loop_begin = ov::as_type_ptr<ngraph::snippets::op::LoopBegin>(op)) {
+            auto loop_end = loop_begin->get_loop_end();
+            while (tail[op_num] != loop_end && op_num < tail.size()) {
+                updated_tile.push_back(tail[op_num]);
+                op_num++;
+            }
+            op = tail[op_num];
+            if (op_num >= tail.size() - 1)
+                throw ngraph_error("Tail transformations failed to find a matching LoopEnd");
+            if (loop_end != outer_loop_end &&
+                loop_end->get_work_amount() == outer_loop_end->get_increment() &&
+                loop_end->get_increment() == 1)
+                loop_end->set_work_amount(tail_size);
         }
         updated_tile.push_back(op);
     }
-
+    updated_tile.push_back(tail.back());
     tail = std::move(updated_tile);
 }
 
@@ -104,9 +119,18 @@ ngraph::snippets::code ngraph::snippets::Generator::generate(std::shared_ptr<ov:
     OV_ITT_TASK_CHAIN(GENERATE, ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::VectorTile")
     // vector loop
     std::vector<AllocatedEmitter> lowered;
-    auto lower_ops = [&lowered, this](const NodeVector& ops){
+    int k = 0;
+    auto lower_ops = [&lowered, &k, this](const NodeVector& ops){
         std::transform(ops.begin(), ops.end(), std::back_inserter(lowered),
-                       [this](const std::shared_ptr<Node>& n){
+                       [&k, this](const std::shared_ptr<Node>& n){
+                           auto reg_info = ngraph::snippets::getRegisters(n);
+                           std::cerr << k++ << " : " << n->get_friendly_name() << " : ";
+                           for (auto r : reg_info.first)
+                               std::cerr << r << ", ";
+                           std::cerr << " => ";
+                           for (auto r : reg_info.second)
+                               std::cerr << r << ", ";
+                           std::cerr << "\n";
                            return std::make_pair(target->get(n->get_type_info())(n), ngraph::snippets::getRegisters(n));
                        });
     };

@@ -47,6 +47,7 @@ public:
     size_t get_byte_size() const;
     Type get_type() const { return m_type; }
     ov::Shape get_allocation_shape() const { return m_shape; }
+    void set_allocation_shape(const ov::Shape& new_shape) { m_shape = new_shape; }
 
     bool is_intermediate_memory() const { return m_type == Type::IntermediateMemory; }
     bool is_new_memory() const { return m_type == Type::NewMemory; }

@@ -16,10 +16,13 @@ namespace pass {
  * @brief Insert explicit Loop operations around Brgemm op, so it processes only a part of first input tensor in one call.
  * @ingroup snippets
  */
-class InsertBrgemmLoops: public ngraph::pass::MatcherPass {
+class InsertBrgemmLoops: public ov::pass::ModelPass {
 public:
     OPENVINO_RTTI("InsertBrgemmLoops", "0");
     InsertBrgemmLoops(size_t M_block_size);
+    bool run_on_model(const std::shared_ptr<ov::Model>& m) override;
+private:
+    size_t m_M_block_size = 0;
 };
 
 }  // namespace pass
