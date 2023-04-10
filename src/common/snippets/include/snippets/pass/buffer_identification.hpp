@@ -38,7 +38,7 @@ public:
 private:
     using BufferSet = std::vector<std::shared_ptr<snippets::op::Buffer>>;
 
-    std::vector<bool> create_adjacency_matrix(const BufferSet& buffers);
+    std::vector<bool> create_adjacency_matrix(const ov::NodeVector& ops, const BufferSet& buffers);
     std::map<size_t, BufferSet> coloring(BufferSet& buffers, std::vector<bool>& adj);
 };
 
