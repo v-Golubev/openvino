@@ -541,7 +541,7 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
     if (original_snippet->has_domain_sensitive_ops()) {
         post_dialect.register_pass<ov::intel_cpu::pass::BrgemmToBrgemmCPU>();
         // todo: this is for debug purposes. Please remove before the merge
-        post_dialect.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
+        // post_dialect.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
         post_dialect.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>(32);
     }
 

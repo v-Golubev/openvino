@@ -3,11 +3,8 @@
 //
 
 #include "snippets/generator.hpp"
-#include "snippets/pass/assign_registers.hpp"
 #include "snippets/pass/vector_to_scalar.hpp"
-#include "snippets/pass/insert_load_store.hpp"
 #include "snippets/op/loop.hpp"
-#include "snippets/op/subgraph.hpp"
 #include "snippets/op/kernel.hpp"
 #include <snippets/itt.hpp>
 
@@ -40,8 +37,7 @@ auto getRegisters(const std::shared_ptr<ngraph::Node> &n) -> RegInfo {
     return std::make_pair(rin, rout);
 }
 
-auto tail_transformations(NodeVector& tail, const size_t tail_size, const ngraph::snippets::Generator::GeneratorConfig& config) -> void {
-    NodeVector updated_tile;
+void Generator::tail_transformations(const size_t start_idx, const size_t end_idx, const size_t tail_size) {
     auto insertFill = [tail_size](const ov::Input<ov::Node>& input) -> std::shared_ptr<ov::Node> {
         auto copyRegInfo = [](const ov::descriptor::Tensor& from, ov::descriptor::Tensor& to) -> void {
             auto rt = from.get_rt_info();
@@ -62,20 +58,20 @@ auto tail_transformations(NodeVector& tail, const size_t tail_size, const ngraph
         }
         return fill;
     };
-    const auto& outer_loop_end = ov::as_type_ptr<ngraph::snippets::op::LoopEnd>(tail.back());
-    updated_tile.push_back(tail.front());
-    for (size_t op_num = 1; op_num < tail.size() - 1; op_num++) {
-        auto& op = tail[op_num];
+    // Note: end_idx is non-inclusive
+    const auto& outer_loop_end = ov::as_type_ptr<ngraph::snippets::op::LoopEnd>(m_ops[end_idx - 1]);
+    for (size_t op_num = start_idx + 1; op_num < end_idx - 1; op_num++) {
+        const auto op = m_ops[op_num];
         // We should fill vector regs by float_min and zero to have
         // correct math calculations for ReduceMax and ReduceSum in scalar case.
         // Note: We find Maximum and Add ops because HorizonMax and HorizonSum are outside Loop,
         //       so they are missed in <tail>
-        if (config.m_need_fill_tail_register &&
+        if (m_config.m_need_fill_tail_register &&
             (ov::is_type<ov::op::v1::Maximum>(op) ||
              ov::is_type<ov::op::v1::Add>(op))) {
-            for (size_t i = 0; i < op->inputs().size(); ++i) {
-                if (auto fill = insertFill(op->input(i))) {
-                    updated_tile.push_back(fill);
+            for (const auto& in : op->inputs()) {
+                if (auto fill = insertFill(in)) {
+                    m_ops.insert(m_ops.begin() + static_cast<int64_t>(op_num), fill);
                 }
             }
         } else if (const auto memory_access = std::dynamic_pointer_cast<ngraph::snippets::op::MemoryAccess>(op)) {
@@ -91,49 +87,19 @@ auto tail_transformations(NodeVector& tail, const size_t tail_size, const ngraph
             }
         } else if (const auto& loop_begin = ov::as_type_ptr<ngraph::snippets::op::LoopBegin>(op)) {
             auto loop_end = loop_begin->get_loop_end();
-            while (tail[op_num] != loop_end && op_num < tail.size()) {
-                updated_tile.push_back(tail[op_num]);
+            while (m_ops[op_num] != loop_end && op_num < end_idx) {
                 op_num++;
             }
-            op = tail[op_num];
-            if (op_num >= tail.size() - 1)
+            if (op_num == end_idx - 1)
                 throw ngraph_error("Tail transformations failed to find a matching LoopEnd");
             if (loop_end != outer_loop_end &&
                 loop_end->get_work_amount() == outer_loop_end->get_increment() &&
                 loop_end->get_increment() == 1)
                 loop_end->set_work_amount(tail_size);
         }
-        updated_tile.push_back(op);
     }
-    updated_tile.push_back(tail.back());
-    tail = std::move(updated_tile);
 }
-
-ngraph::snippets::code ngraph::snippets::Generator::generate(std::shared_ptr<ov::Model>& m,
-                                                             const GeneratorConfig& config,
-                                                             const void* compile_params) {
-    OV_ITT_SCOPED_TASK(ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator::generate")
-    if (!target->is_supported())
-        throw ngraph_error("unsupported architecture for code generation");
-
-    OV_ITT_TASK_CHAIN(GENERATE, ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::VectorTile")
-    // vector loop
-    std::vector<AllocatedEmitter> lowered;
-    int k = 0;
-    auto lower_ops = [&lowered, &k, this](const NodeVector& ops){
-        std::transform(ops.begin(), ops.end(), std::back_inserter(lowered),
-                       [&k, this](const std::shared_ptr<Node>& n){
-                           auto reg_info = ngraph::snippets::getRegisters(n);
-                           std::cerr << k++ << " : " << n->get_friendly_name() << " : ";
-                           for (auto r : reg_info.first)
-                               std::cerr << r << ", ";
-                           std::cerr << " => ";
-                           for (auto r : reg_info.second)
-                               std::cerr << r << ", ";
-                           std::cerr << "\n";
-                           return std::make_pair(target->get(n->get_type_info())(n), ngraph::snippets::getRegisters(n));
-                       });
-    };
+size_t Generator::inject_tail_processing(size_t start_idx, size_t end_idx) {
     // *1* solo vector/tail loop + empty outer loop
     //      => skip increments (both counter & ptr) : set evaluate_once flag
     // *2* solo vector/tail loop + non-empty outer loop
@@ -157,68 +123,108 @@ ngraph::snippets::code ngraph::snippets::Generator::generate(std::shared_ptr<ov:
             return false;
         }
     };
-    const auto& ops = m->get_ordered_ops();
-    for (auto op = ops.begin(); op < ops.end(); op++) {
-        const auto& loop_begin = ov::as_type_ptr<ngraph::snippets::op::LoopBegin>(*op);
+    auto vector_loop_begin = ov::as_type_ptr<op::LoopBegin>(m_ops[start_idx]);
+    auto vector_loop_end = ov::as_type_ptr<op::LoopEnd>(m_ops[end_idx - 1]);
+    if (!vector_loop_begin || !vector_loop_end || vector_loop_begin->get_loop_end() != vector_loop_end)
+        throw ngraph_error("Tail injector got inconsistent set of operations. Check the loop boundaries.");
 
-        // ignore outer loops and possible manual scalar loops
-        if (loop_begin && loop_begin->get_increment() != 1) {
-            OV_ITT_TASK_NEXT(GENERATE, "::VectorLoop")
-            NodeVector vector_loop, tail_loop;
-            std::shared_ptr<op::LoopEnd> vector_loop_end, tail_loop_end;
-            vector_loop_end = loop_begin->get_loop_end();
-            tail_loop_end = nullptr;
-            while (*op != vector_loop_end)
-                vector_loop.push_back(*op++);
-            vector_loop.push_back(*op);
-            const auto work_amount = vector_loop_end->get_work_amount();
-            const auto increment = vector_loop_end->get_increment();
-            const auto tail_size = work_amount % increment;
-            const auto need_tail = tail_size != 0;
-            const auto need_vector_loop = work_amount >= increment;
-            // Note, that finalization_offsets could be modified inside optimize_single_evaluation,
-            // so need to save them here to cover (evaluate_once vector with non-zero finalization_offsets + tail)
-            std::vector<int64_t> tail_finalization_offsets = need_tail ? vector_loop_end->get_finalization_offsets() : std::vector<int64_t> {};
-            // vector loops are required => Just copy the body, original loop is already a vector one
-            if (need_vector_loop) {
-                // Note that finalization offsets should be applied after the last iteration.
-                // So if there is a tail, then we should apply offsets after it, but not now.
-                if (need_tail)
-                    vector_loop_end->set_finalization_offsets(std::vector<int64_t>(tail_finalization_offsets.size(), 0));
+    const auto work_amount = vector_loop_end->get_work_amount();
+    const auto increment = vector_loop_end->get_increment();
+    const auto tail_size = work_amount % increment;
+    const auto need_tail = tail_size != 0;
+    const auto need_vector_loop = work_amount >= increment;
+    // Note, that finalization_offsets could be modified inside optimize_single_evaluation,
+    // so need to save them here to cover (evaluate_once vector with non-zero finalization_offsets + tail)
+    std::vector<int64_t> tail_finalization_offsets = need_tail ? vector_loop_end->get_finalization_offsets() : std::vector<int64_t> {};
+    // vector loops are required => Just copy the body, original loop is already a vector one
+    if (need_vector_loop) {
+        // Note that finalization offsets should be applied after the last iteration.
+        // So if there is a tail, then we should apply offsets after it, but not now.
+        if (need_tail)
+            vector_loop_end->set_finalization_offsets(std::vector<int64_t>(tail_finalization_offsets.size(), 0));
 
-                if (config.m_optimize_single_evaluation) {
-                    // force ptr increments if there is tail
-                    optimize_single_evaluation(vector_loop_end, need_tail);
-                }
-
-                lower_ops(vector_loop);
-            }
-            OV_ITT_TASK_NEXT(GENERATE, "::TailLoop")
-            // tail is required => transform the body into a tail representation
-            // tail loop is fake loop because for tail we should calculate only
-            // finalization offsets which are supported by LoopEnd.
-            if (need_tail) {
-                NodeMap vector_to_tail_node_map;
-                tail_loop = ngraph::clone_nodes(vector_loop,  vector_to_tail_node_map);
-                tail_transformations(tail_loop, tail_size, config);
-                tail_loop_end = ov::as_type_ptr<op::LoopEnd>(*tail_loop.rbegin());
-                tail_loop_end->set_finalization_offsets(tail_finalization_offsets);
-                // ptr increments were set to the old increment, need to update them in accordance with the new one
-                tail_loop_end->update_increments(static_cast<int64_t>(tail_size));
-                tail_loop_end->set_work_amount(tail_size);
-                tail_loop_end->has_outer_loop = vector_loop_end->has_outer_loop;
-
-                if (config.m_optimize_single_evaluation) {
-                    // tail loop is always executed once
-                    optimize_single_evaluation(tail_loop_end);
-                }
-
-                lower_ops(tail_loop);
-            }
-        } else {
-            lower_ops({*op});
+        if (m_config.m_optimize_single_evaluation) {
+            // force ptr increments if there is tail
+            optimize_single_evaluation(vector_loop_end, need_tail);
         }
     }
+    // tail is required => transform the body into a tail representation
+    // tail loop is fake loop because for tail we should calculate only
+    // finalization offsets which are supported by LoopEnd.
+    if (need_tail) {
+        std::shared_ptr<op::LoopEnd> tail_loop_end = vector_loop_end;
+        if (need_vector_loop) {
+            NodeVector vector_loop(m_ops.begin() + static_cast<int64_t>(start_idx),
+                                   m_ops.begin() + static_cast<int64_t>(end_idx));
+            NodeVector tail_loop;
+            NodeMap vector_to_tail_node_map;
+            tail_loop = ngraph::clone_nodes(vector_loop,  vector_to_tail_node_map);
+            tail_loop_end = ov::as_type_ptr<op::LoopEnd>(tail_loop.back());
+            m_ops.insert(m_ops.begin() + static_cast<int64_t>(end_idx), tail_loop.begin(), tail_loop.end());
+            start_idx += tail_loop.size();
+            end_idx += tail_loop.size();
+        }
+        tail_transformations(start_idx, end_idx, tail_size);
+        tail_loop_end->set_finalization_offsets(tail_finalization_offsets);
+        // ptr increments were set to the old increment, need to update them in accordance with the new one
+        tail_loop_end->update_increments(static_cast<int64_t>(tail_size));
+        tail_loop_end->set_work_amount(tail_size);
+        tail_loop_end->has_outer_loop = vector_loop_end->has_outer_loop;
+
+        if (m_config.m_optimize_single_evaluation) {
+            // tail loop is always executed once
+            optimize_single_evaluation(tail_loop_end);
+        }
+    }
+    return end_idx;
+}
+code Generator::generate(std::shared_ptr<ov::Model>& m,
+                         const GeneratorConfig& config,
+                         const void* compile_params) {
+    OV_ITT_SCOPED_TASK(ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator::generate")
+    if (!target->is_supported())
+        throw ngraph_error("unsupported architecture for code generation");
+
+    OV_ITT_TASK_CHAIN(GENERATE, ngraph::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::VectorTile")
+    // vector loop
+    m_ops = m->get_ordered_ops();
+    m_config = config;
+    NodeVector processed_ops;
+    processed_ops.reserve(m_ops.size());
+    std::stack<std::pair<size_t, std::shared_ptr<op::LoopBegin>>> loop_to_process;
+    for (size_t i = 0; i < m_ops.size(); i++) {
+        if (auto loop_begin = as_type_ptr<op::LoopBegin>(m_ops[i])) {
+            // skip scalar loops
+            if (loop_begin->get_increment() != 1)
+                loop_to_process.emplace(i, loop_begin);
+        } else if (auto loop_end = as_type_ptr<op::LoopEnd>(m_ops[i])) {
+            if (!loop_to_process.empty() && loop_end->get_loop_begin() == loop_to_process.top().second) {
+                // Note: we pass end_idx as i+1 because the end is non-inclusive
+                // we also set i = end_idx - 1, because i will be incremented before the next iteration
+                i = inject_tail_processing(loop_to_process.top().first, i + 1) - 1;
+                loop_to_process.pop();
+            }
+        }
+    }
+    std::vector<AllocatedEmitter> lowered;
+    // todo: this is for debug purposes. remove before merge
+    int k = 0;
+    auto lower_ops = [&lowered, &k, this](const NodeVector& ops){
+        std::transform(ops.begin(), ops.end(), std::back_inserter(lowered),
+                       [&k, this](const std::shared_ptr<Node>& n){
+                            // todo: this is for debug purposes. remove before merge
+//                           auto reg_info = ngraph::snippets::getRegisters(n);
+//                           std::cerr << k++ << " : " << n->get_friendly_name() << " : ";
+//                           for (auto r : reg_info.first)
+//                               std::cerr << r << ", ";
+//                           std::cerr << " => ";
+//                           for (auto r : reg_info.second)
+//                               std::cerr << r << ", ";
+//                           std::cerr << "\n";
+                           return std::make_pair(target->get(n->get_type_info())(n), ngraph::snippets::getRegisters(n));
+                       });
+    };
+    lower_ops(m_ops);
 
     OV_ITT_TASK_NEXT(GENERATE, "::EmitCode")
     //todo: Kernel need info on i/o data access pattern and data shapes to calculate data offsets
