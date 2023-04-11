@@ -13,17 +13,12 @@ namespace snippets {
 namespace pass {
 
 namespace {
-std::shared_ptr<op::Buffer> is_intermediate_buffer(const std::shared_ptr<ov::Node>& op) {
-    const auto buffer = ov::as_type_ptr<op::Buffer>(op);
-    return buffer && buffer->is_intermediate_memory() ? buffer : nullptr;
-}
-
 inline size_t index(size_t size, size_t row, size_t col) {
     return col + row * size;
 }
 } // namespace
 
-std::vector<bool> BufferIdentification::create_adjacency_matrix(const BufferIdentification::BufferSet& buffers) {
+std::vector<bool> BufferIdentification::create_adjacency_matrix(const ov::NodeVector& ops, const BufferIdentification::BufferSet& buffers) {
     // The sync point to check for adjency is Loop because only in Loop we increment pointers.
     // So if some Buffers in the one Loop have conflict (cannot be inplace: the same ptr increment and finalization offset)
     // they are called as adjacent
@@ -32,77 +27,88 @@ std::vector<bool> BufferIdentification::create_adjacency_matrix(const BufferIden
     for (size_t i = 0; i < size; ++i)
         adj[index(size, i, i)] = true;
 
-    auto update_adj_matrix = [&](const std::shared_ptr<op::Buffer>& buffer, size_t buffer_index,
-                                 const std::shared_ptr<op::Buffer>& neighbour_buffer) {
-        if (neighbour_buffer) {
-            if (buffer->get_allocation_shape() != neighbour_buffer->get_allocation_shape() ||
-                buffer->get_element_type().size() != neighbour_buffer->get_element_type().size()) {
-                const auto iter = std::find(buffers.cbegin(), buffers.cend(), neighbour_buffer);
-                NGRAPH_CHECK(iter != buffers.cend(), "Buffer wasn't find in Buffer system of Subgraph");
+    auto get_buffer_idx = [&](const std::shared_ptr<op::Buffer>& buffer) {
+        const auto iter = std::find(buffers.cbegin(), buffers.cend(), buffer);
+        NGRAPH_CHECK(iter != buffers.cend(), "Buffer wasn't find in Buffer system of Subgraph");
+        return std::distance(buffers.cbegin(), iter);
+    };
 
-                const size_t adj_idx = std::distance(buffers.cbegin(), iter);
-                adj[index(size, adj_idx, buffer_index)] = adj[index(size, buffer_index, adj_idx)] = true;
-            }
+    auto update_adj_matrix = [&](const std::pair<std::shared_ptr<op::Buffer>, int64_t>& buffer,
+                                 const std::pair<std::shared_ptr<op::Buffer>, int64_t>& neighbour_buffer) {
+        if ((buffer.second != neighbour_buffer.second) ||
+            (buffer.second > 0 && buffer.first->get_element_type().size() != neighbour_buffer.first->get_element_type().size())) {
+            const auto buffer_idx = get_buffer_idx(buffer.first);
+            const auto neighbour_idx = get_buffer_idx(neighbour_buffer.first);
+            adj[index(size, neighbour_idx, buffer_idx)] = adj[index(size, buffer_idx, neighbour_idx)] = true;
         }
     };
 
-    for (size_t i = 0; i < buffers.size(); ++i) {
-        const auto& buffer = buffers[i];
+    for (auto it = ops.begin(); it != ops.end(); ++it) {
+        const auto& op = *it;
+        const auto loop_end = ov::as_type_ptr<op::LoopEnd>(op);
+        if (!loop_end)
+            continue;
 
-        auto port = buffer->input_value(0).get_index();
-        auto parent = buffer->get_input_node_shared_ptr(0);
-        // We iterate in While cycle to check nested Loops
-        while (const auto loop_end = ov::as_type_ptr<op::LoopEnd>(parent)) {
-            const auto& loop_begin = loop_end->get_loop_begin();
-            for (const auto& input_value : loop_begin->input_values()) {
-                auto loop_in = input_value.get_node_shared_ptr();
-                auto port_idx = input_value.get_index();
-                while (std::dynamic_pointer_cast<op::LoopBase>(loop_in)) {
-                    const auto source_output = loop_in->input_value(port_idx);
-                    loop_in = source_output.get_node_shared_ptr();
-                    port_idx = source_output.get_index();
-                }
+        const auto ptr_increments = loop_end->get_ptr_increments();
 
-                if (const auto neighbour_buffer = is_intermediate_buffer(loop_in)) {
-                    update_adj_matrix(buffer, i, neighbour_buffer);
-                }
-            }
-            for (const auto& output : loop_end->outputs()) {
-                // check for first target input is enough for Buffer searching because operations can have only single Buffer per each output port as op
-                const auto& target_inputs = output.get_target_inputs();
-                auto consumer_in = *target_inputs.begin();
-                auto port_idx = consumer_in.get_index();
-                auto consumer = consumer_in.get_node()->shared_from_this();
-                while (std::dynamic_pointer_cast<op::LoopBase>(consumer)) {
-                    const auto target_inputs = consumer->get_output_target_inputs(port_idx);
-                    auto consumer_in = *target_inputs.begin();
-                    port_idx = consumer_in.get_index();
-                    consumer = consumer_in.get_node()->shared_from_this();
-                }
+        const auto& loop_begin = loop_end->get_loop_begin();
+        // Buffer -> ptr increment
+        std::map<std::shared_ptr<op::Buffer>, int64_t> buffer_neighbours;
 
-                if (buffer != consumer) {
-                    if (const auto neighbour_buffer = is_intermediate_buffer(consumer)) {
-                        update_adj_matrix(buffer, i, neighbour_buffer);
-                    }
-                }
+        for (size_t i = 0; i < loop_begin->input_values().size(); ++i) {
+            const auto& input_value = loop_begin->input_value(i);
+            auto loop_in = input_value.get_node_shared_ptr();
+            auto port_idx = input_value.get_index();
+            while (std::dynamic_pointer_cast<op::LoopBase>(loop_in)) {
+                const auto source_output = loop_in->input_value(port_idx);
+                loop_in = source_output.get_node_shared_ptr();
+                port_idx = source_output.get_index();
             }
 
-            parent = parent->get_input_node_shared_ptr(port);
-            port = parent->input_value(port).get_index();
+            if (const auto neighbour_buffer = ov::as_type_ptr<op::Buffer>(loop_in)) {
+                buffer_neighbours[neighbour_buffer] = ptr_increments[i];
+            }
         }
-        const auto& target_inputs = buffer->output(0).get_target_inputs();
-        const auto& child = target_inputs.begin()->get_node()->shared_from_this();
-        if (const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(child)) {
-            for (const auto& out : loop_begin->input_values()) {
-                if (const auto& another_buffer = as_type_ptr<op::Buffer>(out.get_node_shared_ptr())) {
-                    // Note: When two buffers share a common parent (e.g. BrgemmCopy case), they can count
-                    // as non-adjacent, since the corresponding pointers will never be incremented separately
-                    if (buffer == another_buffer ||
-                        buffer->get_input_node_shared_ptr(0) == another_buffer->get_input_node_shared_ptr(0))
-                        continue;
-                    if (const auto neighbour_buffer = is_intermediate_buffer(another_buffer))
-                        update_adj_matrix(buffer, i, neighbour_buffer);
-                }
+
+        for (const auto& output : loop_end->outputs()) {
+            // check for first target input is enough for Buffer searching because operations can have only single Buffer per each output port as op
+            const auto& target_inputs = output.get_target_inputs();
+            auto consumer_in = *target_inputs.begin();
+            auto port_idx = consumer_in.get_index();
+            auto consumer = consumer_in.get_node()->shared_from_this();
+            while (std::dynamic_pointer_cast<op::LoopBase>(consumer)) {
+                const auto target_inputs = consumer->get_output_target_inputs(port_idx);
+                auto consumer_in = *target_inputs.begin();
+                port_idx = consumer_in.get_index();
+                consumer = consumer_in.get_node()->shared_from_this();
+            }
+
+            if (const auto neighbour_buffer = ov::as_type_ptr<op::Buffer>(consumer)) {
+                buffer_neighbours[neighbour_buffer] = ptr_increments[loop_begin->get_input_size() + output.get_index()];
+            }
+        }
+
+        const auto& begin_it = std::find(ops.begin(), ops.end(), loop_begin);
+        OPENVINO_ASSERT(begin_it != ops.end(), "LoopBegin hasn't been found!");
+
+        for (auto loop_it = begin_it; loop_it != it; ++loop_it) {
+            const auto& loop_op = *loop_it;
+            if (const auto neighbour_buffer = ov::as_type_ptr<op::Buffer>(loop_op)) {
+                buffer_neighbours[neighbour_buffer] = 0;
+                continue;
+            }
+
+            // Skip inside Loops - these Loops have been already analysed
+            if (const auto inner_loop_begin = ov::as_type_ptr<op::LoopBegin>(loop_op)) {
+                const auto& inner_end_it = std::find(loop_it, ops.end(), inner_loop_begin);
+                OPENVINO_ASSERT(inner_end_it != ops.end(), "LoopEnd hasn't been found!");
+                loop_it = inner_end_it;
+            }
+        }
+
+        for (auto buffer_it = buffer_neighbours.begin(); buffer_it != buffer_neighbours.end(); ++buffer_it) {
+            for (auto neighbour_it = std::next(buffer_it); neighbour_it != buffer_neighbours.end(); ++neighbour_it) {
+                update_adj_matrix(*buffer_it, *neighbour_it);
             }
         }
     }
@@ -176,19 +182,17 @@ std::map<size_t, BufferIdentification::BufferSet> BufferIdentification::coloring
 bool BufferIdentification::run_on_model(const std::shared_ptr<ov::Model>& model) {
     RUN_ON_FUNCTION_SCOPE(BufferIdentification);
     // Unite Buffers using Graph coloring algorithm.
-    // Notes: We identify only Buffer with Intermediate memory because Buffers with new memory are used only in Brgemm case
-    //        so these Buffers are always IntermediateBuffer nonadjacent
     BufferIdentification::BufferSet buffers;
 
     const auto ops = model->get_ordered_ops();
     for (const auto& op : ops) {
-        if (const auto buffer = is_intermediate_buffer(op)) {
+        if (const auto buffer = ov::as_type_ptr<op::Buffer>(op)) {
             buffers.push_back(buffer);
         }
     }
 
     // Creation of Adj matrix
-    auto adj = create_adjacency_matrix(buffers);
+    auto adj = create_adjacency_matrix(ops, buffers);
 
     // Graph coloring algorithm
     const auto color_groups = coloring(buffers, adj);
