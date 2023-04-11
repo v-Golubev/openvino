@@ -107,7 +107,13 @@ ov::PartialShape get_reordered_planar_shape(const ov::PartialShape& shape, const
 }
 
 ov::PartialShape get_port_planar_shape(const Output<Node>& out) {
-    std::vector<size_t> layout = get_node_output_layout(out.get_node_shared_ptr());
+    auto node = out.get_node_shared_ptr();
+    // If input is LoopBegin then it has multiple outputs and doesn't store output layout,
+    // so we have to check the original input node rt_info
+    while (ov::is_type<ngraph::snippets::op::LoopBegin>(node)) {
+        node = node->get_input_node_shared_ptr(out.get_index());;
+    }
+    std::vector<size_t> layout = get_node_output_layout(node);
     const auto& tensor = out.get_tensor_ptr();
     if (!tensor)
         throw ngraph_error("get_port_planar_shape can't be called for an uninitialized output tensor");

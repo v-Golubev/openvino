@@ -122,9 +122,7 @@ KernelEmitter::KernelEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     const auto&  model = kernel->model;
     const auto get_data_layout = [](const Output<ov::Node>& out, std::vector<size_t>& shape) {
         auto node = out.get_node_shared_ptr();
-        // If input is LoopBegin then it has multiple outputs and doesn't store output layout,
-        // so we have to check the original input node rt_info
-        if (ov::is_type<ngraph::snippets::op::LoopEnd>(node)) {
+        while (ov::is_type<ngraph::snippets::op::LoopEnd>(node)) {
             node = node->get_input_node_shared_ptr(out.get_index());;
         }
         const auto& layout = ngraph::snippets::utils::get_node_output_layout(node);
