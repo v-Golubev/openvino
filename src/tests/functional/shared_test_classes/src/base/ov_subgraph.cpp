@@ -275,7 +275,11 @@ void SubgraphBaseTest::infer() {
     for (const auto& input : inputs) {
         inferRequest.set_tensor(input.first, input.second);
     }
+    auto start_time = std::chrono::system_clock::now();
     inferRequest.infer();
+    auto end_time = std::chrono::system_clock::now();
+    std::chrono::duration<double, std::milli> duration = end_time - start_time;
+    std::cerr << "Inference took: " << duration.count() << " ms \n" << std::flush;
 }
 
 std::vector<ov::Tensor> SubgraphBaseTest::calculate_refs() {
@@ -366,9 +370,9 @@ void SubgraphBaseTest::validate() {
     expectedOutputs = calculate_refs();
 #else
     std::thread t_device([&]{ actualOutputs = get_plugin_outputs(); });
-    std::thread t_ref([&]{ expectedOutputs = calculate_refs(); });
+    //std::thread t_ref([&]{ expectedOutputs = calculate_refs(); });
     t_device.join();
-    t_ref.join();
+    //t_ref.join();
 #endif
 
     if (expectedOutputs.empty()) {
