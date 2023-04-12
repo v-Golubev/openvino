@@ -94,8 +94,14 @@ void Generator::tail_transformations(const size_t start_idx, const size_t end_id
                 throw ngraph_error("Tail transformations failed to find a matching LoopEnd");
             if (loop_end != outer_loop_end &&
                 loop_end->get_work_amount() == outer_loop_end->get_increment() &&
-                loop_end->get_increment() == 1)
+                loop_end->get_increment() == 1) {
+                auto fin_offsets = loop_end->get_finalization_offsets();
+                const auto work_amount = static_cast<int64_t>(loop_end->get_work_amount());
+                for (auto& f : fin_offsets)
+                    f = (f / work_amount) * static_cast<int64_t>(tail_size);
+                loop_end->set_finalization_offsets(fin_offsets);
                 loop_end->set_work_amount(tail_size);
+            }
         }
     }
 }
