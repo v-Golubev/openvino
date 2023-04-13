@@ -782,22 +782,26 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     m_with_comp = brgemm_node->is_with_compensations();
     m_with_scratch = brgemm_node->is_with_scratchpad();
 
-    m_N_blk = brg1Prc == Precision::FP32 ? m_N :
-              brg1Prc == Precision::BF16 ? 32 : 64;
-    m_N_tail = m_N % m_N_blk;
+//    m_N_blk = brg1Prc == Precision::FP32 ? m_N :
+//              brg1Prc == Precision::BF16 ? 32 : 64;
     m_K_blk = brgWithAMX ? brg0Prc == Precision::BF16 ? 32 : 64
                          : m_K;
+    m_N_blk = 32;
+    m_N_tail = m_N % m_N_blk;
     m_K_tail = m_K % m_K_blk;
 
     size_t brg0BaseIdx = -1;
     for (size_t k = 0; k < 2; k++) {
         for (size_t n = 0; n < 2; n++) {
-            auto& brgemmCtx = m_brgCtxs0[getBrgIdx(k, n)];
+            const bool N_is_full = n == 0;
+            const size_t kernel_idx = getBrgIdx(k, N_is_full);
+
+            auto& brgemmCtx = m_brgCtxs0[kernel_idx];
 
             auto M_ = m_M;
-            auto N_ = n ? m_N_tail : m_N - m_N_tail;
+            auto N_ = N_is_full ? m_N_blk : m_N_tail;
             auto K_ = k ? m_K_tail : m_K - m_K_tail;
-            auto beta = k && m_brgCtxs0[getBrgIdx(0, n)].K != 0 ? 1.0f : 0.0f;
+            auto beta = k && m_brgCtxs0[kernel_idx].K != 0 ? 1.0f : 0.0f;
 
             brgemmCtx.M = M_;
             brgemmCtx.N = N_;
@@ -813,7 +817,7 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
             if (M_ != 0 && K_ != 0 && N_ != 0) {
                 if (brg0BaseIdx == -1)
                     brg0BaseIdx = getBrgIdx(k, n);
-                initBrgemm(brgemmCtx, m_brgKernels0[getBrgIdx(k, n)], brgWithAMX);
+                initBrgemm(brgemmCtx, m_brgKernels0[kernel_idx], brgWithAMX);
             }
         }
     }
@@ -883,22 +887,30 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
             input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
         }
         Xbyak::Reg64 output_0(static_cast<int>(out[0]));
-        const size_t brgIdx0 = getBrgIdx(0, 0);
-        const size_t K0_step0 = m_brgCtxs0[brgIdx0].K;
-        const size_t K0_step1 = m_brgCtxs0[brgIdx0].K * m_brgCtxs0[brgIdx0].LDB;
-        const size_t N0_step0 = m_brgCtxs0[brgIdx0].N * m_brg0VnniFactor;
-        const size_t N0_step1 = m_brgCtxs0[brgIdx0].N;
-        for (size_t n = 0; n < 2; n++) {
+        const auto num_N_blocks = div_up(m_N, m_N_blk);
+        size_t N0_offset = 0;
+        size_t N1_offset = 0;
+        for (size_t n = 0; n < num_N_blocks; n++) {
+            const bool N_is_full = m_N % m_N_blk == 0 || n < num_N_blocks - 1;
             for (size_t k = 0; k < 2; k++) {
-                auto& brgemmCtx = m_brgCtxs0[getBrgIdx(k, n)];
+                const size_t kernel_idx = getBrgIdx(k, N_is_full);
+
+                const size_t K0_step0 = m_brgCtxs0[kernel_idx].K;
+                const size_t K0_step1 = m_brgCtxs0[kernel_idx].K * m_brgCtxs0[kernel_idx].LDB;
+                const size_t N0_step0 = m_brgCtxs0[kernel_idx].N * m_brg0VnniFactor;
+                const size_t N0_step1 = m_brgCtxs0[kernel_idx].N;
+                auto& brgemmCtx = m_brgCtxs0[kernel_idx];
 
                 if (brgemmCtx.K != 0 && brgemmCtx.N != 0) {
                     const size_t in0_offset = m_load_offset_a + k * K0_step0 * io_data_size[0];
-                    const size_t in1_offset = m_load_offset_b + (k * K0_step1 + n * N0_step0) * io_data_size[1];
+                    const size_t in1_offset = m_load_offset_b + (k * K0_step1 + N0_offset) * io_data_size[1];
                     const size_t in2_offset = m_load_offset_scratch + (m_with_comp ? n * N0_step1 * sizeof(int32_t) : 0);
-                    const size_t out0_offset = m_store_offset_c + n * N0_step1 * io_data_size[2];
+                    const size_t out0_offset = m_store_offset_c + N1_offset * io_data_size[2];
+                    N0_offset += m_brgCtxs0[kernel_idx].N * m_brg0VnniFactor;
+                    N1_offset += m_brgCtxs0[kernel_idx].N;
 
-                    emit_brgemm_kernel_call(m_brgKernels0[getBrgIdx(k, n)].get(),
+//                    std::cerr << "Brgemm Kernel (M, N, K) = (" << brgemmCtx.M << ", " << brgemmCtx.N << ", " << brgemmCtx.K << ")\n";
+                    emit_brgemm_kernel_call(m_brgKernels0[kernel_idx].get(),
                                             brgemmCtx,
                                             input_0,
                                             input_1,
