@@ -690,6 +690,7 @@ snippets::Schedule snippets::op::Subgraph::generate(
     ov::pass::Manager buffer_manager;
     buffer_manager.register_pass<snippets::pass::BufferIdentification>();
     buffer_manager.register_pass<snippets::pass::ResetBufferState>();
+//    buffer_manager.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
     buffer_manager.run_passes(body_ptr());
 
     // After all passes, when all optimizations are completed and all MemoryAccess ops are inserted,
