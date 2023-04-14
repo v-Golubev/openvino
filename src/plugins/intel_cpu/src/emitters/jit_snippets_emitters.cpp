@@ -786,8 +786,8 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
 //              brg1Prc == Precision::BF16 ? 32 : 64;
     m_K_blk = brgWithAMX ? brg0Prc == Precision::BF16 ? 32 : 64
                          : m_K;
-    m_N_blk = 32;
-    m_N_tail = m_N % m_N_blk;
+    m_N_blk = m_N >= 64 ? 64 : 0;
+    m_N_tail = m_N_blk > 0 ? m_N % m_N_blk : m_N;
     m_K_tail = m_K % m_K_blk;
 
     size_t brg0BaseIdx = -1;
@@ -880,6 +880,9 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
         Xbyak::Reg64 input_0(static_cast<int>(in[0]));
         Xbyak::Reg64 input_1(static_cast<int>(in[1]));
         Xbyak::Reg64 input_2(static_cast<int>(0));  // scratch. Default reg index is 0 if there isn't scratch
+        if (aux_gpr_idxs.empty())
+            IE_THROW() << "BRGEMM Emitter requires extra gpr which was not allocated";
+        Xbyak::Reg64 work_amount_N(static_cast<int>(aux_gpr_idxs[0]));
         if (m_with_scratch) {
             if (in.size() != 3) {
                 IE_THROW() << "BRGEMM Emitter expects 3 inputs if there are compensations/wsp";
@@ -887,42 +890,63 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
             input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
         }
         Xbyak::Reg64 output_0(static_cast<int>(out[0]));
-        const auto num_N_blocks = div_up(m_N, m_N_blk);
-        size_t N0_offset = 0;
         size_t N1_offset = 0;
-        for (size_t n = 0; n < num_N_blocks; n++) {
-            const bool N_is_full = m_N % m_N_blk == 0 || n < num_N_blocks - 1;
+        const size_t max_out_span = m_store_offset_c + (m_N_blk > 0 ? m_N / m_N_blk : m_N) * io_data_size[2];
+        const size_t max_in1_span = m_load_offset_b + m_N * m_brg0VnniFactor * io_data_size[1];
+        h->push(input_1);
+        h->push(output_0);
+        h->mov(work_amount_N, m_N);
+
+        h->add(input_1, m_load_offset_b);
+        h->add(output_0, m_store_offset_c);
+
+        for (size_t n = 0; n < 2; n++) {
+            const bool N_is_full = n == 0;
             for (size_t k = 0; k < 2; k++) {
                 const size_t kernel_idx = getBrgIdx(k, N_is_full);
+                const auto kernel = m_brgKernels0[kernel_idx].get();
+                const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
+                if (!kernel)
+                    continue;
+                Label N_loop_begin;
+                if (N_is_full)
+                    h->L(N_loop_begin);
 
-                const size_t K0_step0 = m_brgCtxs0[kernel_idx].K;
-                const size_t K0_step1 = m_brgCtxs0[kernel_idx].K * m_brgCtxs0[kernel_idx].LDB;
-                const size_t N0_step0 = m_brgCtxs0[kernel_idx].N * m_brg0VnniFactor;
-                const size_t N0_step1 = m_brgCtxs0[kernel_idx].N;
-                auto& brgemmCtx = m_brgCtxs0[kernel_idx];
+                const size_t K0_step0 = brgemmCtx.K;
+                const size_t K0_step1 = brgemmCtx.K * brgemmCtx.LDB;
+                const size_t N0_step0 = brgemmCtx.N * m_brg0VnniFactor;
+                const size_t N0_step1 = brgemmCtx.N;
 
-                if (brgemmCtx.K != 0 && brgemmCtx.N != 0) {
-                    const size_t in0_offset = m_load_offset_a + k * K0_step0 * io_data_size[0];
-                    const size_t in1_offset = m_load_offset_b + (k * K0_step1 + N0_offset) * io_data_size[1];
-                    const size_t in2_offset = m_load_offset_scratch + (m_with_comp ? n * N0_step1 * sizeof(int32_t) : 0);
-                    const size_t out0_offset = m_store_offset_c + N1_offset * io_data_size[2];
-                    N0_offset += m_brgCtxs0[kernel_idx].N * m_brg0VnniFactor;
-                    N1_offset += m_brgCtxs0[kernel_idx].N;
+                const size_t in0_offset = m_load_offset_a;// + k * K0_step0 * io_data_size[0];
+                const size_t in1_offset = 0;// m_load_offset_b + (k * K0_step1 + N0_offset) * io_data_size[1];
+                const size_t in2_offset = 0;//m_load_offset_scratch + (m_with_comp ? n * N0_step1 * sizeof(int32_t) : 0);
+                const size_t out0_offset = 0;//m_store_offset_c + N1_offset * io_data_size[2];
+//                N0_offset += brgemmCtx.N * m_brg0VnniFactor;
+//                    N1_offset += m_brgCtxs0[kernel_idx].N;
 
-//                    std::cerr << "Brgemm Kernel (M, N, K) = (" << brgemmCtx.M << ", " << brgemmCtx.N << ", " << brgemmCtx.K << ")\n";
-                    emit_brgemm_kernel_call(m_brgKernels0[kernel_idx].get(),
-                                            brgemmCtx,
-                                            input_0,
-                                            input_1,
-                                            input_2,
-                                            output_0,
-                                            in0_offset,
-                                            in1_offset,
-                                            in2_offset,
-                                            out0_offset);
+//                std::cerr << "Brgemm Kernel (M, N, K) = (" << brgemmCtx.M << ", " << brgemmCtx.N << ", " << brgemmCtx.K << ")";
+//                std::cerr << "n = " << n << ", k = " << k << "\n";
+                emit_brgemm_kernel_call(kernel,
+                                        brgemmCtx,
+                                        input_0,
+                                        input_1,
+                                        input_2,
+                                        output_0,
+                                        in0_offset,
+                                        in1_offset,
+                                        in2_offset,
+                                        out0_offset);
+                h->add(output_0, brgemmCtx.N * io_data_size[2]);
+                h->add(input_1, brgemmCtx.N * m_brg0VnniFactor * io_data_size[1]);
+                if (N_is_full) {
+                    h->sub(work_amount_N, brgemmCtx.N);
+                    h->cmp(work_amount_N, brgemmCtx.N);
+                    h->jge(N_loop_begin);
                 }
             }
         }
+        h->pop(output_0);
+        h->pop(input_1);
     } else {
         IE_THROW() << "BrgemmEmitter requires at least avx512_core instruction set";
     }

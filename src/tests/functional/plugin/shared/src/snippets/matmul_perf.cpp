@@ -44,7 +44,11 @@ void MatMulPerf::SetUp() {
 
     auto f = ov::test::snippets::MatMulFunction(input_shapes, elem_types);
     function = f.getOriginal();
-    if (snippets_enabled && !configuration.count(InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE)) {
+    if (!snippets_enabled) {
+        ref_num_subgraphs = 0;
+        configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
+                              InferenceEngine::PluginConfigInternalParams::DISABLE});
+    } else if (!configuration.count(InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE)) {
         configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
                               InferenceEngine::PluginConfigInternalParams::IGNORE_CALLBACK});
     }
@@ -78,10 +82,11 @@ void MHAWOTransposePerf::SetUp() {
 
     auto f = ov::test::snippets::MHAWOTransposeFunction(inputDynamicShapes, withMul);
     function = f.getOriginal();
-    if (!snippets_enabled)
+    if (!snippets_enabled) {
         ref_num_subgraphs = 0;
-
-    if (snippets_enabled && !configuration.count(InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE)) {
+        configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
+                              InferenceEngine::PluginConfigInternalParams::DISABLE});
+    } else if (!configuration.count(InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE)) {
         configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
                               InferenceEngine::PluginConfigInternalParams::IGNORE_CALLBACK});
     }

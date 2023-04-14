@@ -322,6 +322,7 @@ public:
 
     size_t get_inputs_num() const override { return m_with_scratch ? 3 : 2; }
     static std::set<std::vector<element::Type>> get_supported_precisions(const std::shared_ptr<ngraph::Node>& node = nullptr);
+    size_t aux_gprs_count() const override {return 1;}
 
 private:
     void emit_impl(const std::vector<size_t>& in,
