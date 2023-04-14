@@ -819,7 +819,7 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
             initBrgemm(brgemmCtx, m_brgKernels0[kernel_idx], brgWithAMX);
         }
     }
-
+    m_N_blocking_loop_needed = m_N >= 2 * m_N_blk;
     m_load_offset_a = brgemm_node->get_offset_a();
     m_load_offset_b = brgemm_node->get_offset_b();
     m_store_offset_c = brgemm_node->get_offset_c();
@@ -871,6 +871,9 @@ void BrgemmEmitter::initBrgemm(brgemmCtx& ctx, std::unique_ptr<brgemm_kernel_t>&
         IE_THROW() << "BrgemmEmitter cannot create brgemm kernel due to invalid params";
     brgKernel.reset(brgKernel_);
 }
+size_t BrgemmEmitter::aux_gprs_count() const {
+    return  m_N_blocking_loop_needed;
+}
 
 void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
                               const std::vector<size_t>& out) const {
@@ -879,68 +882,58 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
         Xbyak::Reg64 input_1(static_cast<int>(in[1]));
         Xbyak::Reg64 input_2(static_cast<int>(0));  // scratch. Default reg index is 0 if there isn't scratch
         Xbyak::Reg64 output_0(static_cast<int>(out[0]));
-        if (aux_gpr_idxs.empty())
-            IE_THROW() << "BRGEMM Emitter requires extra gpr which was not allocated";
-        Xbyak::Reg64 work_amount_N(static_cast<int>(aux_gpr_idxs[0]));
+        Xbyak::Reg64 work_amount_N(static_cast<int>(0));
+        if (m_N_blocking_loop_needed) {
+            if (aux_gpr_idxs.empty())
+                IE_THROW() << "BRGEMM Emitter requires extra gpr which was not allocated";
+            work_amount_N = Xbyak::Reg64(static_cast<int>(aux_gpr_idxs[0]));
+        }
+
         if (m_with_scratch) {
             if (in.size() != 3) {
                 IE_THROW() << "BRGEMM Emitter expects 3 inputs if there are compensations/wsp";
             }
             input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
         }
+        auto emit_and_shift_pointers = [&](size_t kernel_idx) {
+            const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
+            emit_brgemm_kernel_call(m_brgKernels0[kernel_idx].get(), brgemmCtx, input_0, input_1, input_2, output_0);
+            h->add(output_0, brgemmCtx.N * io_data_size[2]);
+            h->add(input_1, brgemmCtx.N * m_brg0VnniFactor * io_data_size[1]);
+        };
+
         const size_t max_in0_offset = m_load_offset_a;
         const size_t max_in1_offset = m_load_offset_b + m_N * m_brg0VnniFactor * io_data_size[1];
         const size_t max_out0_offset = m_store_offset_c + m_N * io_data_size[2];
-        h->mov(work_amount_N, m_N);
+        if (m_N_blocking_loop_needed)
+            h->mov(work_amount_N, m_N);
 
         h->add(input_0, m_load_offset_a);
         h->add(input_1, m_load_offset_b);
         h->add(output_0, m_store_offset_c);
 
-        for (size_t n = 0; n < 2; n++) {
-            const bool N_is_full = n == 0;
-            for (size_t k = 0; k < 2; k++) {
-                const bool K_is_full = k == 0;
-                const size_t kernel_idx = getBrgIdx(k, n);
-                const auto kernel = m_brgKernels0[kernel_idx].get();
-                const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
-                if (!kernel)
-                    continue;
-                Label N_loop_begin;
-                if (N_is_full)
-                    h->L(N_loop_begin);
+        // Blocked N loop
+        size_t kernel_idx = getBrgIdx(0, 0);
+        if (m_brgKernels0[kernel_idx]) {
+            const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
+            Label N_loop_begin;
+            if (m_N_blocking_loop_needed)
+                h->L(N_loop_begin);
 
-                //const size_t K0_step0 = brgemmCtx.K;
-                //const size_t K0_step1 = brgemmCtx.K * brgemmCtx.LDB;
-                //const size_t N0_step0 = brgemmCtx.N * m_brg0VnniFactor;
-                //const size_t N0_step1 = brgemmCtx.N;
+            emit_and_shift_pointers(kernel_idx);
 
-                //const size_t in0_offset = m_load_offset_a + k * K0_step0 * io_data_size[0];
-                //const size_t in1_offset = m_load_offset_b + (k * K0_step1 + n * N0_step0) * io_data_size[1];
-                //const size_t in2_offset = m_load_offset_scratch + (m_with_comp ? n * N0_step1 * sizeof(int32_t) : 0);
-                //const size_t out0_offset = m_store_offset_c + n * N0_step1 * io_data_size[2];
-
-//                std::cerr << "Brgemm Kernel (M, N, K) = (" << brgemmCtx.M << ", " << brgemmCtx.N << ", " << brgemmCtx.K << ")";
-//                std::cerr << "n = " << n << ", k = " << k << "\n";
-                emit_brgemm_kernel_call(kernel,
-                                        brgemmCtx,
-                                        input_0,
-                                        input_1,
-                                        input_2,
-                                        output_0,
-                                        0,
-                                        0,
-                                        0,
-                                        0);
-                h->add(output_0, brgemmCtx.N * io_data_size[2]);
-                h->add(input_1, brgemmCtx.N * m_brg0VnniFactor * io_data_size[1]);
-                if (N_is_full) {
-                    h->sub(work_amount_N, brgemmCtx.N);
-                    h->cmp(work_amount_N, brgemmCtx.N);
-                    h->jge(N_loop_begin);
-                }
+            if (m_N_blocking_loop_needed) {
+                h->sub(work_amount_N, brgemmCtx.N);
+                h->cmp(work_amount_N, brgemmCtx.N);
+                h->jge(N_loop_begin);
             }
         }
+        // N loop tail
+        kernel_idx = getBrgIdx(0, 1);
+        if (m_brgKernels0[kernel_idx])
+            emit_and_shift_pointers(kernel_idx);
+
+
         h->sub(input_0, max_in0_offset);
         h->sub(input_1, max_in1_offset);
         h->sub(output_0, max_out0_offset);

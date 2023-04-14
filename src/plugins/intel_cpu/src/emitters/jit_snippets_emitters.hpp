@@ -322,7 +322,7 @@ public:
 
     size_t get_inputs_num() const override { return m_with_scratch ? 3 : 2; }
     static std::set<std::vector<element::Type>> get_supported_precisions(const std::shared_ptr<ngraph::Node>& node = nullptr);
-    size_t aux_gprs_count() const override {return 1;}
+    size_t aux_gprs_count() const override;
 
 private:
     void emit_impl(const std::vector<size_t>& in,
@@ -342,8 +342,8 @@ private:
 
     void emit_brgemm_kernel_call(const dnnl::impl::cpu::x64::brgemm_kernel_t* brg_kernel, const brgemmCtx& ctx,
                                  Xbyak::Reg64 addr_A, Xbyak::Reg64 addr_B, Xbyak::Reg64 scratch, Xbyak::Reg64 addr_C,
-                                 const size_t in0_kernel_offset, const size_t in1_kernel_offset,
-                                 const size_t in2_kernel_offset, const size_t out0_kernel_offset) const;
+                                 size_t in0_kernel_offset = 0, size_t in1_kernel_offset = 0,
+                                 size_t in2_kernel_offset = 0, size_t out0_kernel_offset = 0) const;
     static void kernel_execute(const dnnl::impl::cpu::x64::brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp);
 
     static constexpr size_t BRGEMM_KERNELS_NUM = 4;
@@ -354,6 +354,7 @@ private:
     size_t m_K, m_K_blk, m_K_tail;
     size_t m_N, m_N_blk, m_N_tail;
     size_t m_brg0VnniFactor;
+    bool m_N_blocking_loop_needed = false;
 
     bool m_with_scratch = false;
     bool m_with_comp = false;
