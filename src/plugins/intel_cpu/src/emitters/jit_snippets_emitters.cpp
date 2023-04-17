@@ -778,6 +778,8 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
     auto brg0Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(0));
     auto brg1Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(1));
     io_data_size = {brg0Prc.size(), brg1Prc.size(), brgemm_node->get_output_element_type(0).size()};
+    if (brgemm_node->get_input_size() > 2)
+        io_data_size.insert(io_data_size.begin() + 2, brgemm_node->get_input_element_type(2).size());
     m_brg0VnniFactor = 4 / brg0Prc.size();
     bool brgWithAMX = brgemm_node->is_amx();
 
@@ -889,36 +891,40 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
             work_amount_N = Xbyak::Reg64(static_cast<int>(aux_gpr_idxs[0]));
         }
 
-        if (m_with_scratch) {
-            if (in.size() != 3) {
-                IE_THROW() << "BRGEMM Emitter expects 3 inputs if there are compensations/wsp";
-            }
-            input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
-        }
         auto emit_and_shift_pointers = [&](size_t kernel_idx) {
             const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
             emit_brgemm_kernel_call(m_brgKernels0[kernel_idx].get(), brgemmCtx, input_0, input_1, input_2, output_0);
-            h->add(output_0, brgemmCtx.N * io_data_size[2]);
-            h->add(input_1, brgemmCtx.N * m_brg0VnniFactor * io_data_size[1]);
+            h->add(output_0, brgemmCtx.N * io_data_size.back());
+            h->add(input_1, brgemmCtx.N * io_data_size[1]);
+//            h->add(input_1, brgemmCtx.N * m_brg0VnniFactor * io_data_size[1]);
+            if (m_with_scratch && m_with_comp)
+                h->add(input_2, brgemmCtx.N * io_data_size[2]);
         };
 
         const size_t max_in0_offset = m_load_offset_a;
-        const size_t max_in1_offset = m_load_offset_b + m_N * m_brg0VnniFactor * io_data_size[1];
-        const size_t max_out0_offset = m_store_offset_c + m_N * io_data_size[2];
-        if (m_N_blocking_loop_needed)
-            h->mov(work_amount_N, m_N);
+        const size_t max_in1_offset = m_load_offset_b + m_N * io_data_size[1];
+        // Note: if there is a third input, then io_data_size[2] is its precision
+        const size_t max_in2_offset = m_load_offset_scratch + m_N * io_data_size[2];
+        const size_t max_out0_offset = m_store_offset_c + m_N * io_data_size.back();
 
         h->add(input_0, m_load_offset_a);
         h->add(input_1, m_load_offset_b);
         h->add(output_0, m_store_offset_c);
-
+        if (m_with_scratch) {
+            if (in.size() != 3)
+                IE_THROW() << "BRGEMM Emitter expects 3 inputs if there are compensations/wsp";
+            input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
+            h->add(input_2, m_load_offset_scratch);
+        }
         // Blocked N loop
         size_t kernel_idx = getBrgIdx(0, 0);
         if (m_brgKernels0[kernel_idx]) {
             const auto& brgemmCtx = m_brgCtxs0[kernel_idx];
             Label N_loop_begin;
-            if (m_N_blocking_loop_needed)
+            if (m_N_blocking_loop_needed) {
+                h->mov(work_amount_N, m_N);
                 h->L(N_loop_begin);
+            }
 
             emit_and_shift_pointers(kernel_idx);
 
@@ -936,6 +942,8 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
 
         h->sub(input_0, max_in0_offset);
         h->sub(input_1, max_in1_offset);
+        if (m_with_scratch)
+            h->sub(input_2, max_in2_offset);
         h->sub(output_0, max_out0_offset);
     } else {
         IE_THROW() << "BrgemmEmitter requires at least avx512_core instruction set";
