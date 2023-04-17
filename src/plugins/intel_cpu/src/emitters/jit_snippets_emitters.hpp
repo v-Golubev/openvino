@@ -337,14 +337,18 @@ private:
         bool is_with_comp;
         float beta;
     };
-    void initBrgemm(brgemmCtx& ctx, std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t>& brgKernel, bool use_amx) const;
-    size_t getBrgIdx(size_t kIdx, size_t nIdx) const;
+    static void initBrgemm(brgemmCtx& ctx, std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t>& brgKernel, bool use_amx);
+    static size_t getBrgIdx(size_t kIdx, size_t nIdx);
 
     void emit_brgemm_kernel_call(const dnnl::impl::cpu::x64::brgemm_kernel_t* brg_kernel, const brgemmCtx& ctx,
                                  Xbyak::Reg64 addr_A, Xbyak::Reg64 addr_B, Xbyak::Reg64 scratch, Xbyak::Reg64 addr_C,
                                  size_t in0_kernel_offset = 0, size_t in1_kernel_offset = 0,
                                  size_t in2_kernel_offset = 0, size_t out0_kernel_offset = 0) const;
     static void kernel_execute(const dnnl::impl::cpu::x64::brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp);
+    void emit_N_blocking_loops(bool is_tail_K_kernel,
+                               const Xbyak::Reg64& input_0, const Xbyak::Reg64& input_1,
+                               const Xbyak::Reg64& input_2, const Xbyak::Reg64& output_0,
+                               const Xbyak::Reg64& work_amount_N) const;
 
     static constexpr size_t BRGEMM_KERNELS_NUM = 4;
     brgemmCtx m_brgCtxs0[BRGEMM_KERNELS_NUM];
@@ -355,6 +359,7 @@ private:
     size_t m_N, m_N_blk, m_N_tail;
     size_t m_brg0VnniFactor;
     bool m_N_blocking_loop_needed = false;
+    bool m_K_blocking_loop_needed = false;
 
     bool m_with_scratch = false;
     bool m_with_comp = false;
