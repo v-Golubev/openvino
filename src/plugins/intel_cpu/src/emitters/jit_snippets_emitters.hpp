@@ -330,9 +330,14 @@ private:
 
     std::vector<size_t> io_data_size {};
     struct brgemmCtx {
+        brgemmCtx() : M(0), N(0), K(0),
+                    LDA(0), LDB(0), LDC(0),
+                    dt_in0(dnnl_f32), dt_in1(dnnl_f32),
+                    is_with_amx(false), is_with_comp(false), beta(0) {
+        }
         size_t M, N, K, LDA, LDB, LDC;
         dnnl_data_type_t dt_in0, dt_in1;
-        char palette[64];
+        char palette[64] = {};
         bool is_with_amx;
         bool is_with_comp;
         float beta;
@@ -345,14 +350,15 @@ private:
                                  size_t in0_kernel_offset = 0, size_t in1_kernel_offset = 0,
                                  size_t in2_kernel_offset = 0, size_t out0_kernel_offset = 0) const;
     static void kernel_execute(const dnnl::impl::cpu::x64::brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp);
-    void emit_N_blocking_loops(bool is_tail_K_kernel,
+    void emit_N_blocking_loops(size_t k_kernel_id,
                                const Xbyak::Reg64& input_0, const Xbyak::Reg64& input_1,
                                const Xbyak::Reg64& input_2, const Xbyak::Reg64& output_0,
                                const Xbyak::Reg64& work_amount_N) const;
 
-    static constexpr size_t BRGEMM_KERNELS_NUM = 4;
-    brgemmCtx m_brgCtxs0[BRGEMM_KERNELS_NUM];
-    std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t> m_brgKernels0[BRGEMM_KERNELS_NUM];
+    // Note: 3 kernels for K blocking and two for N blocking
+    static constexpr size_t BRGEMM_KERNELS_NUM[] = {3, 2};
+    std::array<brgemmCtx, BRGEMM_KERNELS_NUM[0] * BRGEMM_KERNELS_NUM[1]> m_brgCtxs;
+    std::array<std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t>, BRGEMM_KERNELS_NUM[0] * BRGEMM_KERNELS_NUM[1]> m_brgKernels;
 
     size_t m_M;
     size_t m_K, m_K_blk, m_K_tail;
