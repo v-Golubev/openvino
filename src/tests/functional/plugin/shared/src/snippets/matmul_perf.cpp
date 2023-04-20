@@ -6,6 +6,7 @@
 #include "snippets/matmul_perf.hpp"
 #include "subgraph_matmul.hpp"
 #include "subgraph_mha.hpp"
+#include "subgraph_softmax.hpp"
 #include "functional_test_utils/skip_tests_config.hpp"
 #include "cpp_interfaces/interface/ie_internal_plugin_config.hpp"
 #include <common_test_utils/ov_tensor_utils.hpp>
@@ -103,6 +104,44 @@ void MHAWOTransposePerf::generate_inputs(const std::vector<ngraph::Shape>& targe
     }
 }
 
+std::string SoftmaxPerf::getTestCaseName(testing::TestParamInfo<ov::test::snippets::SoftmaxParamsPerf> obj) {
+    ov::Shape inputShapes;
+    int axis;
+    std::string targetDevice;
+    size_t num_nodes, num_subgraphs;
+    bool snippets_enabled;
+    std::tie(inputShapes, axis, num_nodes, num_subgraphs, snippets_enabled, targetDevice) = obj.param;
+
+    std::ostringstream result;
+    result << "IS=" << CommonTestUtils::vec2str(inputShapes) << "_";
+    result << "Axis=" << axis << "_";
+    result << "#N=" << num_nodes << "_";
+    result << "#S=" << num_subgraphs << "_";
+    result << "Snippets=" << snippets_enabled << "_";
+    result << "targetDevice=" << targetDevice;
+    return result.str();
+}
+
+void SoftmaxPerf::SetUp() {
+    ov::Shape inputShape;
+    int axis;
+    bool snippets_enabled;
+    std::tie(inputShape, axis, ref_num_nodes, ref_num_subgraphs, snippets_enabled, targetDevice) = this->GetParam();
+    init_input_shapes({{{}, {inputShape, }}});
+
+    auto f = ov::test::snippets::SoftmaxFunction({inputShape}, axis);
+    function = f.getOriginal();
+
+    if (!snippets_enabled) {
+        ref_num_subgraphs = 0;
+        configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
+                              InferenceEngine::PluginConfigInternalParams::DISABLE});
+    } else if (!configuration.count(InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE)) {
+        configuration.insert({InferenceEngine::PluginConfigInternalParams::KEY_SNIPPETS_MODE,
+                              InferenceEngine::PluginConfigInternalParams::IGNORE_CALLBACK});
+    }
+}
+
 TEST_P(MatMulPerf, CompareWithRefImpl) {
     SKIP_IF_CURRENT_TEST_IS_DISABLED()
     run();
@@ -110,6 +149,11 @@ TEST_P(MatMulPerf, CompareWithRefImpl) {
 }
 
 TEST_P(MHAWOTransposePerf, CompareWithRefImpl) {
+    run();
+//    validateNumSubgraphs();
+}
+
+TEST_P(SoftmaxPerf, CompareWithRefImpl) {
     run();
 //    validateNumSubgraphs();
 }
