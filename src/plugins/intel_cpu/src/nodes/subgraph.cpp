@@ -380,7 +380,7 @@ void Snippet::createPrimitive() {
     jcp.tile_rank = tileRank;
     generate(&jcp);
     buffer_scratchpad_size = snippet->get_buffer_scratchpad_size();
-    buffer_scratchpad.resize(buffer_scratchpad_size * parallel_get_max_threads(), 0);
+    buffer_scratchpad.resize(buffer_scratchpad_size * context->getConfig().streamExecutorConfig._threads, 0);
 }
 
 std::vector<VectorDims> Snippet::shapeInfer() {
@@ -598,7 +598,7 @@ void Snippet::execute(dnnl::stream strm) {
 
 void Snippet::schedule_6d() {
     const auto& dom = exec_domain;
-    auto start_time = std::chrono::system_clock::now();
+   // auto start_time = std::chrono::system_clock::now();
     // < N, C, H, W > < 1, 1, N, C*H*W>
     parallel_for5d(dom[0], dom[1], dom[2], dom[3], dom[4],
         [&](int64_t d0, int64_t d1, int64_t d2, int64_t d3, int64_t d4) {
@@ -608,9 +608,9 @@ void Snippet::schedule_6d() {
 
             schedule.get_callable<kernel>()(indexes, &call_args);
         });
-    auto end_time = std::chrono::system_clock::now();
-    std::chrono::duration<double, std::milli> duration = end_time - start_time;
-    std::cerr << "Subgraph execution took: " << duration.count() << " ms \n" << std::flush;
+   // auto end_time = std::chrono::system_clock::now();
+    //std::chrono::duration<double, std::milli> duration = end_time - start_time;
+    //std::cerr << "Subgraph execution took: " << duration.count() << " ms \n" << std::flush;
 }
 
 void Snippet::schedule_nt() {

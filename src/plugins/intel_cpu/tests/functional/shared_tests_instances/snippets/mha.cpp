@@ -49,7 +49,7 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_MHA, MHASelect,
 
 
 const std::vector<std::vector<ov::PartialShape>> inputShapesWOTranspose = {
-        {{1, 12, 197, 64}, {1, 12, 64, 197}, {1, 12, 197, 64}}
+        {{10, 18, 512, 64}, {10, 1, 64, 9216}, {10, 1, 9216, 64}}
 };
 
 INSTANTIATE_TEST_SUITE_P(smoke_Snippets_MHAWOTranspose, MHAWOTranspose,
