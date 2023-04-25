@@ -81,7 +81,7 @@ void MHAWOTransposePerf::SetUp() {
     std::tie(inputShapes, withMul, ref_num_nodes, ref_num_subgraphs, snippets_enabled, targetDevice) = this->GetParam();
     init_input_shapes(static_partial_shapes_to_test_representation(inputShapes));
 
-    auto f = ov::test::snippets::MHAWOTransposeFunction(inputDynamicShapes, withMul);
+    auto f = ov::test::snippets::MHAWOTransposeFunction(inputDynamicShapes, withMul, 1);
     function = f.getOriginal();
     if (!snippets_enabled) {
         ref_num_subgraphs = 0;

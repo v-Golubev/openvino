@@ -224,11 +224,11 @@ void SoftMax::prepareParams() {
 
 void SoftMax::execute(dnnl::stream strm) {
     if (execPtr) {
-        auto start_time = std::chrono::system_clock::now();
+        //auto start_time = std::chrono::system_clock::now();
         execPtr->exec(primArgs, strm);
-        auto end_time = std::chrono::system_clock::now();
-        std::chrono::duration<double, std::milli> duration = end_time - start_time;
-        std::cerr << "Softmax execution took: " << duration.count() << " ms \n" << std::flush;
+        //auto end_time = std::chrono::system_clock::now();
+        //std::chrono::duration<double, std::milli> duration = end_time - start_time;
+        //std::cerr << "Softmax execution took: " << duration.count() << " ms \n" << std::flush;
     } else {
         IE_THROW() << "Softmax node with name '" << getName() << "' doesn't have an initialized executor";
     }

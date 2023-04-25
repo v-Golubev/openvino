@@ -793,7 +793,8 @@ BrgemmEmitter::BrgemmEmitter(dnnl::impl::cpu::x64::jit_generator* h, dnnl::impl:
 //    m_K_blk = brgWithAMX ? brg0Prc == Precision::BF16 ? 32 : 64
 //                         : m_K;
     m_N_blk = 64;
-    m_K_blk = 1024;
+    m_K_blk = m_K > 1024 ? 1024 :
+              m_K > 512 ? 512 : m_K;
     m_N_tail = m_N % m_N_blk;
     m_K_tail = m_K % m_K_blk;
     m_N_blocking_loop_needed = m_N >= 2 * m_N_blk;
