@@ -604,27 +604,19 @@ void Transformations::MainSnippets(void) {
                     }
                     if (!is_supported_matmul(child))
                         return true;
-
                     const auto pshape = child->get_output_partial_shape(0);
                     const auto shape = pshape.get_shape();
                     const auto parallel_work_amount =
                             std::accumulate(shape.rbegin() + 2, shape.rend(), 1, std::multiplies<size_t>());
-                    const auto kernel_buffer_size =
-                            std::accumulate(shape.rbegin(), shape.rbegin() + 2, 1, std::multiplies<size_t>()) *
-                            n->get_output_element_type(0).size();
                     // Heuristic values:
                     //    parallelism work amount - not enough work amount for parallelism
-                    //    kernel work amount - large shape for kernel execution, not cache-local
                     // TODO: The heuristics will be removed after
-                    //       - loop blocking support on code generation level
                     //       - parallelism support on JIT level
                     const auto needed_num_of_threads = 12lu;
-                    const auto l2_cache_size = dnnl::utils::get_cache_size(2, true);
                     const auto is_unsupported_parallel_work_amount = (parallel_get_num_threads() / 2 > parallel_work_amount &&
                                                                       parallel_work_amount < needed_num_of_threads) &&
                                                                       !ngraph::snippets::pass::CommonOptimizations::canBeParallelOptimized(n);
-                    const auto is_unsupported_kernel_work_amount = kernel_buffer_size > l2_cache_size;
-                    return is_unsupported_parallel_work_amount || is_unsupported_kernel_work_amount;
+                    return is_unsupported_parallel_work_amount;
                 });
         snippetsManager.get_pass_config()->set_callback<ngraph::snippets::pass::TokenizeSnippets>(
                 [](const std::shared_ptr<const ov::Node>& n) -> bool {
