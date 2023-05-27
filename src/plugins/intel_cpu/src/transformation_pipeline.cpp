@@ -97,8 +97,9 @@
 #include "ngraph_transformations/swap_convert_transpose.hpp"
 
 // Snippets
-#include "snippets/pass/tokenization.hpp"
 #include "snippets/pass/common_optimizations.hpp"
+#include "snippets/pass/tokenization.hpp"
+#include "snippets_transformations/custom.hpp"
 
 // Misc
 #include "nodes/mvn.h"
@@ -571,6 +572,7 @@ void Transformations::MainSnippets(void) {
     snippetsManager.set_per_pass_validation(false);
     if (snippetsMode != Config::SnippetsMode::IgnoreCallback)
         snippetsManager.register_pass<SnippetsMarkSkipped>(enableBF16);
+    snippetsManager.register_pass<CustomTransformation>();
     snippetsManager.register_pass<ngraph::snippets::pass::SnippetsTokenization>(tokenization_config);
 
     auto is_supported_matmul = [](const std::shared_ptr<const ov::Node>& n) {
