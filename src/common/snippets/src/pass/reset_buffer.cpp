@@ -13,15 +13,15 @@
 
 namespace {
 void normalize_ptr_and_offsets(const ov::NodeVector &io, std::vector<int64_t> &ptr_increments, std::vector<int64_t> &finalization_offsets) {
-    bool there_is_buffer = false;
+    std::set<size_t> buffers;
     // Iterations are from end because before we correct finalization offsets for Loop outputs (io = inputs + outputs)
     for (int i = static_cast<int>(io.size()) - 1; i >= 0; --i) {
-        if (ov::is_type<ngraph::snippets::op::Buffer>(io[i])) {
-            if (there_is_buffer) {
+        if (const auto buffer = ov::as_type_ptr<ngraph::snippets::op::Buffer>(io[i])) {
+            if (buffers.count(buffer->get_id()) > 0) {
                 ptr_increments[i] = 0;
                 finalization_offsets[i] = 0;
             } else {
-                there_is_buffer = true;
+                buffers.insert(buffer->get_id());
             }
         }
     }
@@ -79,6 +79,10 @@ ngraph::snippets::pass::ResetBufferState::ResetBufferState() {
 
         // If after Loop there is immediately Buffer, we should reset the Buffer ptr for the next calculations
         for (size_t i = 0; i < o_size; ++i) {
+            // Note: if finalization offset is not zero, then it must've already been set to compensate for a buffer,
+            // so we just ignore such cases here
+            if (finalization_offsets[i_size + i] != 0)
+                continue;
             // check for first target input is enough for Buffer searching because operations can have only single Buffer per each output port as op
             const auto consumer = loop_end->output(i).get_target_inputs().begin()->get_node();
             if (const auto buffer = ov::as_type_ptr<ngraph::snippets::op::Buffer>(consumer->shared_from_this())) {
@@ -86,7 +90,7 @@ ngraph::snippets::pass::ResetBufferState::ResetBufferState() {
                 auto loop_index = 0lu;
                 auto loop = loop_end->input_value(i).get_node_shared_ptr();
                 auto port_idx = loop_end->input_value(i).get_index();
-                while (std::dynamic_pointer_cast<op::LoopEnd>(loop)) {
+                while (ov::is_type<op::LoopEnd>(loop)) {
                     const auto source_output = loop->input_value(port_idx);
                     loop = source_output.get_node_shared_ptr();
                     port_idx = source_output.get_index();

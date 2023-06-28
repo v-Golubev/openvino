@@ -27,6 +27,7 @@
 #include "snippets_transformations/mul_add_to_fma.hpp"
 #include "snippets_transformations/brgemm_to_brgemm_cpu.hpp"
 #include "snippets_transformations/remove_converts.hpp"
+#include "snippets_transformations/insert_brgemm_loops.hpp"
 #include "ngraph_transformations/convert_to_swish_cpu.hpp"
 
 using namespace InferenceEngine;
@@ -537,7 +538,12 @@ void Snippet::generate(const jit_snippets_compile_args* jcp) {
     pre_dialect.register_pass<ConvertToSwishCPU>();
 
     ov::pass::Manager post_dialect;
-    post_dialect.register_pass<ov::intel_cpu::pass::BrgemmToBrgemmCPU>();
+    if (original_snippet->has_domain_sensitive_ops()) {
+        post_dialect.register_pass<ov::intel_cpu::pass::BrgemmToBrgemmCPU>();
+        // todo: this is for debug purposes. Please remove before the merge
+        // post_dialect.register_pass<ov::pass::Serialize>("snsdebug_lowered.xml", "snsdebug_lowered.bin");
+        post_dialect.register_pass<ov::intel_cpu::pass::InsertBrgemmLoops>(32);
+    }
 
     ov::pass::Manager post_precision;
     post_precision.register_pass<ov::intel_cpu::pass::RemoveConverts>();
@@ -592,6 +598,7 @@ void Snippet::execute(dnnl::stream strm) {
 
 void Snippet::schedule_6d() {
     const auto& dom = exec_domain;
+    auto start_time = std::chrono::system_clock::now();
     // < N, C, H, W > < 1, 1, N, C*H*W>
     parallel_for5d(dom[0], dom[1], dom[2], dom[3], dom[4],
         [&](int64_t d0, int64_t d1, int64_t d2, int64_t d3, int64_t d4) {
@@ -601,6 +608,9 @@ void Snippet::schedule_6d() {
 
             schedule.get_callable<kernel>()(indexes, &call_args);
         });
+    auto end_time = std::chrono::system_clock::now();
+    std::chrono::duration<double, std::milli> duration = end_time - start_time;
+    std::cerr << "Subgraph execution took: " << duration.count() << " ms \n" << std::flush;
 }
 
 void Snippet::schedule_nt() {

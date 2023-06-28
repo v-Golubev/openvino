@@ -176,11 +176,15 @@ protected:
     * @return register type
     */
     virtual opRegType get_specific_op_reg_type(const std::shared_ptr<ov::Node>& op) const;
+    void tail_transformations(size_t start_idx, size_t end_idx, size_t tail_size);
+    size_t inject_tail_processing(size_t start_idx, size_t end_idx);
 
     std::shared_ptr<TargetMachine> target;
     // todo: we need to save lowered code to access compiled brgemm kernels on execution time (normally lowered is destructed by then).
     //  This is temporary solution, remove this when kernel caching is implemented. Don't forget to make generate const method.
     std::vector<AllocatedEmitter> lowered_saved;
+    NodeVector m_ops;
+    GeneratorConfig m_config{};
 };
 
 } // namespace snippets

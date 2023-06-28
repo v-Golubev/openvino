@@ -97,12 +97,23 @@ std::shared_ptr<Node> BrgemmCPU::clone_with_new_inputs(const OutputVector& new_a
         new_node = std::make_shared<BrgemmCPU>(new_args.at(0), new_args.at(1), new_args.at(2), m_type,
                                                get_offset_a(), get_offset_b(), get_offset_scratch(), get_offset_c());
     }
+    new_node->set_input_count(get_input_count(0), 0);
+    new_node->set_input_count(get_input_count(1), 1);
+    new_node->set_output_count(get_output_count(0), 0);
     return new_node;
 }
 
 std::shared_ptr<BrgemmCopyB> BrgemmCPU::get_brgemm_copy() const {
     OPENVINO_ASSERT(one_of(m_type, Type::WithDataRepacking, Type::WithCompensations, Type::AMX), "Brgemm doesn't need BrgemmCopyB");
-    if (const auto buffer = ov::as_type_ptr<ngraph::snippets::op::Buffer>(get_input_node_shared_ptr(1))) {
+    auto parent_out = input_value(1);
+    auto parent = parent_out.get_node_shared_ptr();
+    auto port_idx = parent_out.get_index();
+    while (std::dynamic_pointer_cast<ngraph::snippets::op::LoopBegin>(parent)) {
+        parent_out = parent->input_value(port_idx);
+        parent = parent_out.get_node_shared_ptr();
+        port_idx = parent_out.get_index();
+    }
+    if (const auto buffer = ov::as_type_ptr<ngraph::snippets::op::Buffer>(parent)) {
         return ov::as_type_ptr<BrgemmCopyB>(buffer->get_input_node_shared_ptr(0));
     }
     throw ov::Exception("BrgemmCopyB hasn't been found!");
