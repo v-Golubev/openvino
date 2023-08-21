@@ -29,14 +29,14 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
 
 
     const auto& loop_manager = linear_ir.get_loop_manager();
-    const size_t dim_idx = 1;
+    const size_t dim_idx_m = 1;
 
     auto blocking_loop_exists = [&](const ov::snippets::lowered::ExpressionPtr& expr,
                                     const std::shared_ptr<ov::intel_cpu::BrgemmCPU>& brgemm) {
         const auto& loop_ids = expr->get_loop_ids();
         for (const auto& id : loop_ids) {
             const auto loop = loop_manager->get_loop_info(id);
-            if (loop->dim_idx == dim_idx) {
+            if (loop->dim_idx == dim_idx_m) {
                 OPENVINO_ASSERT(brgemm->get_input_count(0) == loop->increment,
                                 "Brgemm ", brgemm, " has input count (", brgemm->get_input_count(0),
                                 ") which doesn't match the increment(", loop->increment, ") of loop by M");
@@ -55,20 +55,20 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
 
         const auto& input_shape_0 = expr->get_input_port_descriptor(0)->get_shape();
         const auto& input_layout_0 = expr->get_input_port_descriptor(0)->get_layout();
-        const auto& dim = *(input_layout_0.rbegin() + dim_idx);
-        const auto& m = input_shape_0[dim];
 
-        const auto block_size = brgemm->get_m_block_size();
-        brgemm->set_input_count(block_size);
+        {
+            const auto& m_idx = *(input_layout_0.rbegin() + dim_idx_m);
+            const auto& m = input_shape_0[m_idx];
+            const auto block_size_m = brgemm->get_m_block_size();
+            brgemm->set_input_count(block_size_m, 0);
 
-        const auto work_amount = m;
-        const auto increment = block_size;
-
-        std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), true), LoopPort(expr->get_input_port(1), false)};
-        if (brgemm->is_with_scratchpad())
-            entries.emplace_back(expr->get_input_port(2), false);
-        std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
-        loop_manager->mark_loop(expr_it, std::next(expr_it), work_amount, increment, dim_idx, entries, exits);
+            std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), true), LoopPort(expr->get_input_port(1), false)};
+            if (brgemm->is_with_scratchpad())
+                entries.emplace_back(expr->get_input_port(2), false);
+            std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
+            loop_manager->mark_loop(expr_it, std::next(expr_it), m, block_size_m, dim_idx_m, entries, exits);
+        }
+        modified = true;
     }
 
     return modified;
