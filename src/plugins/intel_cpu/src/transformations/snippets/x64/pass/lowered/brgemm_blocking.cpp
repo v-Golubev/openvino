@@ -30,6 +30,7 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
 
     const auto& loop_manager = linear_ir.get_loop_manager();
     const size_t dim_idx_m = 1;
+    const size_t dim_idx_n = 0;
 
     auto blocking_loop_exists = [&](const ov::snippets::lowered::ExpressionPtr& expr,
                                     const std::shared_ptr<ov::intel_cpu::BrgemmCPU>& brgemm) {
@@ -53,10 +54,10 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
         if (!brgemm || blocking_loop_exists(expr, brgemm))
             continue;
 
-        const auto& input_shape_0 = expr->get_input_port_descriptor(0)->get_shape();
-        const auto& input_layout_0 = expr->get_input_port_descriptor(0)->get_layout();
+        auto apply_m_blocking = [&]() {
+            const auto& input_shape_0 = expr->get_input_port_descriptor(0)->get_shape();
+            const auto& input_layout_0 = expr->get_input_port_descriptor(0)->get_layout();
 
-        {
             const auto& m_idx = *(input_layout_0.rbegin() + dim_idx_m);
             const auto& m = input_shape_0[m_idx];
             const auto block_size_m = brgemm->get_m_block_size();
@@ -67,7 +68,27 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
                 entries.emplace_back(expr->get_input_port(2), false);
             std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
             loop_manager->mark_loop(expr_it, std::next(expr_it), m, block_size_m, dim_idx_m, entries, exits);
-        }
+        };
+
+        auto apply_n_blocking = [&]() {
+            const auto& input_shape_1 = expr->get_input_port_descriptor(1)->get_shape();
+            const auto& input_layout_1 = expr->get_input_port_descriptor(1)->get_layout();
+
+            const auto& n_idx = *(input_layout_1.rbegin() + dim_idx_n);
+            const auto& n = input_shape_1[n_idx];
+            const auto block_size_n = brgemm->get_n_block_size();
+            brgemm->set_input_count(block_size_n, 1);
+
+            std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), false), LoopPort(expr->get_input_port(1), true)};
+            if (brgemm->is_with_scratchpad())
+                entries.emplace_back(expr->get_input_port(2), true);
+            std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
+            loop_manager->mark_loop(expr_it, std::next(expr_it), n, block_size_n, dim_idx_n, entries, exits);
+        };
+
+        apply_m_blocking();
+        apply_n_blocking();
+
         modified = true;
     }
 
