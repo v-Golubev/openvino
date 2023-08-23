@@ -53,8 +53,9 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         const auto& input_1_precision = brgemm->get_input_element_type(1);
         // Ticket: 113745
         // TODO: extend block size selection heuristics
-        auto get_block_size_m = [&]() {
-            return 32;
+        auto get_block_size_m = [&](const size_t M) {
+            // TODO: add tail processing
+            return M % 32 == 0 ? 32 : M;
         };
         auto get_block_size_k = [&](const size_t K) {
             if (input_1_precision != ov::element::f32)
@@ -62,7 +63,9 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             return K > 1024 ? 1024 : K > 512 ? 512 : K;
         };
         auto get_block_size_n = [&](const size_t N) {
-            return input_1_precision != ov::element::f32 ? N : 64;
+            // TODO: add tail processing
+            size_t block_size = input_1_precision != ov::element::f32 ? N : 64;
+            return N % block_size == 0 ? block_size : N;
         };
 
         if (brgemm->is_with_data_repacking()) {
