@@ -754,6 +754,8 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
 
     const auto& A_shape = brgemm_node->get_input_shape(0);
     const auto& A_layout = io_layouts[0];
+    const auto& C_shape = brgemm_node->get_output_shape(0);
+    const auto& C_layout = io_layouts[2];
 
     // We need find original M,N,K having layouts and ordered shapes
     // Layout:  0, 1, 2, 3   =>   New layout: 0, 2, 1, 3
@@ -780,6 +782,11 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
 
     m_with_comp = brgemm_node->is_with_compensations();
     m_with_scratch = brgemm_node->is_with_scratchpad();
+
+    // TODO: N dim on input can be not equal to N dim on output. This case must be handled
+    if (brgemm_node->is_with_data_repacking()) {
+        m_N = C_shape[get_ordered_idx(C_layout, C_layout.size() - 1)];
+    }
 
     m_K_blk = brgemm_node->get_k_block_size();
     m_K_tail = m_K % m_K_blk;
