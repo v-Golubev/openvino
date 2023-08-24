@@ -743,14 +743,13 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
         }
     };
 
-    std::vector<ov::Input<ov::Node>> brgemm_inputs = {brgemm_node->input(0),
-                                                      brgemm_copy ? brgemm_copy->input(0) : brgemm_node->input(1)};
-    for (const auto& input : brgemm_inputs) {
-        init_scheduling_params(snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(input)->get_layout(),
-                               input.get_shape());
-    }
-    init_scheduling_params(snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_node->output(0))->get_layout(),
-                           brgemm_node->output(0).get_shape());
+    const auto input_0_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_node->input(0));
+    const auto input_1_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_copy ? brgemm_copy->input(0) : brgemm_node->input(1));
+    const auto output_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_node->output(0));
+
+    init_scheduling_params(input_0_desc->get_layout(), input_0_desc->get_shape());
+    init_scheduling_params(input_1_desc->get_layout(), input_1_desc->get_shape());
+    init_scheduling_params(output_desc->get_layout(), output_desc->get_shape());
 
     const auto& A_shape = brgemm_node->get_input_shape(0);
     const auto& A_layout = io_layouts[0];
@@ -766,9 +765,14 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
         return std::distance(layout.begin(), std::find(layout.begin(), layout.end(), idx));
     };
 
+    auto output_subtensor = output_desc->get_subtensor();
     m_K = A_shape[get_ordered_idx(A_layout, A_layout.size() - 1)];
-    m_M = brgemm_node->get_input_count(0);
-    m_N = brgemm_node->get_input_count(1);
+    m_M = *(output_subtensor.rbegin() + 1);
+    m_N = *output_subtensor.rbegin();
+    // TODO: N dim on input can be not equal to N dim on output. This case must be handled
+    if (brgemm_node->is_with_data_repacking()) {
+        m_N = C_shape[get_ordered_idx(C_layout, C_layout.size() - 1)];
+    }
 
     auto brg0Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(0));
     auto brg1Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(1));
@@ -782,11 +786,6 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
 
     m_with_comp = brgemm_node->is_with_compensations();
     m_with_scratch = brgemm_node->is_with_scratchpad();
-
-    // TODO: N dim on input can be not equal to N dim on output. This case must be handled
-    if (brgemm_node->is_with_data_repacking()) {
-        m_N = C_shape[get_ordered_idx(C_layout, C_layout.size() - 1)];
-    }
 
     m_K_blk = brgemm_node->get_k_block_size();
     m_K_tail = m_K % m_K_blk;

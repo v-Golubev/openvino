@@ -54,14 +54,23 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
         if (!brgemm || blocking_loop_exists(expr, brgemm))
             continue;
 
+        const auto& input_0_desc = expr->get_input_port_descriptor(0);
+        const auto& input_1_desc = expr->get_input_port_descriptor(1);
+        const auto& output_desc = expr->get_output_port_descriptor(0);
+
+        auto input_0_subtensor = input_0_desc->get_subtensor();
+        auto input_1_subtensor = input_1_desc->get_subtensor();
+        auto output_subtensor = output_desc->get_subtensor();
+
         auto apply_m_blocking = [&]() {
-            const auto& input_shape_0 = expr->get_input_port_descriptor(0)->get_shape();
-            const auto& input_layout_0 = expr->get_input_port_descriptor(0)->get_layout();
+            const auto& input_shape_0 = input_0_desc->get_shape();
+            const auto& input_layout_0 = input_0_desc->get_layout();
 
             const auto& m_idx = *(input_layout_0.rbegin() + dim_idx_m);
             const auto& m = input_shape_0[m_idx];
             const auto block_size_m = brgemm->get_m_block_size();
-            brgemm->set_input_count(block_size_m, 0);
+            *(input_0_subtensor.rbegin() + 1) = block_size_m;
+            *(output_subtensor.rbegin() + 1) = block_size_m;
 
             std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), true), LoopPort(expr->get_input_port(1), false)};
             if (brgemm->is_with_scratchpad())
@@ -71,13 +80,14 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
         };
 
         auto apply_n_blocking = [&]() {
-            const auto& input_shape_1 = expr->get_input_port_descriptor(1)->get_shape();
-            const auto& input_layout_1 = expr->get_input_port_descriptor(1)->get_layout();
+            const auto& input_shape_1 = input_1_desc->get_shape();
+            const auto& input_layout_1 = input_1_desc->get_layout();
 
             const auto& n_idx = *(input_layout_1.rbegin() + dim_idx_n);
             const auto& n = input_shape_1[n_idx];
             const auto block_size_n = brgemm->get_n_block_size();
-            brgemm->set_input_count(block_size_n, 1);
+            *input_1_subtensor.rbegin() = block_size_n;
+            *output_subtensor.rbegin() = block_size_n;
 
             std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), false), LoopPort(expr->get_input_port(1), true)};
             if (brgemm->is_with_scratchpad())
@@ -89,6 +99,9 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
         apply_m_blocking();
         apply_n_blocking();
 
+        input_0_desc->set_subtensor(input_0_subtensor);
+        input_1_desc->set_subtensor(input_1_subtensor);
+        output_desc->set_subtensor(output_subtensor);
         modified = true;
     }
 
