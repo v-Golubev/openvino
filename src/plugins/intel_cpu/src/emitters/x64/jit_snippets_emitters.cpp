@@ -743,9 +743,9 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
         }
     };
 
-    const auto input_0_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_node->input(0));
-    const auto input_1_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_copy ? brgemm_copy->input(0) : brgemm_node->input(1));
-    const auto output_desc = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_node->output(0));
+    const auto& input_0_desc = expr->get_input_port_descriptor(0);
+    const auto& input_1_desc = expr->get_input_port_descriptor(1);
+    const auto& output_desc = expr->get_output_port_descriptor(0);
 
     init_scheduling_params(input_0_desc->get_layout(), input_0_desc->get_shape());
     init_scheduling_params(input_1_desc->get_layout(), input_1_desc->get_shape());

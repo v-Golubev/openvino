@@ -122,6 +122,16 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
                     fill_expr->get_output_port_descriptor(0)->set_reg(reg);
                 }
             }
+        } else if (const auto brgemm = std::dynamic_pointer_cast<ov::snippets::op::Brgemm>(op)) {
+            auto in_desc = expr_it->get()->get_input_port_descriptor(0);
+            auto subtensor_shape = in_desc->get_subtensor();
+            *(subtensor_shape.rbegin() + 1) = tail_size;
+            in_desc->set_subtensor(subtensor_shape);
+
+            auto out_desc = expr_it->get()->get_output_port_descriptor(0);
+            auto subtensor_shape2 = out_desc->get_subtensor();
+            *(subtensor_shape2.rbegin() + 1) = tail_size;
+            out_desc->set_subtensor(subtensor_shape2);
         } else if (const auto memory_access = std::dynamic_pointer_cast<ov::snippets::op::MemoryAccess>(op)) {
             for (const auto p : memory_access->get_memory_access_input_ports()) {
                 const auto port = p.first;

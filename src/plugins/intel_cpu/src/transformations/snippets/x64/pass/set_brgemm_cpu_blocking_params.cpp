@@ -54,8 +54,7 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         // Ticket: 113745
         // TODO: extend block size selection heuristics
         auto get_block_size_m = [&](const size_t M) {
-            // TODO: add tail processing
-            return M % 32 == 0 ? 32 : M;
+            return 32;
         };
         auto get_block_size_k = [&](const size_t K) {
             if (input_1_precision != ov::element::f32)
