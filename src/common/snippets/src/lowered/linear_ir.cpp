@@ -98,7 +98,9 @@ void LinearIR::serialize(const std::string& xml, const std::string& bin) const {
     ov::pass::Serialize(xml, bin).run_on_model(tmp_model);
 }
 
-LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterator begin, LinearIR::container::const_iterator end) {
+LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterator begin,
+                                             LinearIR::container::const_iterator end,
+                                             std::function<void(const lowered::ExpressionPtr&, const lowered::ExpressionPtr&)> specific_action) {
     auto deep_clone_ports = [](std::vector<PortDescriptorPtr>& ports) {
         for (auto& port : ports) { port = port->clone(); }
     };
@@ -112,11 +114,14 @@ LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterato
     OPENVINO_SUPPRESS_DEPRECATED_END
     for (auto it = begin; it != end; it++) {
         // copy by value, so result shared_pointer point to new objects
-        Expression new_expr = **it;
-        new_expr.m_source_node = node_map[(*it)->get_node().get()];
-        deep_clone_ports(new_expr.m_input_port_descriptors);
-        deep_clone_ports(new_expr.m_output_port_descriptors);
-        result.emplace_back(std::make_shared<Expression>(new_expr));
+        Expression expr = **it;
+        expr.m_source_node = node_map[(*it)->get_node().get()];
+        deep_clone_ports(expr.m_input_port_descriptors);
+        deep_clone_ports(expr.m_output_port_descriptors);
+        const auto new_expr = std::make_shared<Expression>(expr);
+        if (specific_action != nullptr)
+            specific_action(*it, new_expr);
+        result.push_back(new_expr);
     }
     return result;
 }

@@ -41,7 +41,10 @@ public:
 
     ExpressionPtr create_expression(const std::shared_ptr<Node>& n, const std::vector<PortConnectorPtr>& inputs);
 
-    static LinearIR::container deep_copy_range(LinearIR::container::const_iterator begin, LinearIR::container::const_iterator end);
+    static LinearIR::container deep_copy_range(
+        LinearIR::container::const_iterator begin,
+        LinearIR::container::const_iterator end,
+        std::function<void(const lowered::ExpressionPtr&, const lowered::ExpressionPtr&)> specific_action = nullptr);
 
     const container& get_ops() const {return m_expressions; }
     const io_container& get_IO_ops() const {return m_io_expressions; }
