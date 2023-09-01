@@ -69,14 +69,19 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
             const auto& m_idx = *(input_layout_0.rbegin() + dim_idx_m);
             const auto& m = input_shape_0[m_idx];
             const auto block_size_m = brgemm->get_m_block_size();
-            *(input_0_subtensor.rbegin() + 1) = block_size_m;
-            *(output_subtensor.rbegin() + 1) = block_size_m;
+            if (block_size_m >= m) {
+                *(input_0_subtensor.rbegin() + 1) = m;
+                *(output_subtensor.rbegin() + 1) = m;
+            } else {
+                *(input_0_subtensor.rbegin() + 1) = block_size_m;
+                *(output_subtensor.rbegin() + 1) = block_size_m;
 
-            std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), true), LoopPort(expr->get_input_port(1), false)};
-            if (brgemm->is_with_scratchpad())
-                entries.emplace_back(expr->get_input_port(2), false);
-            std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
-            loop_manager->mark_loop(expr_it, std::next(expr_it), m, block_size_m, dim_idx_m, entries, exits);
+                std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), true), LoopPort(expr->get_input_port(1), false)};
+                if (brgemm->is_with_scratchpad())
+                    entries.emplace_back(expr->get_input_port(2), false);
+                std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
+                loop_manager->mark_loop(expr_it, std::next(expr_it), m, block_size_m, dim_idx_m, entries, exits);
+            }
         };
 
         auto apply_n_blocking = [&]() {
@@ -86,14 +91,19 @@ bool BrgemmBlocking::run(snippets::lowered::LinearIR& linear_ir) {
             const auto& n_idx = *(input_layout_1.rbegin() + dim_idx_n);
             const auto& n = input_shape_1[n_idx];
             const auto block_size_n = brgemm->get_n_block_size();
-            *input_1_subtensor.rbegin() = block_size_n;
-            *output_subtensor.rbegin() = block_size_n;
+            if (block_size_n >= n) {
+                *input_1_subtensor.rbegin() = n;
+                *output_subtensor.rbegin() = n;
+            } else {
+                *input_1_subtensor.rbegin() = block_size_n;
+                *output_subtensor.rbegin() = block_size_n;
 
-            std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), false), LoopPort(expr->get_input_port(1), true)};
-            if (brgemm->is_with_scratchpad())
-                entries.emplace_back(expr->get_input_port(2), true);
-            std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
-            loop_manager->mark_loop(expr_it, std::next(expr_it), n, block_size_n, dim_idx_n, entries, exits);
+                std::vector<LoopPort> entries{LoopPort(expr->get_input_port(0), false), LoopPort(expr->get_input_port(1), true)};
+                if (brgemm->is_with_scratchpad())
+                    entries.emplace_back(expr->get_input_port(2), true);
+                std::vector<LoopPort> exits{LoopPort(expr->get_output_port(0), true)};
+                loop_manager->mark_loop(expr_it, std::next(expr_it), n, block_size_n, dim_idx_n, entries, exits);
+            }
         };
 
         apply_m_blocking();
