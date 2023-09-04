@@ -14,6 +14,20 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
+namespace {
+void replace_ports_with_tail_ports(const ExpressionPtr& expr,
+                                   const ExpressionPtr& tail_expr,
+                                   std::vector<LinearIR::LoopManager::LoopPort>& ports) {
+    auto find_if_predicate = [&](const LinearIR::LoopManager::LoopPort& port) {
+        return port.expr_port->get_expr()->get_node() == expr->get_node();
+    };
+    auto pos = std::find_if(ports.begin(), ports.end(), find_if_predicate);
+    while (pos != ports.end()) {
+        pos->expr_port = std::make_shared<ExpressionPort>(tail_expr, pos->expr_port->get_type(), pos->expr_port->get_index());
+        pos = std::find_if(pos, ports.end(), find_if_predicate);
+    }
+}
+} // namespace
 
 std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_ir,
                                                               LinearIR::constExprIt vector_begin,
@@ -27,21 +41,71 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     // tail is required => transform the body into a tail representation
     // tail loop is fake loop because for tail we should calculate only
     // finalization offsets which are supported by LoopEnd.
+    const auto& loop_manager = linear_ir.get_loop_manager();
+    const auto original_loop_id = vector_loop_end->get_id();
+    const auto& original_loop_info = loop_manager->get_loop_info(original_loop_id);
+    auto tail_loop_info = original_loop_info;
     if (need_vector_loop) {
-        auto vector_loop_deep_copy = LinearIR::deep_copy_range(vector_begin, vector_end);
+        auto tail_entry_points = original_loop_info->entry_points;
+        auto tail_exit_points = original_loop_info->exit_points;
+
+        auto update_loop_info = [&](const ExpressionPtr& expr, const ExpressionPtr& new_expr) {
+            const auto node = expr->get_node();
+            // Loop begin/end ops can't be loop ports
+            if (ov::is_type<op::LoopBase>(node))
+                return;
+            // Clone loop ports from original loop info to tail loop info
+            replace_ports_with_tail_ports(expr, new_expr, tail_entry_points);
+            replace_ports_with_tail_ports(expr, new_expr, tail_exit_points);
+
+            // Update loop info of all inner loops with new loop ports
+            const auto loop_ids = expr->get_loop_ids();
+            auto cur_id_pos = std::find(loop_ids.begin(), loop_ids.end(), original_loop_id);
+            std::vector<size_t> inner_loop_ids(loop_ids.begin(), cur_id_pos);
+            for (size_t i = 0; i < expr->get_input_count(); ++i)
+                loop_manager->update_loops_port(inner_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
+            for (size_t i = 0; i < expr->get_output_count(); ++i)
+                loop_manager->update_loops_port(inner_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
+        };
+        auto vector_loop_deep_copy = LinearIR::deep_copy_range(vector_begin, vector_end, update_loop_info);
         tail_begin = linear_ir.insert(vector_end, vector_loop_deep_copy.begin(), vector_loop_deep_copy.end());
         tail_end = vector_end;
+
+        const auto new_id = loop_manager->mark_loop(std::next(tail_begin),
+                                                    std::prev(tail_end),
+                                                    tail_size,
+                                                    tail_size,
+                                                    original_loop_info->dim_idx,
+                                                    tail_entry_points,
+                                                    tail_exit_points);
+        const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(tail_begin->get()->get_node());
+        const auto loop_end = loop_begin->get_loop_end();
+        loop_end->set_id(new_id);
+        tail_loop_info = loop_manager->get_loop_info(new_id);
     } else {
         tail_begin = vector_begin;
         tail_end = vector_end;
     }
 
+    auto update_subtensors = [&](const std::vector<LinearIR::LoopManager::LoopPort>& ports) {
+        for (const auto& port : ports) {
+            if (port.is_incremented) {
+                auto desc = port.expr_port->get_descriptor_ptr();
+                auto subtensor_shape = desc->get_subtensor();
+                if (subtensor_shape.size() > tail_loop_info->dim_idx) {
+                    *(subtensor_shape.rbegin() + tail_loop_info->dim_idx) = tail_size;
+                    desc->set_subtensor(subtensor_shape);
+                }
+            }
+        }
+    };
+    update_subtensors(tail_loop_info->entry_points);
+    update_subtensors(tail_loop_info->exit_points);
+
     // We have to check the loop body for any nested loops that work on the same dimension
     // and rescale their work_amount and increment accordingly
-    const auto& loop_manager = linear_ir.get_loop_manager();
-    const auto& current_loop_Info = loop_manager->get_loop_info(vector_loop_end->get_id());
-    if (current_loop_Info->outer_splited_loop) {
-        const auto current_dim_idx = current_loop_Info->dim_idx;
+    if (original_loop_info->outer_splited_loop) {
+        const auto current_dim_idx = original_loop_info->dim_idx;
         for (auto it = std::next(tail_begin); it != std::prev(tail_end); ++it) {
             const auto& expr = *it;
             const auto inner_loop_end = ov::as_type_ptr<op::LoopEnd>(expr->get_node());
@@ -122,16 +186,6 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
                     fill_expr->get_output_port_descriptor(0)->set_reg(reg);
                 }
             }
-        } else if (const auto brgemm = std::dynamic_pointer_cast<ov::snippets::op::Brgemm>(op)) {
-            auto in_desc = expr_it->get()->get_input_port_descriptor(0);
-            auto subtensor_shape = in_desc->get_subtensor();
-            *(subtensor_shape.rbegin() + 1) = tail_size;
-            in_desc->set_subtensor(subtensor_shape);
-
-            auto out_desc = expr_it->get()->get_output_port_descriptor(0);
-            auto subtensor_shape2 = out_desc->get_subtensor();
-            *(subtensor_shape2.rbegin() + 1) = tail_size;
-            out_desc->set_subtensor(subtensor_shape2);
         } else if (const auto memory_access = std::dynamic_pointer_cast<ov::snippets::op::MemoryAccess>(op)) {
             for (const auto p : memory_access->get_memory_access_input_ports()) {
                 const auto port = p.first;

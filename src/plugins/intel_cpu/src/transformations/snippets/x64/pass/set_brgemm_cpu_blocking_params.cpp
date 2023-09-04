@@ -62,9 +62,7 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             return K > 1024 ? 1024 : K > 512 ? 512 : K;
         };
         auto get_block_size_n = [&](const size_t N) {
-            // TODO: add tail processing
-            size_t block_size = input_1_precision != ov::element::f32 ? N : 64;
-            return N % block_size == 0 ? block_size : N;
+            return input_1_precision != ov::element::f32 ? N : 64;
         };
 
         if (brgemm->is_with_data_repacking()) {
