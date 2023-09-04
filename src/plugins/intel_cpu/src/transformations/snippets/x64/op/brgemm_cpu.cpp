@@ -189,5 +189,14 @@ BrgemmCPU::ShapeInfer::ShapeInfer(const std::shared_ptr<ov::Node>& n) : Brgemm::
         m_io_layouts[1] = snippets::lowered::PortDescriptorUtils::get_port_descriptor_ptr(brgemm_copy->input(0))->get_layout();
 }
 
+bool BrgemmCPU::visit_attributes(AttributeVisitor& visitor) {
+    Brgemm::visit_attributes(visitor);
+    visitor.on_attribute("blk_M", m_M_blk);
+    visitor.on_attribute("blk_K", m_K_blk);
+    visitor.on_attribute("blk_N", m_N_blk);
+    visitor.on_attribute("beta", m_beta);
+    return true;
+}
+
 } // namespace intel_cpu
 } // namespace ov

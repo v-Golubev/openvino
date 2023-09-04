@@ -365,7 +365,6 @@ public:
 
     size_t get_inputs_num() const override { return m_with_scratch ? 3 : 2; }
     static std::set<std::vector<element::Type>> get_supported_precisions(const std::shared_ptr<ngraph::Node>& node = nullptr);
-    size_t aux_gprs_count() const override;
 
 private:
     void validate_arguments(const std::vector<size_t> &in, const std::vector<size_t> &out) const override;
@@ -391,16 +390,12 @@ private:
                                  size_t in2_kernel_offset = 0, size_t out0_kernel_offset = 0) const;
     static void kernel_execute(const dnnl::impl::cpu::x64::brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp);
 
-    // Note: K dimension is covered by TWO blocked kernels (with beta = 0 and 1) + 1 for tail
-    static constexpr size_t BRGEMM_K_KERNEL_NUM = 3;
-    std::array<brgemmCtx, BRGEMM_K_KERNEL_NUM> m_brgCtxs;
-    std::array<std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t>, BRGEMM_K_KERNEL_NUM> m_brgKernels;
+    brgemmCtx m_brgCtx;
+    std::unique_ptr<dnnl::impl::cpu::x64::brgemm_kernel_t> m_brgKernel = nullptr;
 
-    size_t m_M;
-    size_t m_K, m_K_blk, m_K_tail;
-    size_t m_N;
-    size_t m_brg0VnniFactor;
-    bool m_K_blk_loop = false;
+    size_t m_M = 0lu;
+    size_t m_K = 0lu;
+    size_t m_N = 0lu;
 
     bool m_with_scratch = false;
     bool m_with_comp = false;
