@@ -16,9 +16,9 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 
-LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount, size_t increment, size_t dim_idx,
+LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount, size_t increment,
                                           const std::vector<ExpressionPort>& entries, const std::vector<ExpressionPort>& exits)
-    : work_amount(work_amount), increment(increment), dim_idx(dim_idx), outer_splited_loop(false) {
+    : work_amount(work_amount), increment(increment), outer_splited_loop(false) {
     entry_points.reserve(entries.size());
     exit_points.reserve(exits.size());
     for (const auto& port : entries)
@@ -27,16 +27,33 @@ LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount, size_t increment, 
         exit_points.emplace_back(port);
 }
 
+size_t LinearIR::LoopManager::LoopInfo::get_dim_idx() const {
+    if (entry_points.empty())
+        return SIZE_MAX;
+    auto equal_dim_idxes = [&](const LinearIR::LoopManager::LoopPort& p) {
+        return p.dim_idx == entry_points[0].dim_idx;
+    };
+    if (std::all_of(entry_points.begin(), entry_points.end(), equal_dim_idxes) &&
+        std::all_of(exit_points.begin(), exit_points.end(), equal_dim_idxes)) {
+        return entry_points[0].dim_idx;
+    } else {
+        return SIZE_MAX;
+    }
+}
+
 bool operator==(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopManager::LoopPort& rhs) {
     if (&lhs == &rhs)
         return true;
-    return lhs.expr_port == rhs.expr_port && lhs.is_incremented == rhs.is_incremented;
+    return lhs.expr_port == rhs.expr_port && lhs.is_incremented == rhs.is_incremented && lhs.dim_idx == rhs.dim_idx;
 }
 bool operator!=(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopManager::LoopPort& rhs) {
     return !(lhs == rhs);
 }
 bool operator<(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopManager::LoopPort& rhs) {
-    return (lhs.expr_port < rhs.expr_port) || (lhs.expr_port == rhs.expr_port && (lhs.is_incremented < rhs.is_incremented));
+    return (lhs.expr_port < rhs.expr_port) ||
+           (lhs.expr_port == rhs.expr_port &&
+            (lhs.is_incremented < rhs.is_incremented ||
+             (lhs.is_incremented == rhs.is_incremented && lhs.dim_idx < rhs.dim_idx)));
 }
 
 size_t LinearIR::LoopManager::add_loop_info(const LoopInfoPtr &loop) {

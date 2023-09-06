@@ -30,7 +30,7 @@ int64_t get_dim_stride(size_t dim, const std::vector<size_t>& layout, const std:
 
 InitLoops::InitLoops() : Pass() {}
 
-void InitLoops::init_ptr_increments(std::vector<LoopPort>& loop_inputs, std::vector<LoopPort>& loop_outputs, size_t work_amount, size_t dim_idx) {
+void InitLoops::init_ptr_increments(std::vector<LoopPort>& loop_inputs, std::vector<LoopPort>& loop_outputs, size_t work_amount) {
     for (auto& loop_input : loop_inputs) {
         loop_input.ptr_increment = 0;
         if (loop_input.is_incremented) {
@@ -39,7 +39,7 @@ void InitLoops::init_ptr_increments(std::vector<LoopPort>& loop_inputs, std::vec
             const auto loop_ids = port->get_expr()->get_loop_ids();
             const auto& layout = port->get_descriptor_ptr()->get_layout();
             const auto& shape = port->get_descriptor_ptr()->get_shape();
-            const auto& dim = *(layout.rbegin() + dim_idx);
+            const auto& dim = *(layout.rbegin() + loop_input.dim_idx);
             // If relevant dim is not broadcasted, then ptr_increment is the dim stride in the new layout
             if (!(shape[dim] == 1 && work_amount != 1)) {
                 loop_input.ptr_increment = get_dim_stride(dim, source.get_descriptor_ptr()->get_layout(), shape);
@@ -54,7 +54,7 @@ void InitLoops::init_ptr_increments(std::vector<LoopPort>& loop_inputs, std::vec
             const auto loop_ids = port->get_expr()->get_loop_ids();
             const auto& layout = port->get_descriptor_ptr()->get_layout();
             const auto& shape = port->get_descriptor_ptr()->get_shape();
-            const auto& dim = *(layout.rbegin() + dim_idx);
+            const auto& dim = *(layout.rbegin() + loop_output.dim_idx);
             // Ticket: 113106
             // WA: the current logic doesn't support the case with transposed output shape for brgemm layer
             // but for all existing cases planar layout can be used
@@ -100,12 +100,8 @@ bool InitLoops::run(LinearIR& linear_ir) {
     const auto& loops = loop_manager->get_map();
     for (const auto& loop : loops) {
         const auto loop_info = loop.second;
-
-        const auto work_amount = loop_info->work_amount;
-        const auto dim_idx = loop_info->dim_idx;
-
-        init_ptr_increments(loop_info->entry_points, loop_info->exit_points, work_amount, dim_idx);
-        init_finalization_offsets(loop_info->entry_points, loop_info->exit_points, work_amount);
+        init_ptr_increments(loop_info->entry_points, loop_info->exit_points, loop_info->work_amount);
+        init_finalization_offsets(loop_info->entry_points, loop_info->exit_points, loop_info->work_amount);
         init_element_type_sizes(loop_info->entry_points, loop_info->exit_points);
     }
 

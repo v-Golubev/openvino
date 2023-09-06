@@ -14,6 +14,7 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
+
 namespace {
 void replace_ports_with_tail_ports(const ExpressionPtr& expr,
                                    const ExpressionPtr& tail_expr,
@@ -75,7 +76,8 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
                                                     std::prev(tail_end),
                                                     tail_size,
                                                     tail_size,
-                                                    original_loop_info->dim_idx,
+                                                    // TODO: call another function
+                                                    original_loop_info->get_dim_idx(),
                                                     tail_entry_points,
                                                     tail_exit_points);
         const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(tail_begin->get()->get_node());
@@ -92,8 +94,8 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
             if (port.is_incremented) {
                 auto desc = port.expr_port->get_descriptor_ptr();
                 auto subtensor_shape = desc->get_subtensor();
-                if (subtensor_shape.size() > tail_loop_info->dim_idx) {
-                    *(subtensor_shape.rbegin() + tail_loop_info->dim_idx) = tail_size;
+                if (subtensor_shape.size() > port.dim_idx) {
+                    *(subtensor_shape.rbegin() + port.dim_idx) = tail_size;
                     desc->set_subtensor(subtensor_shape);
                 }
             }
@@ -105,14 +107,16 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     // We have to check the loop body for any nested loops that work on the same dimension
     // and rescale their work_amount and increment accordingly
     if (original_loop_info->outer_splited_loop) {
-        const auto current_dim_idx = original_loop_info->dim_idx;
+        const auto current_dim_idx = original_loop_info->get_dim_idx();
+        OPENVINO_ASSERT(current_dim_idx != SIZE_MAX, "Outer splitted loop unexpectedly iterates by several dimension indices");
         for (auto it = std::next(tail_begin); it != std::prev(tail_end); ++it) {
             const auto& expr = *it;
             const auto inner_loop_end = ov::as_type_ptr<op::LoopEnd>(expr->get_node());
             if (!inner_loop_end)
                 continue;
-            const auto loop_info = loop_manager->get_loop_info(inner_loop_end->get_id());
-            if (loop_info->dim_idx != current_dim_idx)
+            const auto inner_loop_info = loop_manager->get_loop_info(inner_loop_end->get_id());
+            const auto inner_dim_idx = inner_loop_info->get_dim_idx();
+            if (inner_dim_idx != current_dim_idx)
                 continue;
             const auto inner_loop_begin = inner_loop_end->get_loop_begin();
             const auto inner_tail_work_amount = static_cast<int64_t>(inner_loop_end->get_work_amount());
