@@ -707,13 +707,8 @@ void StoreConvertEmitter::emit_isa(const std::vector<size_t> &in, const std::vec
 void StoreConvertEmitter::emit_data() const {
     store_emitter->emit_data();
 }
-size_t BrgemmEmitter::getBrgIdx(size_t kIdx, size_t nIdx) {
-    return kIdx * BRGEMM_N_KERNEL_NUM + nIdx;
-}
 
 BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPtr& expr) : jit_emitter(h, isa) {
-    m_brgCtxs.fill(brgemmCtx());
-    std::generate(m_brgKernels.begin(), m_brgKernels.end(), [](){ return nullptr; });
     in_out_type_ = emitter_in_out_map::gpr_to_gpr;
     const auto& brgemm_node = as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node());
     if (brgemm_node->is_dynamic())
