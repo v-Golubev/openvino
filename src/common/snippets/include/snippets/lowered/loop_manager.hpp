@@ -99,6 +99,20 @@ public:
         return loop_id;
     }
 
+    template <typename T>
+    size_t mark_loop(LinearIR::constExprIt loop_begin_pos,
+                    LinearIR::constExprIt loop_end_pos,
+                    size_t work_amount, size_t increment,
+                    const std::vector<T>& entries,
+                    const std::vector<T>& exits) {
+        const auto loop_info = std::make_shared<LoopManager::LoopInfo>(work_amount, increment, entries, exits);
+        const auto loop_id = this->add_loop_info(loop_info);
+        for (auto expr_it = loop_begin_pos; expr_it != loop_end_pos; ++expr_it) {
+            insert_loop_id(*expr_it, loop_id);
+        }
+        return loop_id;
+    }
+
     void fuse_loops(const LinearIR& linear_ir, size_t loop_id_upper, size_t loop_id_lower, bool fuse_into_upper = true);
     void fuse_loops(LinearIR::constExprIt loop_begin_target, LinearIR::constExprIt loop_end_target,
                     size_t loop_id_upper, size_t loop_id_lower, bool fuse_into_upper = true);

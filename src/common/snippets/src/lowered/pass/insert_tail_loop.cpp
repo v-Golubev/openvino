@@ -76,8 +76,6 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
                                                     std::prev(tail_end),
                                                     tail_size,
                                                     tail_size,
-                                                    // TODO: call another function
-                                                    original_loop_info->get_dim_idx(),
                                                     tail_entry_points,
                                                     tail_exit_points);
         const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(tail_begin->get()->get_node());
