@@ -63,6 +63,8 @@ public:
         std::vector<LoopPort> exit_points = {};
         // True if this Loop is outer Loop for nested Loops that splits the same dimension
         bool outer_splited_loop = false;
+        // True if this is a K blocking loop for brgemm node whose first iteration must be handled in a special way
+        bool brgemm_k_blocking_loop = false;
     };
     using LoopInfoPtr = std::shared_ptr<LoopInfo>;
 
