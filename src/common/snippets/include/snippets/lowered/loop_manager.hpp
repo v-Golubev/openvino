@@ -53,6 +53,10 @@ public:
         // Returns dimension index if dimension indices for all entry and exit points are equal, and SIZE_MAX otherwise
         size_t get_dim_idx() const;
 
+        using FirstIterHandler = std::function<bool(LinearIR&, LinearIR::constExprIt)>;
+        void set_first_iter_handler(FirstIterHandler handler);
+        FirstIterHandler fst_iter_handler = nullptr;
+
         size_t work_amount = 0;
         size_t increment = 0;
         // The order of entry and exit expressions is important:
@@ -111,6 +115,22 @@ public:
         const auto loop_id = this->add_loop_info(loop_info);
         for (auto expr_it = loop_begin_pos; expr_it != loop_end_pos; ++expr_it) {
             insert_loop_id(*expr_it, loop_id);
+        }
+        return loop_id;
+    }
+
+    template <typename T>
+    size_t mark_loop_with_old_loop_replacement(LinearIR::constExprIt loop_begin_pos,
+                                               LinearIR::constExprIt loop_end_pos,
+                                               size_t work_amount,
+                                               size_t increment,
+                                               const std::vector<T>& entries,
+                                               const std::vector<T>& exits,
+                                               const size_t old_id) {
+        const auto loop_info = std::make_shared<LoopManager::LoopInfo>(work_amount, increment, entries, exits);
+        const auto loop_id = this->add_loop_info(loop_info);
+        for (auto expr_it = loop_begin_pos; expr_it != loop_end_pos; ++expr_it) {
+            replace_loop_id(*expr_it, old_id, loop_id);
         }
         return loop_id;
     }

@@ -14,21 +14,60 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
+LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const size_t loop_id) {
+    const auto& loop_manager = linear_ir.get_loop_manager();
+    const auto original_loop_info = loop_manager->get_loop_info(loop_id);
+    auto new_entry_points = original_loop_info->entry_points;
+    auto new_exit_points = original_loop_info->exit_points;
 
-namespace {
-void replace_ports_with_tail_ports(const ExpressionPtr& expr,
-                                   const ExpressionPtr& tail_expr,
-                                   std::vector<LinearIR::LoopManager::LoopPort>& ports) {
-    auto find_if_predicate = [&](const LinearIR::LoopManager::LoopPort& port) {
-        return port.expr_port->get_expr()->get_node() == expr->get_node();
+    auto update_loop_ports = [](const ExpressionPtr& expr,
+                                const ExpressionPtr& tail_expr,
+                                std::vector<LinearIR::LoopManager::LoopPort>& ports) {
+        auto find_if_predicate = [&](const LinearIR::LoopManager::LoopPort& port) {
+            return port.expr_port->get_expr()->get_node() == expr->get_node();
+        };
+        auto pos = std::find_if(ports.begin(), ports.end(), find_if_predicate);
+        while (pos != ports.end()) {
+            pos->expr_port = std::make_shared<ExpressionPort>(tail_expr, pos->expr_port->get_type(), pos->expr_port->get_index());
+            pos = std::find_if(pos, ports.end(), find_if_predicate);
+        }
     };
-    auto pos = std::find_if(ports.begin(), ports.end(), find_if_predicate);
-    while (pos != ports.end()) {
-        pos->expr_port = std::make_shared<ExpressionPort>(tail_expr, pos->expr_port->get_type(), pos->expr_port->get_index());
-        pos = std::find_if(pos, ports.end(), find_if_predicate);
-    }
+
+    auto update_loop_info = [&](const ExpressionPtr& expr, const ExpressionPtr& new_expr) {
+        const auto node = expr->get_node();
+        // Loop begin/end ops can't be loop ports
+        if (ov::is_type<op::LoopBase>(node))
+            return;
+        // Clone loop ports from original loop info to tail loop info
+        update_loop_ports(expr, new_expr, new_entry_points);
+        update_loop_ports(expr, new_expr, new_exit_points);
+
+        // Update loop info of all inner loops with new loop ports
+        const auto loop_ids = expr->get_loop_ids();
+        auto cur_id_pos = std::find(loop_ids.begin(), loop_ids.end(), loop_id);
+        std::vector<size_t> inner_loop_ids(loop_ids.begin(), cur_id_pos);
+        for (size_t i = 0; i < expr->get_input_count(); ++i)
+            loop_manager->update_loops_port(inner_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
+        for (size_t i = 0; i < expr->get_output_count(); ++i)
+            loop_manager->update_loops_port(inner_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
+    };
+
+    LinearIR::constExprIt loop_begin_pos, loop_end_pos;
+    loop_manager->get_loop_bounds(linear_ir, loop_id, loop_begin_pos, loop_end_pos, true);
+    const auto loop_copy_range = LinearIR::deep_copy_range(loop_begin_pos, std::next(loop_end_pos), update_loop_info);
+    const auto new_loop_begin_pos = loop_copy_range.begin();
+    const auto new_loop_end_pos = loop_copy_range.end();
+    const auto new_id = loop_manager->mark_loop_with_old_loop_replacement(std::next(new_loop_begin_pos),
+                                                                          std::prev(new_loop_end_pos),
+                                                                          original_loop_info->work_amount,
+                                                                          original_loop_info->increment,
+                                                                          new_entry_points,
+                                                                          new_exit_points,
+                                                                          loop_id);
+    const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_end_pos)->get()->get_node());
+    loop_end->set_id(new_id);
+    return loop_copy_range;
 }
-} // namespace
 
 std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_ir,
                                                               LinearIR::constExprIt vector_begin,
@@ -47,41 +86,16 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     const auto& original_loop_info = loop_manager->get_loop_info(original_loop_id);
     auto tail_loop_info = original_loop_info;
     if (need_vector_loop) {
-        auto tail_entry_points = original_loop_info->entry_points;
-        auto tail_exit_points = original_loop_info->exit_points;
+        const auto new_loop_range = copy_loop(linear_ir, original_loop_id);
+        const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_range.end())->get()->get_node());
+        loop_end->set_work_amount(tail_size);
+        loop_end->set_increment(tail_size);
+        tail_loop_info = loop_manager->get_loop_info(loop_end->get_id());
+        tail_loop_info->work_amount = tail_size;
+        tail_loop_info->increment = tail_size;
 
-        auto update_loop_info = [&](const ExpressionPtr& expr, const ExpressionPtr& new_expr) {
-            const auto node = expr->get_node();
-            // Loop begin/end ops can't be loop ports
-            if (ov::is_type<op::LoopBase>(node))
-                return;
-            // Clone loop ports from original loop info to tail loop info
-            replace_ports_with_tail_ports(expr, new_expr, tail_entry_points);
-            replace_ports_with_tail_ports(expr, new_expr, tail_exit_points);
-
-            // Update loop info of all inner loops with new loop ports
-            const auto loop_ids = expr->get_loop_ids();
-            auto cur_id_pos = std::find(loop_ids.begin(), loop_ids.end(), original_loop_id);
-            std::vector<size_t> inner_loop_ids(loop_ids.begin(), cur_id_pos);
-            for (size_t i = 0; i < expr->get_input_count(); ++i)
-                loop_manager->update_loops_port(inner_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
-            for (size_t i = 0; i < expr->get_output_count(); ++i)
-                loop_manager->update_loops_port(inner_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
-        };
-        auto vector_loop_deep_copy = LinearIR::deep_copy_range(vector_begin, vector_end, update_loop_info);
-        tail_begin = linear_ir.insert(vector_end, vector_loop_deep_copy.begin(), vector_loop_deep_copy.end());
+        tail_begin = linear_ir.insert(vector_end, new_loop_range.begin(), new_loop_range.end());
         tail_end = vector_end;
-
-        const auto new_id = loop_manager->mark_loop(std::next(tail_begin),
-                                                    std::prev(tail_end),
-                                                    tail_size,
-                                                    tail_size,
-                                                    tail_entry_points,
-                                                    tail_exit_points);
-        const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(tail_begin->get()->get_node());
-        const auto loop_end = loop_begin->get_loop_end();
-        loop_end->set_id(new_id);
-        tail_loop_info = loop_manager->get_loop_info(new_id);
     } else {
         tail_begin = vector_begin;
         tail_end = vector_end;
@@ -140,6 +154,9 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     tail_loop_end->set_work_amount(tail_size);
     tail_loop_end->set_finalization_offsets(tail_finalization_offsets);
     tail_loop_end->has_outer_loop = vector_loop_end->has_outer_loop;
+    const auto new_vector_loop_wa = original_loop_info->work_amount - tail_size;
+    original_loop_info->work_amount = new_vector_loop_wa;
+    vector_loop_end->set_work_amount(new_vector_loop_wa);
     return tail_loop_end;
 }
 
@@ -171,21 +188,23 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
         // correct math calculations for ReduceMax and ReduceSum in scalar case.
         // Note: We find Maximum and Add ops because HorizonMax and HorizonSum are outside Loop,
         //       so they are missed in <tail>
-        auto op = (*expr_it)->get_node();
+        const auto& expr = *expr_it;
+        const auto op = expr->get_node();
         if (config.m_need_fill_tail_register &&
             (ov::is_type<ov::op::v1::Maximum>(op) ||
              ov::is_type<ov::op::v1::Add>(op))) {
             for (size_t i = 0; i < op->inputs().size(); ++i) {
                 if (auto fill = insertFill(op->input(i))) {
-                    const auto& input = expr_it->get()->get_input_port_connector(i);
+                    const auto& input = expr->get_input_port_connector(i);
                     const auto consumers = input->get_consumers();
                     auto fill_expr = linear_ir.create_expression(fill, {input});
                     linear_ir.insert(expr_it, fill_expr);
                     linear_ir.replace_input(consumers, fill_expr->get_output_port_connector(0));
                     // in_reg == out_reg since we want to modify vector reg inplace
-                    const auto reg = expr_it->get()->get_input_port_descriptor(0)->get_reg();
+                    const auto reg = expr->get_input_port_descriptor(0)->get_reg();
                     fill_expr->get_input_port_descriptor(0)->set_reg(reg);
                     fill_expr->get_output_port_descriptor(0)->set_reg(reg);
+                    fill_expr->set_loop_ids(expr->get_loop_ids());
                 }
             }
         } else if (const auto memory_access = std::dynamic_pointer_cast<ov::snippets::op::MemoryAccess>(op)) {
@@ -239,9 +258,16 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
         if (!loop_end)
             continue;
 
+        const auto loop_info = loop_manager->get_loop_info(loop_end->get_id());
+        if (loop_info->fst_iter_handler != nullptr) {
+            modified |= loop_info->fst_iter_handler(linear_ir, expr_it);
+        }
+
+        if (loop_end->get_evaluate_once() == true)
+            continue;
+
         const auto work_amount = loop_end->get_work_amount();
         const auto increment = loop_end->get_increment();
-        const auto loop_info = loop_manager->get_loop_info(loop_end->get_id());
         const auto tail_size = work_amount % increment;
         const auto need_tail = tail_size != 0;
         const auto need_vector_loop = work_amount >= increment;

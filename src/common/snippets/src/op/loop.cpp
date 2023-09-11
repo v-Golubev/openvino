@@ -198,6 +198,7 @@ bool LoopEnd::visit_attributes(AttributeVisitor &visitor) {
     visitor.on_attribute("input_num", m_input_num);
     visitor.on_attribute("output_num", m_output_num);
     visitor.on_attribute("id", m_id);
+    visitor.on_attribute("evaluate_once", m_evaluate_once);
     return true;
 }
 

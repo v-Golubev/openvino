@@ -41,6 +41,10 @@ size_t LinearIR::LoopManager::LoopInfo::get_dim_idx() const {
     }
 }
 
+void LinearIR::LoopManager::LoopInfo::set_first_iter_handler(FirstIterHandler handler) {
+    fst_iter_handler = std::move(handler);
+}
+
 bool operator==(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopManager::LoopPort& rhs) {
     if (&lhs == &rhs)
         return true;
