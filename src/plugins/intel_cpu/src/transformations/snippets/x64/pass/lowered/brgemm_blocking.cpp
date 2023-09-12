@@ -126,7 +126,6 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                 std::vector<LoopPort> exits{LoopPort(brgemm_expr->get_output_port(0), false)};
                 auto loop_id = loop_manager->mark_loop(expr_it, std::next(expr_it), k, block_size_k, entries, exits);
                 const auto loop_info = loop_manager->get_loop_info(loop_id);
-                loop_info->brgemm_k_blocking_loop = true;
 
                 auto first_iter_handler = [](LinearIR& linear_ir, LinearIR::constExprIt expr_it) {
                     const auto loop_end = ov::as_type_ptr<snippets::op::LoopEnd>(expr_it->get()->get_node());
@@ -135,7 +134,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                     const auto& loop_info = loop_manager->get_loop_info(loop_id);
                     const auto work_amount = loop_info->work_amount;
                     const auto increment = loop_info->increment;
-                    if (!loop_info->brgemm_k_blocking_loop || work_amount <= increment)
+                    if (work_amount <= increment)
                         return false;
 
                     auto new_loop_range = snippets::lowered::pass::InsertTailLoop::copy_loop(linear_ir, loop_id);

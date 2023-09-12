@@ -38,7 +38,7 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
         // Loop begin/end ops can't be loop ports
         if (ov::is_type<op::LoopBase>(node))
             return;
-        // Clone loop ports from original loop info to tail loop info
+        // Clone loop ports from original loop info to new loop info
         update_loop_ports(expr, new_expr, new_entry_points);
         update_loop_ports(expr, new_expr, new_exit_points);
 
@@ -65,6 +65,7 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
                                                                           new_exit_points,
                                                                           loop_id);
     const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_end_pos)->get()->get_node());
+    OPENVINO_ASSERT(loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
     loop_end->set_id(new_id);
     return loop_copy_range;
 }
@@ -88,6 +89,7 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     if (need_vector_loop) {
         const auto new_loop_range = copy_loop(linear_ir, original_loop_id);
         const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_range.end())->get()->get_node());
+        OPENVINO_ASSERT(loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
         loop_end->set_work_amount(tail_size);
         loop_end->set_increment(tail_size);
         tail_loop_info = loop_manager->get_loop_info(loop_end->get_id());
