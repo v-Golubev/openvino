@@ -866,21 +866,18 @@ void BrgemmEmitter::emit_impl(const std::vector<size_t>& in,
     if (host_isa_ == cpu::x64::avx512_core) {
         Xbyak::Reg64 input_0(static_cast<int>(in[0]));
         Xbyak::Reg64 input_1(static_cast<int>(in[1]));
-        Xbyak::Reg64 input_2(static_cast<int>(0));  // scratch. Default reg index is 0 if there isn't scratch
+        Xbyak::Reg64 input_2(static_cast<int>(m_with_scratch ? in[2] : 0));  // scratch. Default reg index is 0 if there isn't scratch
         Xbyak::Reg64 output_0(static_cast<int>(out[0]));
-        h->add(input_0, m_load_offset_a);
-        h->add(input_1, m_load_offset_b);
-        h->add(output_0, m_store_offset_c);
-        if (m_with_scratch) {
-            input_2 = Xbyak::Reg64(static_cast<int>(in[2]));
-            h->add(input_2, m_load_offset_scratch);
-        }
-        emit_brgemm_kernel_call(m_brgKernel.get(), m_brgCtx, input_0, input_1, input_2, output_0);
-        h->sub(input_0, m_load_offset_a);
-        h->sub(input_1, m_load_offset_b);
-        if (m_with_scratch)
-            h->sub(input_2, m_load_offset_scratch);
-        h->sub(output_0, m_store_offset_c);
+        emit_brgemm_kernel_call(m_brgKernel.get(),
+                                m_brgCtx,
+                                input_0,
+                                input_1,
+                                input_2,
+                                output_0,
+                                m_load_offset_a,
+                                m_load_offset_b,
+                                m_load_offset_scratch,
+                                m_store_offset_c);
     } else {
         IE_THROW() << "BrgemmEmitter requires at least avx512_core instruction set";
     }
