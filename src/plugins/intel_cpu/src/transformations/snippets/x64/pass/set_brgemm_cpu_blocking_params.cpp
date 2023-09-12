@@ -47,9 +47,6 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             return false;
         }
 
-        const auto dimsMatMulIn0 = snippets::utils::get_port_planar_shape(brgemm->input_value(0)).get_shape();
-        const auto K = *dimsMatMulIn0.rbegin();
-
         const auto& input_1_precision = brgemm->get_input_element_type(1);
         // Ticket: 113745
         // TODO: extend block size selection heuristics
@@ -65,9 +62,11 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             return input_1_precision != ov::element::f32 ? N : 64;
         };
 
+        const auto brgemm_in0_dims = snippets::utils::get_planar_pshape(brgemm->input_value(0)).get_shape();
+        const auto K = *brgemm_in0_dims.rbegin();
         if (brgemm->is_with_data_repacking()) {
             const auto brgemm_copy_b = brgemm->get_brgemm_copy();
-            const auto out_dims = snippets::utils::get_port_planar_shape(brgemm_copy_b->output(0)).get_shape();
+            const auto out_dims = snippets::utils::get_planar_pshape(brgemm_copy_b->output(0)).get_shape();
             const auto N = *out_dims.rbegin();
 
             const bool isAMXSupported = dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core_amx);
@@ -92,9 +91,8 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         if (brgemm->is_with_scratchpad())
             change_desc_shape(brgemm->input(2));
 
-        const auto brgemm_in1_dims = snippets::utils::get_port_planar_shape(brgemm->input_value(1)).get_shape();
+        const auto brgemm_in1_dims = snippets::utils::get_planar_pshape(brgemm->input_value(1)).get_shape();
         const auto N = *brgemm_in1_dims.rbegin();
-        const auto brgemm_in0_dims = snippets::utils::get_port_planar_shape(brgemm->input_value(0)).get_shape();
         const auto M = *(brgemm_in0_dims.rbegin() + 1);
 
         brgemm->set_m_block_size(get_block_size_m(M));

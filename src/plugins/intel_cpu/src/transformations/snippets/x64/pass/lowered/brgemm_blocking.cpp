@@ -143,7 +143,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                     new_loop_end->set_work_amount(work_amount - increment);
                     auto new_loop_info = loop_manager->get_loop_info(new_loop_end->get_id());
                     new_loop_info->work_amount = work_amount - increment;
-                    for (const auto expr : new_loop_range) {
+                    for (const auto& expr : new_loop_range) {
                         if (const auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node())) {
                             brgemm->set_beta(1.f);
                         }
