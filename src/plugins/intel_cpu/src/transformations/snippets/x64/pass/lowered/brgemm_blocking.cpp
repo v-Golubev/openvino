@@ -61,11 +61,11 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
         auto output_subtensor = output_desc->get_subtensor();
 
         auto apply_m_blocking = [&]() {
-            const auto& input_shape_0 = input_0_desc->get_shape();
-            const auto& input_layout_0 = input_0_desc->get_layout();
+            const auto& output_shape = output_desc->get_shape();
+            const auto& output_layout = output_desc->get_layout();
 
-            const auto& m_idx = *(input_layout_0.rbegin() + 1);
-            const auto& m = input_shape_0[m_idx];
+            const auto& m_idx = *(output_layout.rbegin() + 1);
+            const auto& m = output_shape[m_idx];
             const auto block_size_m = brgemm->get_m_block_size();
             if (block_size_m >= m) {
                 *(input_0_subtensor.rbegin() + 1) = m;
@@ -83,11 +83,11 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
         };
 
         auto apply_n_blocking = [&]() {
-            const auto& input_shape_1 = input_1_desc->get_shape();
-            const auto& input_layout_1 = input_1_desc->get_layout();
+            const auto& output_shape = output_desc->get_shape();
+            const auto& output_layout = output_desc->get_layout();
 
-            const auto& n_idx = *input_layout_1.rbegin();
-            const auto& n = input_shape_1[n_idx];
+            const auto& n_idx = *output_layout.rbegin();
+            const auto& n = output_shape[n_idx];
             const auto block_size_n = brgemm->get_n_block_size();
             if (block_size_n >= n) {
                 *input_1_subtensor.rbegin() = n;

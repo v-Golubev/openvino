@@ -713,18 +713,12 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     const auto& brgemm_node = as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node());
     if (brgemm_node->is_dynamic())
         IE_THROW() << "Snippets don't support code generation for dynamic Brgemm";
-    const auto brgemm_copy = brgemm_node->is_with_data_repacking() ? brgemm_node->get_brgemm_copy() : nullptr;
 
     std::vector<size_t> leading_dimensions;
-    std::vector<std::vector<size_t>> io_layouts;
-
     auto init_scheduling_params = [&](const std::vector<size_t>& layout, const ov::Shape& io_shape) {
         if (layout.empty()) {
             // empty value indicates a planar layout
             leading_dimensions.push_back(io_shape.back());
-            std::vector<size_t> default_layout(io_shape.size());
-            std::iota(default_layout.begin(), default_layout.end(), 0);
-            io_layouts.push_back(default_layout);
         } else {
             // The idea here is to find "2" (for 4D shapes) in the layout and multiply dimensions that are to the right
             // This implies that "3" is the last layout value, otherwise this layout is not supported.
@@ -734,7 +728,6 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
                 IE_THROW() << "BrgemmEmitter detected invalid layout values: check that this shape + layout combination is schedulable";
             leading_dimensions.emplace_back(
                     std::accumulate(io_shape.end() - num_last_dims, io_shape.end(), 1, std::multiplies<size_t>()));
-            io_layouts.push_back(layout);
         }
     };
 
@@ -746,26 +739,11 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     init_scheduling_params(input_1_desc->get_layout(), input_1_desc->get_shape());
     init_scheduling_params(output_desc->get_layout(), output_desc->get_shape());
 
-    // We need find original M,N,K having layouts and ordered shapes
-    // Layout:  0, 1, 2, 3   =>   New layout: 0, 2, 1, 3
-    // Shape:   1, 3, 5, 9   =>   New Shape:  1, 5, 3, 9
-    // To find original 2nd dimension, we should find index of position value `2` in new layout
-    // and get dimension from new shape by this index
-    auto get_ordered_idx = [](const std::vector<size_t>& layout, size_t idx) {
-        return std::distance(layout.begin(), std::find(layout.begin(), layout.end(), idx));
-    };
-
     const auto& output_subtensor = output_desc->get_subtensor();
     const auto& input_0_subtensor = input_0_desc->get_subtensor();
     m_K = *input_0_subtensor.rbegin();
     m_M = *(output_subtensor.rbegin() + 1);
     m_N = *output_subtensor.rbegin();
-    // TODO: N dim on input can be not equal to N dim on output. This case must be handled
-    if (brgemm_node->is_with_data_repacking()) {
-        const auto& C_shape = brgemm_node->get_output_shape(0);
-        const auto& C_layout = io_layouts[2];
-        m_N = C_shape[get_ordered_idx(C_layout, C_layout.size() - 1)];
-    }
 
     auto brg0Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(0));
     auto brg1Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(1));
@@ -783,7 +761,7 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     m_brgCtx.N = m_N;
     m_brgCtx.K = m_K;
     m_brgCtx.LDA = leading_dimensions[0];
-    m_brgCtx.LDB = brgemm_node->is_with_data_repacking() ? rnd_up(m_N, brgemm_copy->get_n_block_size()) : leading_dimensions[1];
+    m_brgCtx.LDB = brgemm_node->is_with_data_repacking() ? rnd_up(m_N, brgemm_node->get_brgemm_copy()->get_n_block_size()) : leading_dimensions[1];
     m_brgCtx.LDC = leading_dimensions[2];
     m_brgCtx.dt_in0 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg0Prc));
     m_brgCtx.dt_in1 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg1Prc));

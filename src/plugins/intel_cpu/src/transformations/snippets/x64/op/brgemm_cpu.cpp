@@ -199,8 +199,6 @@ bool BrgemmCPU::visit_attributes(AttributeVisitor& visitor) {
     visitor.on_attribute("blk_K", m_K_blk);
     visitor.on_attribute("blk_N", m_N_blk);
     visitor.on_attribute("beta", m_beta);
-    auto instance_id = get_instance_id();
-    visitor.on_attribute("instance_id", instance_id);
     return true;
 }
 
