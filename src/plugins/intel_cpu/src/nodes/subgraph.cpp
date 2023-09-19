@@ -21,6 +21,7 @@
 #include "snippets/pass/matmul_to_brgemm.hpp"
 #include "utils/cpu_utils.hpp"
 #include "emitters/x64/cpu_generator.hpp"
+#include "transformations/snippets/x64/pass/lowered/set_brgemm_copy_b_buffers_shape.hpp"
 #include "transformations/snippets/x64/pass/lowered/fuse_load_store_and_convert.hpp"
 #include "transformations/snippets/x64/pass/lowered/brgemm_blocking.hpp"
 #include "transformations/snippets/x64/pass/mul_add_to_fma.hpp"
@@ -730,6 +731,7 @@ void Snippet::SnippetJitExecutor::generate(const jit_snippets_compile_args* jcp)
 
     ov::snippets::lowered::pass::PassPipeline control_flow_pipeline;
     CPU_REGISTER_PASS_X64(control_flow_pipeline, ov::intel_cpu::pass::FuseLoadStoreConvert);
+    CPU_REGISTER_PASS_X64(control_flow_pipeline, ov::intel_cpu::pass::SetBrgemmCopyBBuffersShape);
     // Todo: We don't need shape infer factory now, since shape infer will be done through validate_and_infer_types
     //  pass std::make_shared<snippets::CPUShapeInferSnippetsFactory>() instead of nullptr, when shape infer is performed on LIR
     schedule = snippet_for_generation->generate(backend_passes,
