@@ -199,8 +199,14 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
                 if (auto fill = insertFill(op->input(i))) {
                     const auto& input = expr->get_input_port_connector(i);
                     const auto consumers = input->get_consumers();
+                    auto fst_consumer = std::min_element(consumers.cbegin(), consumers.cend(), [&](ExpressionPort lhs, ExpressionPort rhs) {
+                        auto lhs_it = linear_ir.find(lhs.get_expr());
+                        auto rhs_it = linear_ir.find(rhs.get_expr());
+                        return std::distance(linear_ir.cbegin(), lhs_it) < std::distance(linear_ir.cbegin(), rhs_it);
+                    });
+                    const auto insert_pos = linear_ir.find(fst_consumer->get_expr());
                     auto fill_expr = linear_ir.create_expression(fill, {input});
-                    linear_ir.insert(expr_it, fill_expr);
+                    linear_ir.insert(insert_pos, fill_expr);
                     linear_ir.replace_input(consumers, fill_expr->get_output_port_connector(0));
                     // in_reg == out_reg since we want to modify vector reg inplace
                     const auto reg = expr->get_input_port_descriptor(0)->get_reg();
