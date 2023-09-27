@@ -116,6 +116,14 @@ Result BroadcastShapeInfer<BroadcastOP>::infer(const std::vector<VectorDimsRef>&
     out_shape.back() = m_broadcasted_dim;
     return {{out_shape}, ShapeInferStatus::success};
 }
+template<class BroadcastOP>
+VectorDims::value_type BroadcastShapeInfer<BroadcastOP>::get_broadcasted_dim() const {
+    return m_broadcasted_dim;
+}
+template<class BroadcastOP>
+void BroadcastShapeInfer<BroadcastOP>::set_broadcasted_dim(const VectorDims::value_type new_dim) {
+    m_broadcasted_dim = new_dim;
+}
 
 //// Note: we need to manually create template instances here, so they can be reused in Broadcast* headers.
 template class BroadcastShapeInfer<op::BroadcastMove>;

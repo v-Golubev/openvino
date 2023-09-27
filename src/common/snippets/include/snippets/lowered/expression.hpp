@@ -56,6 +56,8 @@ public:
     std::vector<size_t> get_loop_ids() const;
     void set_loop_ids(const std::vector<size_t>& loops);
 
+    const std::shared_ptr<IShapeInferSnippets> get_shape_inference() const { return m_shapeInference; }
+
 protected:
     // Note: The constructor initialization is private since an expression can be created only by Linear IR.
     //       The method must be used only by Linear IR builder of expressions!
