@@ -35,18 +35,27 @@ bool CleanupLoopOffsets::run(LinearIR& linear_ir) {
                 }
                 if (auto outer_loop_end = as_type_ptr<op::LoopEnd>(next_node)) {
                     auto fin_offsets = loop_end->get_finalization_offsets();
+                    const auto& is_incremented = loop_end->get_is_incremented();
                     std::unordered_map<PortConnectorPtr, size_t> per_port_connector_offset;
                     const auto& loop_inputs = expr_it->get()->get_input_port_connectors();
                     for (size_t i = 0; i < fin_offsets.size(); i++)
                         per_port_connector_offset[loop_inputs[i]] = i;
 
                     const auto outer_increment = static_cast<int64_t>(outer_loop_end->get_increment());
+                    const auto work_amount = outer_loop_end->get_work_amount();
+                    if (work_amount % outer_increment != 0) {
+                        continue;
+                    }
                     auto outer_ptr_increments = outer_loop_end->get_ptr_increments();
+                    const auto& outer_is_incremented = outer_loop_end->get_is_incremented();
                     const auto& outer_loop_inputs = next_expr_it->get()->get_input_port_connectors();
                     for (size_t i = 0; i < outer_ptr_increments.size(); i++) {
+                        if (outer_is_incremented[i] == false)
+                            continue;
+
                         const auto& managed_connector = outer_loop_inputs[i];
                         const auto& found = per_port_connector_offset.find(managed_connector);
-                        if (found != per_port_connector_offset.end()) {
+                        if (found != per_port_connector_offset.end() && is_incremented[found->second] == true) {
                             // Since data ptr is incremented on [ptr_increment x increment],
                             // we should guarantee proportionality of ptr shifts.
                             // If the data ptr can't be proportionally shifted, the optimization is not applied

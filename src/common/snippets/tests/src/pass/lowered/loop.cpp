@@ -69,6 +69,7 @@ static void validate(const LinearIR& linear_ir, const ref_map& reference) {
         ASSERT_TRUE(loop_end->get_finalization_offsets() == reference.at(loop_num).second);
         loop_num++;
     }
+    ASSERT_EQ(loop_num, reference.size());
 }
 
 TEST(Snippets_TailProcessingTransformation, BlockedWOTail_OriginalPtrShifts) {
@@ -152,13 +153,13 @@ TEST(Snippets_TailProcessingTransformation, BlockedTail_CleanUpPtrShifts) {
     std::map<size_t, std::pair<std::vector<int64_t>, std::vector<int64_t>>> reference;
     reference[0] = { std::vector<int64_t>(3, 1), std::vector<int64_t>(3, 16)};  // Vector Inner
     reference[1] = { std::vector<int64_t>(3, 1), std::vector<int64_t>(3, 4)};  // Blocked Inner
-    reference[2] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};  // Vector Blocked
-    reference[3] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)}; // Vector Outer
+    reference[2] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, -80)};  // Vector Blocked
+    reference[3] = { std::vector<int64_t>(3, 20), std::vector<int64_t>(3, 0)}; // Vector Outer
 
     reference[4] = { std::vector<int64_t>(3, 1), std::vector<int64_t>(3, 16)};  // Vector Inner
     reference[5] = { std::vector<int64_t>(3, 1), std::vector<int64_t>(3, 4)};  // Blocked Inner
-    reference[6] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};  // Tail Blocked
-    reference[7] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};  // Tail Blocked
+    reference[6] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, -40)};  // Tail Blocked
+    reference[7] = { std::vector<int64_t>(3, 20), std::vector<int64_t>(3, 40)};  // Tail Blocked
 
     validate(linear_ir, reference);
 }
