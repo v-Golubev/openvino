@@ -67,7 +67,7 @@ ov::NodeVector LinearIR::get_ordered_ops(const std::shared_ptr<ov::Model>& m) {
 }
 
 void LinearIR::serialize(const std::string& xml, const std::string& bin) const {
-    auto first_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{});
+    auto first_node = std::make_shared<ov::op::v0::Parameter>(element::f32, ov::PartialShape{-1});
     first_node->set_friendly_name("Start");
     first_node->get_rt_info()["execTimeMcs"] = 0;
     std::shared_ptr<Node> serialization_node = first_node;
@@ -104,24 +104,46 @@ LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterato
     auto deep_clone_ports = [](std::vector<PortDescriptorPtr>& ports) {
         for (auto& port : ports) { port = port->clone(); }
     };
-    LinearIR::container result;
+
     NodeVector original_nodes;
-    for (auto it = begin; it != end; it++)
+    for (auto it = begin; it != end; it++) {
         original_nodes.push_back((*it)->get_node());
+    }
+
+    // NodeVector original_nodes;
     ngraph::NodeMap node_map;
     OPENVINO_SUPPRESS_DEPRECATED_START
-    ngraph::clone_nodes(original_nodes,  node_map);
+    ngraph::clone_nodes(original_nodes, node_map);
     OPENVINO_SUPPRESS_DEPRECATED_END
+
+    LinearIR::container result;
+    std::unordered_map<PortConnectorPtr, PortConnectorPtr> connectors_map;
     for (auto it = begin; it != end; it++) {
-        // copy by value, so result shared_pointer point to new objects
-        Expression expr = **it;
-        expr.m_source_node = node_map[(*it)->get_node().get()];
-        deep_clone_ports(expr.m_input_port_descriptors);
-        deep_clone_ports(expr.m_output_port_descriptors);
-        const auto new_expr = std::make_shared<Expression>(expr);
+        const auto& orig_expr = *it;
+        const auto copy_expr = std::make_shared<Expression>(*orig_expr);
+        copy_expr->m_source_node = node_map[orig_expr->get_node().get()];
         if (specific_action != nullptr)
-            specific_action(*it, new_expr);
-        result.push_back(new_expr);
+            specific_action(orig_expr, copy_expr);
+
+        deep_clone_ports(copy_expr->m_input_port_descriptors);
+        deep_clone_ports(copy_expr->m_output_port_descriptors);
+
+        for (auto& out_connvector : copy_expr->m_output_port_connectors) {
+            const auto& copy_source = copy_expr->get_output_port(out_connvector->get_source().get_index());
+            const auto& copy_con = std::make_shared<PortConnector>(copy_source);
+            connectors_map[out_connvector] = copy_con;
+            out_connvector = copy_con;
+        }
+        for (size_t i = 0; i < copy_expr->get_input_count(); i++) {
+            const auto it = connectors_map.find(copy_expr->get_input_port_connector(i));
+            if (it != connectors_map.end()) {
+                const auto& copy_connector = it->second;
+                const auto& copy_consumer = copy_expr->get_input_port(i);
+                copy_connector->add_consumer(copy_consumer);
+                copy_expr->replace_input(i, copy_connector);
+            }
+        }
+        result.push_back(copy_expr);
     }
     return result;
 }

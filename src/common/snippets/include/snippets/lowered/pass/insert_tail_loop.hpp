@@ -7,6 +7,7 @@
 #include "pass.hpp"
 
 #include "snippets/op/loop.hpp"
+#include "snippets/lowered/loop_manager.hpp"
 
 namespace ov {
 namespace snippets {
@@ -25,6 +26,11 @@ public:
     bool run(LinearIR& linear_ir) override;
     static bool optimize_single_evaluation(const std::shared_ptr<op::LoopEnd>& loop);
     static LinearIR::container copy_loop(const LinearIR& linear_ir, const size_t loop_id);
+    static void propagate_updated_subtensor_through_loop(const LinearIR& linear_ir,
+                                                         const LinearIR::LoopManager::LoopInfoPtr& loop_info,
+                                                         LinearIR::container::const_iterator begin,
+                                                         LinearIR::container::const_iterator end,
+                                                         const size_t new_dim_value = SIZE_MAX);
 
 private:
     static std::shared_ptr<op::LoopEnd> create_tail_loop(LinearIR& linear_ir,

@@ -8,12 +8,145 @@
 #include "snippets/lowered/loop_manager.hpp"
 #include "snippets/lowered/pass/init_loops.hpp"
 #include "snippets/snippets_isa.hpp"
+#include "snippets/utils.hpp"
 #include "snippets/itt.hpp"
 
 namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
+void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& linear_ir,
+                                                              const LinearIR::LoopManager::LoopInfoPtr& loop_info,
+                                                              LinearIR::container::const_iterator begin,
+                                                              LinearIR::container::const_iterator end,
+                                                              const size_t new_dim_value) {
+    std::map<lowered::PortDescriptorPtr, snippets::VectorDims> original_shapes;
+    std::map<ExpressionPtr, size_t> original_bcast_dims;
+
+    auto update_only_dim_idx_with_subtensor_value = [&](const LinearIR::LoopManager::LoopPort& port) {
+        if (port.is_incremented) {
+            auto desc = port.expr_port->get_descriptor_ptr();
+            const auto expr = port.expr_port->get_expr();
+            const auto parent_desc = expr->get_input_port_connector(port.expr_port->get_index())->get_source().get_descriptor_ptr();
+
+            const auto& layout = parent_desc->get_layout();
+            const auto& shape = parent_desc->get_shape();
+            const auto& desc_subtensor = desc->get_subtensor();
+            if (port.dim_idx < desc_subtensor.size()) {
+                if (original_shapes.find(parent_desc) == original_shapes.end()) {
+                    original_shapes[parent_desc] = shape;
+                }
+                auto new_shape = shape;
+                new_shape[*(layout.rbegin() + port.dim_idx)] = *(desc_subtensor.rbegin() + port.dim_idx);
+                parent_desc->set_shape(new_shape);
+            }
+        }
+    };
+
+    auto update_corresponding_entries = [&](const ExpressionPort& expr_port) {
+        auto corresponding_entry = std::find_if(loop_info->entry_points.begin(),
+                                                loop_info->entry_points.end(),
+                                                [&](const LinearIR::LoopManager::LoopPort& p) {
+                                                    return *p.expr_port.get() == expr_port;
+                                                });
+        if (corresponding_entry == loop_info->entry_points.end()) {
+            return;
+        }
+        const auto& port = *corresponding_entry;
+        update_only_dim_idx_with_subtensor_value(port);
+    };
+
+    // First step: set tail to the corresponding entry_points' dimensions
+    if (new_dim_value != SIZE_MAX) {
+        for (const auto& port : loop_info->entry_points) {
+            if (port.is_incremented) {
+                const auto& expr = port.expr_port->get_expr();
+                const auto node = expr->get_node();
+                if (port.dim_idx == 0 && ov::is_type<snippets::op::BroadcastLoad>(node)) {
+                    auto shape_infer = std::dynamic_pointer_cast<snippets::BroadcastShapeInfer<snippets::op::BroadcastLoad>>(expr->get_shape_inference());
+                    original_bcast_dims[expr] = shape_infer->get_broadcasted_dim();
+                    shape_infer->set_broadcasted_dim(new_dim_value);
+                }
+
+                auto desc = port.expr_port->get_descriptor_ptr();
+                auto subtensor = desc->get_subtensor();
+                if (port.dim_idx < subtensor.size()) {
+                    *(subtensor.rbegin() + port.dim_idx) = new_dim_value;
+                    desc->set_subtensor(subtensor);
+                }
+
+                const auto parent_desc = expr->get_input_port_connector(port.expr_port->get_index())->get_source().get_descriptor_ptr();
+                const auto& layout = parent_desc->get_layout();
+                const auto& shape = parent_desc->get_shape();
+                if (original_shapes.find(parent_desc) == original_shapes.end()) {
+                    original_shapes[parent_desc] = shape;
+                }
+                auto new_shape = shape;
+                new_shape[*(layout.rbegin() + port.dim_idx)] = new_dim_value;
+                parent_desc->set_shape(new_shape);
+            }
+        }
+    }
+
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
+        const auto expr = *expr_it;
+        if (auto loop_begin = ov::as_type_ptr<snippets::op::LoopBegin>(expr->get_node())) {
+            const auto loop_end = loop_begin->get_loop_end();
+            const auto inner_loop_info = linear_ir.get_loop_manager()->get_loop_info(loop_end->get_id());
+            const auto inner_begin = std::next(expr_it);
+            const auto inner_end = linear_ir.find(linear_ir.get_expr_by_node(loop_end));
+            for (const auto& port : loop_info->entry_points) {
+                update_only_dim_idx_with_subtensor_value(port);
+            }
+            propagate_updated_subtensor_through_loop(linear_ir, inner_loop_info, inner_begin, inner_end);
+            expr_it = inner_end;
+        } else if (ov::is_type<snippets::op::LoopEnd>(expr->get_node())) {
+            continue;
+        } else {
+            for (size_t i = 0; i < expr->get_input_count(); ++i) {
+                const auto& expr_port = expr->get_input_port(i);
+                update_corresponding_entries(expr_port);
+            }
+            expr->updateShapes();
+            for (const auto& in_desc : expr->get_input_port_descriptors()) {
+                const auto& subtensor = in_desc->get_subtensor();
+                if (!subtensor.empty()) {
+                    auto planar_dims = snippets::utils::get_planar_vdims(in_desc);
+                    const size_t subtensor_start = planar_dims.size() - subtensor.size();
+                    VectorDims new_subtensor(planar_dims.begin() + subtensor_start, planar_dims.end());
+                    for (size_t i = 0; i < new_subtensor.size(); ++i) {
+                        new_subtensor[i] = std::min(new_subtensor[i], subtensor[i]);
+                    }
+                    in_desc->set_subtensor(new_subtensor);
+                }
+            }
+            for (const auto& out_desc : expr->get_output_port_descriptors()) {
+                const auto& subtensor = out_desc->get_subtensor();
+                if (!subtensor.empty()) {
+                    auto planar_dims = snippets::utils::get_planar_vdims(out_desc);
+                    const size_t subtensor_start = planar_dims.size() - subtensor.size();
+                    VectorDims new_subtensor(planar_dims.begin() + subtensor_start, planar_dims.end());
+                    for (size_t i = 0; i < new_subtensor.size(); ++i) {
+                        new_subtensor[i] = std::min(new_subtensor[i], subtensor[i]);
+                    }
+                    out_desc->set_subtensor(new_subtensor);
+                }
+            }
+        }
+    }
+    for (const auto& elem : original_shapes) {
+        elem.first->set_shape(elem.second);
+    }
+    for (const auto& elem : original_bcast_dims) {
+        auto shape_infer = std::dynamic_pointer_cast<snippets::BroadcastShapeInfer<snippets::op::BroadcastLoad>>(elem.first->get_shape_inference());
+        shape_infer->set_broadcasted_dim(elem.second);
+    }
+    // restore original shapes
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
+        (*expr_it)->updateShapes();
+    }
+}
+
 LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const size_t loop_id) {
     const auto& loop_manager = linear_ir.get_loop_manager();
     const auto original_loop_info = loop_manager->get_loop_info(loop_id);
@@ -98,25 +231,14 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
 
         tail_begin = linear_ir.insert(vector_end, new_loop_range.begin(), new_loop_range.end());
         tail_end = vector_end;
+
+        const auto new_vector_loop_wa = original_loop_info->work_amount - tail_size;
+        original_loop_info->work_amount = new_vector_loop_wa;
+        vector_loop_end->set_work_amount(new_vector_loop_wa);
     } else {
         tail_begin = vector_begin;
         tail_end = vector_end;
     }
-
-    auto update_subtensors = [&](const std::vector<LinearIR::LoopManager::LoopPort>& ports) {
-        for (const auto& port : ports) {
-            if (port.is_incremented) {
-                auto desc = port.expr_port->get_descriptor_ptr();
-                auto subtensor_shape = desc->get_subtensor();
-                if (subtensor_shape.size() > port.dim_idx) {
-                    *(subtensor_shape.rbegin() + port.dim_idx) = tail_size;
-                    desc->set_subtensor(subtensor_shape);
-                }
-            }
-        }
-    };
-    update_subtensors(tail_loop_info->entry_points);
-    update_subtensors(tail_loop_info->exit_points);
 
     // We have to check the loop body for any nested loops that work on the same dimension
     // and rescale their work_amount and increment accordingly
@@ -156,9 +278,9 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
     tail_loop_end->set_work_amount(tail_size);
     tail_loop_end->set_finalization_offsets(tail_finalization_offsets);
     tail_loop_end->has_outer_loop = vector_loop_end->has_outer_loop;
-    const auto new_vector_loop_wa = original_loop_info->work_amount - tail_size;
-    original_loop_info->work_amount = new_vector_loop_wa;
-    vector_loop_end->set_work_amount(new_vector_loop_wa);
+    tail_loop_info->increment = tail_size;
+    tail_loop_info->work_amount = tail_size;
+    propagate_updated_subtensor_through_loop(linear_ir, tail_loop_info, std::next(tail_begin), tail_end, tail_size);
     return tail_loop_end;
 }
 
@@ -243,7 +365,7 @@ bool InsertTailLoop::optimize_single_evaluation(const std::shared_ptr<op::LoopEn
     if (loop->get_work_amount() >= 2 * loop->get_increment())
         return false;
 
-    std::vector<int64_t> new_finalization_offsets(loop->get_finalization_offsets());
+    auto new_finalization_offsets = loop->get_finalization_offsets();
     const auto& ptr_increments = loop->get_ptr_increments();
     const auto work_amount_incr = static_cast<int64_t>(loop->get_increment());
     for (size_t i = 0; i < new_finalization_offsets.size(); i++) {
@@ -269,6 +391,7 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
         const auto loop_info = loop_manager->get_loop_info(loop_end->get_id());
         if (loop_info->fst_iter_handler != nullptr) {
             modified |= loop_info->fst_iter_handler(linear_ir, expr_it);
+            continue;
         }
 
         if (loop_end->get_evaluate_once() == true)

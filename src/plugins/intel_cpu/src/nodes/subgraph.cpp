@@ -735,7 +735,7 @@ void Snippet::SnippetJitExecutor::generate(const jit_snippets_compile_args* jcp)
     schedule = snippet_for_generation->generate(backend_passes,
                                                 control_flow_markup_pipeline,
                                                 control_flow_pipeline,
-                                                nullptr,
+                                                std::make_shared<snippets::CPUShapeInferSnippetsFactory>(),
                                                 reinterpret_cast<const void*>(jcp));
 }
 

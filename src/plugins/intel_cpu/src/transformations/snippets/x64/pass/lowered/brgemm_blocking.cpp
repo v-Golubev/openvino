@@ -139,9 +139,10 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
 
                     auto new_loop_range = snippets::lowered::pass::InsertTailLoop::copy_loop(linear_ir, loop_id);
                     const auto new_loop_end = ov::as_type_ptr<snippets::op::LoopEnd>(std::prev(new_loop_range.end())->get()->get_node());
-                    new_loop_end->set_work_amount(work_amount - increment);
                     auto new_loop_info = loop_manager->get_loop_info(new_loop_end->get_id());
-                    new_loop_info->work_amount = work_amount - increment;
+                    const auto new_work_amount = work_amount - increment;
+                    new_loop_end->set_work_amount(new_work_amount);
+                    new_loop_info->work_amount = new_work_amount;
                     for (const auto& expr : new_loop_range) {
                         if (const auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node())) {
                             brgemm->set_beta(1.f);
@@ -154,6 +155,14 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                     loop_end->set_work_amount(increment);
                     loop_end->set_finalization_offsets(std::vector<int64_t>(loop_end->get_finalization_offsets().size(), 0));
                     snippets::lowered::pass::InsertTailLoop::optimize_single_evaluation(loop_end);
+                    const auto begin_it = linear_ir.find(linear_ir.get_expr_by_node(new_loop_end->get_loop_begin()));
+                    const auto end_it = linear_ir.find(linear_ir.get_expr_by_node(new_loop_end));
+                    snippets::lowered::pass::InsertTailLoop::propagate_updated_subtensor_through_loop(
+                        linear_ir,
+                        new_loop_info,
+                        std::next(begin_it),
+                        end_it,
+                        increment);
                     return true;
                 };
                 loop_info->set_first_iter_handler(first_iter_handler);

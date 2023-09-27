@@ -198,7 +198,7 @@ Brgemm::ShapeInfer::ShapeInfer(const std::shared_ptr<Node>& n) {
 }
 
 IShapeInferSnippets::Result Brgemm::ShapeInfer::infer(const std::vector<VectorDimsRef>& input_shapes) {
-    OPENVINO_ASSERT(input_shapes.size() == 2, "BRGEMM expects 2 input shapes for shape inference");
+    // OPENVINO_ASSERT(input_shapes.size() == 2, "BRGEMM expects 2 input shapes for shape inference: ");
 
     // Todo: Ideally we should use the layout stored in PortDescriptors. Can we do it?
     const auto& arg0_shape = snippets::utils::get_planar_vdims(input_shapes[0].get(), m_io_layouts[0]);
@@ -255,7 +255,7 @@ IShapeInferSnippets::Result Brgemm::ShapeInfer::infer(const std::vector<VectorDi
     if (arg1_shape.size() == 1) {
         output_shape.erase(output_shape.begin() + output_shape.size() - 1);
     }
-    output_shape = snippets::utils::get_planar_vdims(output_shape, m_io_layouts[2]);
+    output_shape = snippets::utils::get_planar_vdims(output_shape, m_io_layouts.back());
     return {{output_shape}, snippets::ShapeInferStatus::success};
 }
 
