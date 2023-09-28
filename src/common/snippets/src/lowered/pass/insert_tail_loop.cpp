@@ -333,28 +333,6 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
     }
 }
 
-bool InsertTailLoop::optimize_single_evaluation(const std::shared_ptr<op::LoopEnd>& loop) {
-    // *1* solo vector/tail loop + empty outer loop
-    //      => skip increments (both counter & ptr) : set evaluate_once flag
-    // *2* solo vector/tail loop + non-empty outer loop
-    //      => skip counter increments but perform ptr increments : set evaluate_once,
-    //         and perform pointer increments through finalization offsets
-    // *3* vector loop(s) + one tail loop
-    //      => vector as usual, tail depends on outer loop, see *1* and *2*
-    if (loop->get_work_amount() >= 2 * loop->get_increment())
-        return false;
-
-    auto new_finalization_offsets = loop->get_finalization_offsets();
-    const auto& ptr_increments = loop->get_ptr_increments();
-    const auto work_amount_incr = static_cast<int64_t>(loop->get_increment());
-    for (size_t i = 0; i < new_finalization_offsets.size(); i++) {
-        new_finalization_offsets[i] += ptr_increments[i] * work_amount_incr;
-    }
-    loop->set_finalization_offsets(new_finalization_offsets);
-    loop->set_evaluate_once(true);
-    return true;
-}
-
 bool InsertTailLoop::run(LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::insertTailLoop")
     const auto& loop_manager = linear_ir.get_loop_manager();
@@ -381,18 +359,6 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
         const auto tail_size = work_amount % increment;
         const auto need_tail = tail_size != 0;
         const auto need_vector_loop = work_amount >= increment;
-        // Note, that finalization_offsets could be modified inside optimize_single_evaluation,
-        // so need to save them here to cover (evaluate_once vector with non-zero finalization_offsets + tail)
-        const auto tail_finalization_offsets = need_tail ? loop_end->get_finalization_offsets() : std::vector<int64_t>{};
-        // vector loops are required => Just copy the body, original loop is already a vector one
-        if (need_vector_loop) {
-            // Note that finalization offsets should be applied after the last iteration.
-            // So if there is a tail, then we should apply offsets after it, but not now.
-            if (need_tail)
-                loop_end->set_finalization_offsets(std::vector<int64_t>(tail_finalization_offsets.size(), 0));
-
-            optimize_single_evaluation(loop_end);
-        }
 
         // tail is required => transform the body into a tail representation
         // tail loop is fake loop because for tail we should calculate only
@@ -401,9 +367,14 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
             const auto loop_begin = loop_end->get_loop_begin();
             const auto begin_it = linear_ir.find(linear_ir.get_expr_by_node(loop_begin));
             LinearIR::constExprIt tail_begin, tail_end;
+            const auto& finalization_offsets = loop_end->get_finalization_offsets();
             const auto tail_loop_end = create_tail_loop(linear_ir, begin_it, std::next(expr_it), tail_begin, tail_end,
-                                                        loop_end, need_vector_loop, tail_size, tail_finalization_offsets);
-            optimize_single_evaluation(tail_loop_end);
+                                                        loop_end, need_vector_loop, tail_size, finalization_offsets);
+            if (need_vector_loop) {
+                // Note that finalization offsets should be applied after the last iteration.
+                // So if there is a tail, then we should apply offsets after it.
+                loop_end->set_finalization_offsets(std::vector<int64_t>(finalization_offsets.size(), 0));
+            }
             // Skip new tail loop. Note: tail_end refs to the next expression after LoopEnd of tail
             expr_it = std::prev(tail_end);
         }

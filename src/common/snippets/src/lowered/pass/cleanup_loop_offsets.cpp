@@ -42,10 +42,6 @@ bool CleanupLoopOffsets::run(LinearIR& linear_ir) {
                         per_port_connector_offset[loop_inputs[i]] = i;
 
                     const auto outer_increment = static_cast<int64_t>(outer_loop_end->get_increment());
-                    const auto work_amount = outer_loop_end->get_work_amount();
-                    if (work_amount % outer_increment != 0) {
-                        continue;
-                    }
                     auto outer_ptr_increments = outer_loop_end->get_ptr_increments();
                     const auto& outer_is_incremented = outer_loop_end->get_is_incremented();
                     const auto& outer_loop_inputs = next_expr_it->get()->get_input_port_connectors();

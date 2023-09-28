@@ -154,7 +154,6 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                     loop_info->work_amount = increment;
                     loop_end->set_work_amount(increment);
                     loop_end->set_finalization_offsets(std::vector<int64_t>(loop_end->get_finalization_offsets().size(), 0));
-                    snippets::lowered::pass::InsertTailLoop::optimize_single_evaluation(loop_end);
                     const auto begin_it = linear_ir.find(linear_ir.get_expr_by_node(new_loop_end->get_loop_begin()));
                     const auto end_it = linear_ir.find(linear_ir.get_expr_by_node(new_loop_end));
                     snippets::lowered::pass::InsertTailLoop::propagate_updated_subtensor_through_loop(
