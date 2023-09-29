@@ -47,7 +47,7 @@ ExpressionPtr LinearIR::create_expression(const std::shared_ptr<Node>& n, const 
     return ExpressionFactory::build(n, *this, model);
 }
 
-ExpressionPtr LinearIR::create_expression(const std::shared_ptr<Node>& n, const std::vector<PortConnectorPtr>& inputs) {
+ExpressionPtr LinearIR::create_expression(const std::shared_ptr<Node>& n, const std::vector<PortConnectorPtr>& inputs) const {
     return ExpressionFactory::build(n, inputs, *this);
 }
 
@@ -99,12 +99,8 @@ void LinearIR::serialize(const std::string& xml, const std::string& bin) const {
 }
 
 LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterator begin,
-                                             LinearIR::container::const_iterator end,
-                                             std::function<void(const lowered::ExpressionPtr&, const lowered::ExpressionPtr&)> specific_action) {
-    auto deep_clone_ports = [](std::vector<PortDescriptorPtr>& ports) {
-        for (auto& port : ports) { port = port->clone(); }
-    };
-
+                                              LinearIR::container::const_iterator end,
+                                              std::unordered_map<ExpressionPtr, ExpressionPtr>& expression_map) const {
     NodeVector original_nodes;
     for (auto it = begin; it != end; it++) {
         original_nodes.push_back((*it)->get_node());
@@ -120,29 +116,22 @@ LinearIR::container LinearIR::deep_copy_range(LinearIR::container::const_iterato
     std::unordered_map<PortConnectorPtr, PortConnectorPtr> connectors_map;
     for (auto it = begin; it != end; it++) {
         const auto& orig_expr = *it;
-        const auto copy_expr = std::make_shared<Expression>(*orig_expr);
-        copy_expr->m_source_node = node_map[orig_expr->get_node().get()];
-        if (specific_action != nullptr)
-            specific_action(orig_expr, copy_expr);
-
-        deep_clone_ports(copy_expr->m_input_port_descriptors);
-        deep_clone_ports(copy_expr->m_output_port_descriptors);
-
-        for (auto& out_connvector : copy_expr->m_output_port_connectors) {
-            const auto& copy_source = copy_expr->get_output_port(out_connvector->get_source().get_index());
-            const auto& copy_con = std::make_shared<PortConnector>(copy_source);
-            connectors_map[out_connvector] = copy_con;
-            out_connvector = copy_con;
+        auto new_inputs = orig_expr->get_input_port_connectors();
+        for (auto& input : new_inputs) {
+            const auto it = connectors_map.find(input);
+            if (it != connectors_map.end())
+                input = it->second;
         }
-        for (size_t i = 0; i < copy_expr->get_input_count(); i++) {
-            const auto it = connectors_map.find(copy_expr->get_input_port_connector(i));
-            if (it != connectors_map.end()) {
-                const auto& copy_connector = it->second;
-                const auto& copy_consumer = copy_expr->get_input_port(i);
-                copy_connector->add_consumer(copy_consumer);
-                copy_expr->replace_input(i, copy_connector);
-            }
-        }
+
+        auto copy_expr = create_expression(node_map[orig_expr->get_node().get()], new_inputs);
+        copy_expr->m_loop_ids = orig_expr->get_loop_ids();
+        for (size_t i = 0; i < orig_expr->get_input_count(); ++i)
+            copy_expr->m_input_port_descriptors[i] = orig_expr->get_input_port_descriptor(i)->clone();
+        for (size_t i = 0; i < orig_expr->get_output_count(); ++i)
+            copy_expr->m_output_port_descriptors[i] = orig_expr->get_output_port_descriptor(i)->clone();
+        for (size_t i = 0; i < orig_expr->get_output_count(); ++i)
+            connectors_map[orig_expr->get_output_port_connector(i)] = copy_expr->get_output_port_connector(i);
+        expression_map[orig_expr] = copy_expr;
         result.push_back(copy_expr);
     }
     return result;

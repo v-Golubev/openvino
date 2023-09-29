@@ -21,7 +21,7 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
                                                               LinearIR::container::const_iterator end,
                                                               const size_t new_dim_value) {
     std::map<lowered::PortDescriptorPtr, snippets::VectorDims> original_shapes;
-    std::map<ExpressionPtr, size_t> original_bcast_dims;
+    std::map<std::shared_ptr<ov::snippets::op::BroadcastLoad>, ov::Dimension> original_bcast_dims;
 
     // First step: set tail to the corresponding entry_points' dimensions
     if (new_dim_value != SIZE_MAX) {
@@ -29,10 +29,11 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
             if (port.is_incremented) {
                 const auto& expr = port.expr_port->get_expr();
                 const auto node = expr->get_node();
+                // We have to handle broadcast nodes in a special way since its output shape depends on node parameters
                 if (port.dim_idx == 0 && ov::is_type<snippets::op::BroadcastLoad>(node)) {
-                    auto shape_infer = std::dynamic_pointer_cast<snippets::BroadcastShapeInfer<snippets::op::BroadcastLoad>>(expr->get_shape_inference());
-                    original_bcast_dims[expr] = shape_infer->get_broadcasted_dim();
-                    shape_infer->set_broadcasted_dim(new_dim_value);
+                    const auto bcast_load = ov::as_type_ptr<ov::snippets::op::BroadcastLoad>(node);
+                    original_bcast_dims[bcast_load] = bcast_load->get_bcast_dimension();
+                    bcast_load->set_bcast_dimension(ov::Dimension(new_dim_value));
                 }
 
                 auto desc = port.expr_port->get_descriptor_ptr();
@@ -113,24 +114,22 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
         update_subtensors(expr->get_input_port_descriptors());
         update_subtensors(expr->get_output_port_descriptors());
     }
-    for (const auto& elem : original_shapes) {
+
+    // After subtensor propagation, it's necessary to restore original shape values
+    for (const auto& elem : original_shapes)
         elem.first->set_shape(elem.second);
-    }
-    for (const auto& elem : original_bcast_dims) {
-        auto shape_infer = std::dynamic_pointer_cast<snippets::BroadcastShapeInfer<snippets::op::BroadcastLoad>>(elem.first->get_shape_inference());
-        shape_infer->set_broadcasted_dim(elem.second);
-    }
-    // restore original shapes
-    for (auto expr_it = begin; expr_it != end; expr_it++) {
+    for (const auto& elem : original_bcast_dims)
+        elem.first->set_bcast_dimension(elem.second);
+    for (auto expr_it = begin; expr_it != end; expr_it++)
         (*expr_it)->updateShapes();
-    }
 }
 
 LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const size_t loop_id) {
     const auto& loop_manager = linear_ir.get_loop_manager();
-    const auto original_loop_info = loop_manager->get_loop_info(loop_id);
-    auto new_entry_points = original_loop_info->entry_points;
-    auto new_exit_points = original_loop_info->exit_points;
+    LinearIR::constExprIt loop_begin_pos, loop_end_pos;
+    loop_manager->get_loop_bounds(linear_ir, loop_id, loop_begin_pos, loop_end_pos, true);
+    std::unordered_map<ExpressionPtr, ExpressionPtr> expression_map;
+    const auto loop_copy_range = linear_ir.deep_copy_range(loop_begin_pos, std::next(loop_end_pos), expression_map);
 
     auto update_loop_ports = [](const ExpressionPtr& expr,
                                 const ExpressionPtr& tail_expr,
@@ -145,11 +144,15 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
         }
     };
 
-    auto update_loop_info = [&](const ExpressionPtr& expr, const ExpressionPtr& new_expr) {
-        const auto node = expr->get_node();
+    const auto original_loop_info = loop_manager->get_loop_info(loop_id);
+    auto new_entry_points = original_loop_info->entry_points;
+    auto new_exit_points = original_loop_info->exit_points;
+    for (const auto& elem : expression_map) {
+        const auto& expr = elem.first;
+        const auto& new_expr = elem.second;
         // Loop begin/end ops can't be loop ports
-        if (ov::is_type<op::LoopBase>(node))
-            return;
+        if (ov::is_type<op::LoopBase>(expr->get_node()))
+            continue;
         // Clone loop ports from original loop info to new loop info
         update_loop_ports(expr, new_expr, new_entry_points);
         update_loop_ports(expr, new_expr, new_exit_points);
@@ -162,11 +165,8 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
             loop_manager->update_loops_port(inner_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
         for (size_t i = 0; i < expr->get_output_count(); ++i)
             loop_manager->update_loops_port(inner_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
-    };
+    }
 
-    LinearIR::constExprIt loop_begin_pos, loop_end_pos;
-    loop_manager->get_loop_bounds(linear_ir, loop_id, loop_begin_pos, loop_end_pos, true);
-    const auto loop_copy_range = LinearIR::deep_copy_range(loop_begin_pos, std::next(loop_end_pos), update_loop_info);
     const auto new_loop_begin_pos = loop_copy_range.begin();
     const auto new_loop_end_pos = loop_copy_range.end();
     const auto new_id = loop_manager->mark_loop_with_old_loop_replacement(std::next(new_loop_begin_pos),

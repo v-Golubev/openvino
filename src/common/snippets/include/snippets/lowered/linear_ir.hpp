@@ -39,12 +39,12 @@ public:
     LinearIR() = default;
     LinearIR(const std::shared_ptr<ov::Model>& m, const std::shared_ptr<IShapeInferSnippetsFactory>& factory, Config config = {});
 
-    ExpressionPtr create_expression(const std::shared_ptr<Node>& n, const std::vector<PortConnectorPtr>& inputs);
+    ExpressionPtr create_expression(const std::shared_ptr<Node>& n, const std::vector<PortConnectorPtr>& inputs) const;
 
-    static LinearIR::container deep_copy_range(
+    LinearIR::container deep_copy_range(
         LinearIR::container::const_iterator begin,
         LinearIR::container::const_iterator end,
-        std::function<void(const lowered::ExpressionPtr&, const lowered::ExpressionPtr&)> specific_action = nullptr);
+        std::unordered_map<ExpressionPtr, ExpressionPtr>& expression_map) const;
 
     const container& get_ops() const {return m_expressions; }
     const io_container& get_IO_ops() const {return m_io_expressions; }

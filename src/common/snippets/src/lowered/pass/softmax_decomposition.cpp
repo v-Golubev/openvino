@@ -67,7 +67,7 @@ bool SoftmaxDecomposition::run(LinearIR& linear_ir) {
                                     std::vector<ExpressionPort>{(*max.first)->get_output_port(0)});
 
             const auto broadcast_horizon_max = push_node(
-                    std::make_shared<op::BroadcastMove>(horizon_max.second, horizon_max.second->get_input_partial_shape(0)));
+                    std::make_shared<op::BroadcastMove>(horizon_max.second, *horizon_max.second->get_input_partial_shape(0).rbegin()));
             const auto vector_buffer_sum = push_node(std::make_shared<op::VectorBuffer>());
             // Init value of vector buffer for ReduceSum is zero.
             const auto fill_sum = push_node(std::make_shared<op::Fill>(vector_buffer_sum.second, 0, zero_constant));
@@ -89,7 +89,7 @@ bool SoftmaxDecomposition::run(LinearIR& linear_ir) {
 
             // Divide is expensive operation, so we decompose it into 1 / x * y, where 1 / x is executed outside loop
             const auto pow = push_node(std::make_shared<op::PowerStatic>(horizon_sum.second, -1.f));
-            const auto broadcast_pow = push_node(std::make_shared<op::BroadcastMove>(pow.second, horizon_sum.second->get_input_partial_shape(0)));
+            const auto broadcast_pow = push_node(std::make_shared<op::BroadcastMove>(pow.second, *horizon_sum.second->get_input_partial_shape(0).rbegin()));
 
             // Mul (pseudo-Divide loop)
             const auto mul = push_node(std::make_shared<ov::op::v1::Multiply>(exp.second, broadcast_pow.second));
