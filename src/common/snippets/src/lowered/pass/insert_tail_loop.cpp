@@ -21,7 +21,6 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
                                                               LinearIR::container::const_iterator end,
                                                               const size_t new_dim_value) {
     std::map<lowered::PortDescriptorPtr, snippets::VectorDims> original_shapes;
-    std::map<std::shared_ptr<ov::snippets::op::BroadcastLoad>, ov::Dimension> original_bcast_dims;
 
     // First step: set tail to the corresponding entry_points' dimensions
     if (new_dim_value != SIZE_MAX) {
@@ -29,13 +28,6 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
             if (port.is_incremented) {
                 const auto& expr = port.expr_port->get_expr();
                 const auto node = expr->get_node();
-                // We have to handle broadcast nodes in a special way since its output shape depends on node parameters
-                if (port.dim_idx == 0 && ov::is_type<snippets::op::BroadcastLoad>(node)) {
-                    const auto bcast_load = ov::as_type_ptr<ov::snippets::op::BroadcastLoad>(node);
-                    original_bcast_dims[bcast_load] = bcast_load->get_bcast_dimension();
-                    bcast_load->set_bcast_dimension(ov::Dimension(new_dim_value));
-                }
-
                 auto desc = port.expr_port->get_descriptor_ptr();
                 auto subtensor = desc->get_subtensor();
                 if (port.dim_idx < subtensor.size()) {
@@ -91,6 +83,8 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
         }
     };
 
+    auto shape_inference_end_it = end;
+    const bool loop_by_last_dim = loop_info->get_dim_idx() == 0;
     for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto expr = *expr_it;
         if (ov::is_type<snippets::op::LoopEnd>(expr->get_node()))
@@ -110,17 +104,24 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
             expr_it = inner_end;
             continue;
         }
+        if ((ov::is_type<snippets::op::BroadcastMove>(expr_it->get()->get_node()) ||
+            ov::is_type<snippets::op::BroadcastLoad>(expr_it->get()->get_node())) &&
+            loop_by_last_dim) {
+            // WA: we have to break subtensor propagation if we try to propagate new last dim through Broadcast nodes
+            // which broadcast last dim in original dimension value anyway
+            // This workaround might be avoided if blocked shape are used for tail size propagation
+            shape_inference_end_it = expr_it;
+            break;
+        }
         expr->updateShapes();
         update_subtensors(expr->get_input_port_descriptors());
         update_subtensors(expr->get_output_port_descriptors());
     }
 
-    // After subtensor propagation, it's necessary to restore original shape values
+    // After subtensor propagation, the original shapes are restored
     for (const auto& elem : original_shapes)
         elem.first->set_shape(elem.second);
-    for (const auto& elem : original_bcast_dims)
-        elem.first->set_bcast_dimension(elem.second);
-    for (auto expr_it = begin; expr_it != end; expr_it++)
+    for (auto expr_it = begin; expr_it != shape_inference_end_it; expr_it++)
         (*expr_it)->updateShapes();
 }
 
@@ -157,14 +158,12 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
         update_loop_ports(expr, new_expr, new_entry_points);
         update_loop_ports(expr, new_expr, new_exit_points);
 
-        // Update loop info of all inner loops with new loop ports
-        const auto loop_ids = expr->get_loop_ids();
-        auto cur_id_pos = std::find(loop_ids.begin(), loop_ids.end(), loop_id);
-        std::vector<size_t> inner_loop_ids(loop_ids.begin(), cur_id_pos);
+        // Update loop info of all outer loops with new loop ports
+        const auto outer_loop_ids = LinearIR::LoopManager::get_outer_expr_loops(expr, loop_id);
         for (size_t i = 0; i < expr->get_input_count(); ++i)
-            loop_manager->update_loops_port(inner_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
+            loop_manager->update_loops_port(outer_loop_ids, expr->get_input_port(i), {expr->get_input_port(i), new_expr->get_input_port(i)}, true);
         for (size_t i = 0; i < expr->get_output_count(); ++i)
-            loop_manager->update_loops_port(inner_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
+            loop_manager->update_loops_port(outer_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
     }
 
     const auto new_loop_begin_pos = loop_copy_range.begin();
@@ -350,9 +349,6 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
             modified |= loop_info->fst_iter_handler(linear_ir, expr_it);
             continue;
         }
-
-        if (loop_end->get_evaluate_once() == true)
-            continue;
 
         const auto work_amount = loop_end->get_work_amount();
         const auto increment = loop_end->get_increment();

@@ -21,7 +21,8 @@ bool CleanupLoopOffsets::run(LinearIR& linear_ir) {
     // Note: it doesn't make sense to check the last expression - it must always be Result
     const auto before_last = std::prev(linear_ir.end());
     for (auto expr_it = linear_ir.begin(); expr_it != before_last; expr_it++) {
-        const auto& node = expr_it->get()->get_node();
+        auto loop_expr = *expr_it;
+        const auto& node = loop_expr->get_node();
         if (auto loop_end = as_type_ptr<op::LoopEnd>(node)) {
                 auto next_expr_it = std::next(expr_it);
                 const auto& next_node = next_expr_it->get()->get_node();
@@ -34,10 +35,24 @@ bool CleanupLoopOffsets::run(LinearIR& linear_ir) {
                     is_modified = true;
                 }
                 if (auto outer_loop_end = as_type_ptr<op::LoopEnd>(next_node)) {
+                    // If the current loop is tail loop, we must use port connectors of the main loop
+                    auto loop_begin = loop_end->get_loop_begin();
+                    auto loop_begin_expr_it = linear_ir.find(linear_ir.get_expr_by_node(loop_begin));
+                    auto prev_expr = std::prev(loop_begin_expr_it);
+                    if (ov::is_type<op::LoopEnd>(prev_expr->get()->get_node())) {
+                        const bool is_tail_loop = loop_end->get_increment() == loop_end->get_work_amount();
+                        auto main_reg_info = prev_expr->get()->get_reg_info();
+                        auto tail_reg_info = loop_expr->get_reg_info();
+                        // TODO: Is this a sufficient sign of loop equality?
+                        if (is_tail_loop && main_reg_info == tail_reg_info) {
+                            loop_expr = *prev_expr;
+                        }
+                    }
+
                     auto fin_offsets = loop_end->get_finalization_offsets();
                     const auto& is_incremented = loop_end->get_is_incremented();
                     std::unordered_map<PortConnectorPtr, size_t> per_port_connector_offset;
-                    const auto& loop_inputs = expr_it->get()->get_input_port_connectors();
+                    const auto& loop_inputs = loop_expr->get_input_port_connectors();
                     for (size_t i = 0; i < fin_offsets.size(); i++)
                         per_port_connector_offset[loop_inputs[i]] = i;
 

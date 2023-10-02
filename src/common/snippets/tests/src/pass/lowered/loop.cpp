@@ -153,14 +153,13 @@ TEST(Snippets_TailProcessingTransformation, BlockedTail_CleanUpPtrShifts) {
     // [Inserted Loop number, [ptr_increments, final_offsets]
     std::map<size_t, std::pair<std::vector<int64_t>, std::vector<int64_t>>> reference;
     reference[0] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 16)};  // Vector Inner
-    // TODO: fix behavior with LoopEnd's port connectors
-    reference[1] = { std::vector<int64_t>(3, 0), std::vector<int64_t>{4, 4, -16}};  // Blocked Inner
-    reference[2] = {std::vector<int64_t>{0, 0, 20}, std::vector<int64_t>(3, 0)};   // Vector Blocked
+    reference[1] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 4)};  // Blocked Inner
+    reference[2] = {std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};   // Vector Blocked
     reference[3] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)}; // Vector Outer
 
     reference[4] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 16)};  // Vector Inner
-    reference[5] = { std::vector<int64_t>(3, 0), std::vector<int64_t>{4, 4, -16}};  // Blocked Inner
-    reference[6] = { std::vector<int64_t>{0, 0, 20}, std::vector<int64_t>(3, 0)};  // Tail Blocked
+    reference[5] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 4)};  // Blocked Inner
+    reference[6] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};  // Tail Blocked
     reference[7] = { std::vector<int64_t>(3, 0), std::vector<int64_t>(3, 0)};  // Tail Blocked
 
     validate(linear_ir, reference);
