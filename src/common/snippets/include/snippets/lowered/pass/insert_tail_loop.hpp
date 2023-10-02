@@ -33,14 +33,12 @@ public:
                                                          const size_t new_dim_value = SIZE_MAX);
 
 private:
-    static std::shared_ptr<op::LoopEnd> create_tail_loop(LinearIR& linear_ir,
-                                                         LinearIR::constExprIt vector_begin,
-                                                         LinearIR::constExprIt vector_end,
-                                                         LinearIR::constExprIt& tail_begin,
-                                                         LinearIR::constExprIt& tail_end,
-                                                         const std::shared_ptr<op::LoopEnd>& vector_loop_end,
-                                                         bool need_vector_loop,
-                                                         size_t tail_size, const std::vector<int64_t>& tail_finalization_offsets);
+    static void create_tail_loop(LinearIR& linear_ir,
+                                 LinearIR::constExprIt begin,
+                                 LinearIR::constExprIt end,
+                                 const std::shared_ptr<op::LoopEnd>& loop_end,
+                                 bool need_vector_loop,
+                                 size_t tail_size);
     static void tail_transformations(LinearIR& linear_ir,
                                      LinearIR::constExprIt tail_begin,
                                      LinearIR::constExprIt tail_end,

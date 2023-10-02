@@ -181,49 +181,49 @@ LinearIR::container InsertTailLoop::copy_loop(const LinearIR& linear_ir, const s
     return loop_copy_range;
 }
 
-std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_ir,
-                                                              LinearIR::constExprIt vector_begin,
-                                                              LinearIR::constExprIt vector_end,
-                                                              LinearIR::constExprIt& tail_begin,
-                                                              LinearIR::constExprIt& tail_end,
-                                                              const std::shared_ptr<op::LoopEnd>& vector_loop_end,
-                                                              bool need_vector_loop,
-                                                              size_t tail_size,
-                                                              const std::vector<int64_t>& tail_finalization_offsets) {
+void InsertTailLoop::create_tail_loop(LinearIR& linear_ir,
+                                      LinearIR::constExprIt begin,
+                                      LinearIR::constExprIt end,
+                                      const std::shared_ptr<op::LoopEnd>& loop_end,
+                                      bool need_vector_loop,
+                                      size_t tail_size) {
     // tail is required => transform the body into a tail representation
     // tail loop is fake loop because for tail we should calculate only
     // finalization offsets which are supported by LoopEnd.
     const auto& loop_manager = linear_ir.get_loop_manager();
-    const auto original_loop_id = vector_loop_end->get_id();
-    const auto& original_loop_info = loop_manager->get_loop_info(original_loop_id);
+    const auto original_loop_id = loop_end->get_id();
+    auto original_loop_info = loop_manager->get_loop_info(original_loop_id);
     auto tail_loop_info = original_loop_info;
     if (need_vector_loop) {
         const auto new_loop_range = copy_loop(linear_ir, original_loop_id);
-        const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_range.end())->get()->get_node());
-        OPENVINO_ASSERT(loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
-        loop_end->set_work_amount(tail_size);
-        loop_end->set_increment(tail_size);
-        tail_loop_info = loop_manager->get_loop_info(loop_end->get_id());
-        tail_loop_info->work_amount = tail_size;
-        tail_loop_info->increment = tail_size;
+        const auto new_loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_range.end())->get()->get_node());
+        OPENVINO_ASSERT(new_loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
+        tail_loop_info = original_loop_info;
+        original_loop_info = loop_manager->get_loop_info(new_loop_end->get_id());
 
-        tail_begin = linear_ir.insert(vector_end, new_loop_range.begin(), new_loop_range.end());
-        tail_end = vector_end;
+        // Note: new loop body is inserted before the original loop
+        // So new loop becomes a main vector loop, the original loop becomes tail loop
+        linear_ir.insert(begin, new_loop_range.begin(), new_loop_range.end());
 
         const auto new_vector_loop_wa = original_loop_info->work_amount - tail_size;
         original_loop_info->work_amount = new_vector_loop_wa;
-        vector_loop_end->set_work_amount(new_vector_loop_wa);
-    } else {
-        tail_begin = vector_begin;
-        tail_end = vector_end;
+        new_loop_end->set_work_amount(new_vector_loop_wa);
+        original_loop_info->outer_splited_loop = tail_loop_info->outer_splited_loop;
+        // Note that finalization offsets should be applied after the last iteration.
+        // So if there is a tail, then we should apply offsets after it, but not now.
+        new_loop_end->set_finalization_offsets(std::vector<int64_t>(loop_end->get_finalization_offsets().size(), 0));
     }
+    loop_end->set_increment(tail_size);
+    loop_end->set_work_amount(tail_size);
+    tail_loop_info->increment = tail_size;
+    tail_loop_info->work_amount = tail_size;
 
     // We have to check the loop body for any nested loops that work on the same dimension
     // and rescale their work_amount and increment accordingly
     if (original_loop_info->outer_splited_loop) {
         const auto current_dim_idx = original_loop_info->get_dim_idx();
         OPENVINO_ASSERT(current_dim_idx != SIZE_MAX, "Outer splitted loop unexpectedly iterates by several dimension indices");
-        for (auto it = std::next(tail_begin); it != std::prev(tail_end); ++it) {
+        for (auto it = std::next(begin); it != std::prev(end); ++it) {
             const auto& expr = *it;
             const auto inner_loop_end = ov::as_type_ptr<op::LoopEnd>(expr->get_node());
             if (!inner_loop_end)
@@ -242,24 +242,14 @@ std::shared_ptr<op::LoopEnd> InsertTailLoop::create_tail_loop(LinearIR& linear_i
             inner_loop_end->set_work_amount(tail_size);
             inner_loop_end->set_increment(std::min(inner_tail_increment, tail_size));
             inner_loop_end->set_finalization_offsets(inner_finalization_offsets);
-            const auto inner_loop_begin_it = std::find(tail_begin, it, linear_ir.get_expr_by_node(inner_loop_begin));
-            const auto inner_loop_end_it = std::next(tail_end);
+            const auto inner_loop_begin_it = std::find(begin, it, linear_ir.get_expr_by_node(inner_loop_begin));
+            const auto inner_loop_end_it = std::next(end);
             OPENVINO_ASSERT(inner_loop_begin_it != it, "LoopBegin has not been found!");
             tail_transformations(linear_ir, inner_loop_begin_it, inner_loop_end_it, tail_size);
         }
     }
-
-    tail_transformations(linear_ir, tail_begin, tail_end, tail_size);
-    std::shared_ptr<op::LoopEnd> tail_loop_end = ov::as_type_ptr<op::LoopBegin>((*tail_begin)->get_node())->get_loop_end();
-    tail_loop_end->set_increment(tail_size);
-    // ptr increments were set to the old increment, need to update them in accordance with the new one
-    tail_loop_end->set_work_amount(tail_size);
-    tail_loop_end->set_finalization_offsets(tail_finalization_offsets);
-    tail_loop_end->has_outer_loop = vector_loop_end->has_outer_loop;
-    tail_loop_info->increment = tail_size;
-    tail_loop_info->work_amount = tail_size;
-    propagate_updated_subtensor_through_loop(linear_ir, tail_loop_info, std::next(tail_begin), tail_end, tail_size);
-    return tail_loop_end;
+    tail_transformations(linear_ir, begin, end, tail_size);
+    propagate_updated_subtensor_through_loop(linear_ir, tail_loop_info, std::next(begin), end, tail_size);
 }
 
 void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
@@ -353,26 +343,15 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
         const auto work_amount = loop_end->get_work_amount();
         const auto increment = loop_end->get_increment();
         const auto tail_size = work_amount % increment;
-        const auto need_tail = tail_size != 0;
-        const auto need_vector_loop = work_amount >= increment;
 
         // tail is required => transform the body into a tail representation
         // tail loop is fake loop because for tail we should calculate only
         // finalization offsets which are supported by LoopEnd.
-        if (need_tail) {
+        if (tail_size != 0) {
             const auto loop_begin = loop_end->get_loop_begin();
             const auto begin_it = linear_ir.find(linear_ir.get_expr_by_node(loop_begin));
-            LinearIR::constExprIt tail_begin, tail_end;
-            const auto& finalization_offsets = loop_end->get_finalization_offsets();
-            const auto tail_loop_end = create_tail_loop(linear_ir, begin_it, std::next(expr_it), tail_begin, tail_end,
-                                                        loop_end, need_vector_loop, tail_size, finalization_offsets);
-            if (need_vector_loop) {
-                // Note that finalization offsets should be applied after the last iteration.
-                // So if there is a tail, then we should apply offsets after it.
-                loop_end->set_finalization_offsets(std::vector<int64_t>(finalization_offsets.size(), 0));
-            }
-            // Skip new tail loop. Note: tail_end refs to the next expression after LoopEnd of tail
-            expr_it = std::prev(tail_end);
+            const auto need_vector_loop = work_amount >= increment;
+            create_tail_loop(linear_ir, begin_it, std::next(expr_it), loop_end, need_vector_loop, tail_size);
         }
         modified = true;
     }
