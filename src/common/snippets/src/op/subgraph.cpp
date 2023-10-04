@@ -640,6 +640,11 @@ void Subgraph::data_flow_transformations(const std::vector<snippets::pass::Manag
     manager.register_pass<snippets::pass::ConvertConstantsToScalars>();
 
     manager.register_positioned_passes(backend_passes);
+    try {
+        if (std::getenv("SERIALIZE")) {
+            manager.register_pass<ov::pass::Serialize>("/home/vgolubev/models/blocking/data_flow.xml", "");
+        }
+    } catch (...) {}
     manager.run_passes(body_ptr());
 }
 
@@ -686,6 +691,11 @@ void Subgraph::control_flow_transformations(lowered::LinearIR& linear_ir,
     lowered::pass::PassPipeline final_pipeline;
     final_pipeline.register_pass<lowered::pass::PropagateLayout>();
     final_pipeline.run(linear_ir);
+    try {
+        if (std::getenv("SERIALIZE")) {
+            linear_ir.serialize("/home/vgolubev/models/blocking/control_flow.xml", "");
+        }
+    } catch (...) {}
 
     m_buffer_scratchpad = buffer_allocation_pass->get_scratchpad_size();
 }

@@ -33,6 +33,12 @@ Generator::LoweringResult Generator::generate(lowered::LinearIR& linear_ir, cons
     lowered_pipeline.register_pass<lowered::pass::OptimizeLoopSingleEvaluation>();
     lowered_pipeline.run(linear_ir);
 
+    try {
+        if (std::getenv("SERIALIZE")) {
+            linear_ir.serialize("/home/vgolubev/models/blocking/with_tail_loop.xml", "");
+        }
+    } catch (...) {}
+
     linear_ir.init_emitters(target);
 
     OV_ITT_TASK_NEXT(GENERATE, "::EmitCode")

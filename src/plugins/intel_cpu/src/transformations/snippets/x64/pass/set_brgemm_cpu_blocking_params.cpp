@@ -69,9 +69,43 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             brgemm_copy_b->set_n_block_size(copy_b_block_size_n);
         }
 
-        brgemm->set_m_block_size(get_block_size_m(M));
-        brgemm->set_k_block_size(get_block_size_k(K));
-        brgemm->set_n_block_size(get_block_size_n(N));
+        size_t brgemm_block_size_m = 0;
+        size_t brgemm_block_size_k = 0;
+        size_t brgemm_block_size_n = 0;
+        try {
+            if (auto m = std::getenv("M")) {
+                brgemm_block_size_m = std::atoi(m);
+            }
+            if (auto k = std::getenv("K")) {
+                brgemm_block_size_k = std::atoi(k);
+            }
+            if (auto n = std::getenv("N")) {
+                brgemm_block_size_n = std::atoi(n);
+            }
+            if (brgemm_block_size_m == 0 || brgemm_block_size_k == 0 || brgemm_block_size_n == 0) {
+                throw "incorrect blocking params";
+            }
+            std::cout << "[ INFO ] Blocking: env variables\n";
+        } catch (...) {
+            std::cout << "[ INFO ] Blocking: fallback\n";
+            brgemm_block_size_m = get_block_size_m(M);
+            brgemm_block_size_k = get_block_size_k(K);
+            brgemm_block_size_n = get_block_size_n(N);
+        }
+
+        if (input_1_precision != ov::element::f32) {
+            std::cout << "[ WARNING ] non f32 precision: K & N blocking params are ignored\n";
+            brgemm_block_size_k = K;
+            brgemm_block_size_n = N;
+        }
+
+        std::cout << "\tM = " << brgemm_block_size_m << "\n";
+        std::cout << "\tK = " << brgemm_block_size_k << "\n";
+        std::cout << "\tN = " << brgemm_block_size_n << "\n";
+
+        brgemm->set_m_block_size(brgemm_block_size_m);
+        brgemm->set_k_block_size(brgemm_block_size_k);
+        brgemm->set_n_block_size(brgemm_block_size_n);
 
         return false;
     };

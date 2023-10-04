@@ -168,14 +168,54 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
             }
         };
 
-        apply_k_blocking();
-        apply_n_blocking();
-        apply_m_blocking();
+        try {
+            if (auto order = std::getenv("ORDER")) {
+                if (std::string(order) == "mnk") {
+                    apply_m_blocking();
+                    apply_n_blocking();
+                    apply_k_blocking();
+                    std::cout << "[ INFO ] Blocking order: mnk\n";
+                } else if (std::string(order) == "mkn") {
+                    apply_m_blocking();
+                    apply_k_blocking();
+                    apply_n_blocking();
+                    std::cout << "[ INFO ] Blocking order: mkn\n";
+                } else if (std::string(order) == "nmk") {
+                    apply_n_blocking();
+                    apply_m_blocking();
+                    apply_k_blocking();
+                    std::cout << "[ INFO ] Blocking order: nmk\n";
+                } else if (std::string(order) == "nkm") {
+                    apply_n_blocking();
+                    apply_k_blocking();
+                    apply_m_blocking();
+                    std::cout << "[ INFO ] Blocking order: nkm\n";
+                } else if (std::string(order) == "kmn") {
+                    apply_k_blocking();
+                    apply_m_blocking();
+                    apply_n_blocking();
+                    std::cout << "[ INFO ] Blocking order: kmn\n";
+                } else if (std::string(order) == "knm") {
+                    apply_k_blocking();
+                    apply_n_blocking();
+                    apply_m_blocking();
+                    std::cout << "[ INFO ] Blocking order: knm\n";
+                } else {
+                    throw "wrong blocking order";
+                }
+            } else {
+                throw "wrong blocking order";
+            }
+        } catch(...) {
+            std::cout << "[ WARNING ] Blocking order fallback: knm is chosen\n";
+            apply_k_blocking();
+            apply_n_blocking();
+            apply_m_blocking();
+        }
 
         brgemm_expr->get_input_port_descriptor(0)->set_subtensor(input_0_subtensor);
         brgemm_expr->get_input_port_descriptor(1)->set_subtensor(input_1_subtensor);
         brgemm_expr->get_output_port_descriptor(0)->set_subtensor(output_subtensor);
-
         modified = true;
     }
 

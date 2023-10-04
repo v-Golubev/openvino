@@ -15,6 +15,31 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
+
+namespace {
+void print_loop_info(const LinearIR::LoopManagerPtr& manager, size_t id) {
+    auto print_loop_port_info = [](const LinearIR::LoopManager::LoopPort& port) {
+        std::cout << "\t\texpr: " << port.expr_port->get_expr();
+        std::cout << "\tnode_id: " << port.expr_port->get_expr()->get_node()->get_instance_id();
+        std::cout << "\tport_index: " << port.expr_port->get_index();
+        std::cout << "\tis_incremented: " << port.is_incremented;
+        std::cout << "\tsubtensor: " << ov::PartialShape(port.expr_port->get_descriptor_ptr()->get_subtensor())
+                  << std::endl;
+    };
+
+    const LinearIR::LoopManager::LoopInfoPtr& loop_info = manager->get_loop_info(id);
+    std::cout << "[ INFO ] LoopInfo number " << id << " dim_idx: " << loop_info->get_dim_idx() << std::endl;
+
+    std::cout << "\tEntryPoints\n";
+    for (const auto& entry : loop_info->entry_points)
+        print_loop_port_info(entry);
+
+    std::cout << "\tExitPoints\n";
+    for (const auto& exit : loop_info->exit_points)
+        print_loop_port_info(exit);
+}
+} // namespace
+
 void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& linear_ir,
                                                               const LinearIR::LoopManager::LoopInfoPtr& loop_info,
                                                               LinearIR::container::const_iterator begin,
@@ -328,6 +353,7 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::insertTailLoop")
     const auto& loop_manager = linear_ir.get_loop_manager();
     bool modified = false;
+    const auto& loop_map = loop_manager->get_map();
 
     for (auto expr_it = linear_ir.cbegin(); expr_it != linear_ir.cend(); ++expr_it) {
         const auto& expr = *expr_it;
@@ -354,6 +380,15 @@ bool InsertTailLoop::run(LinearIR& linear_ir) {
             const auto begin_it = linear_ir.find(linear_ir.get_expr_by_node(loop_begin));
             const auto need_vector_loop = work_amount >= increment;
             create_tail_loop(linear_ir, begin_it, std::next(expr_it), loop_end, need_vector_loop, tail_size);
+            try {
+                if (std::getenv("PRINT_LOOP_INFO")) {
+                    std::cout << "\n[ INFO ] Tail insertaion...\n";
+                    for (const auto& elem : loop_map) {
+                        print_loop_info(loop_manager, elem.first);
+                    }
+                    std::cout << "\n";
+                }
+            } catch (...) {}
         }
         modified = true;
     }
