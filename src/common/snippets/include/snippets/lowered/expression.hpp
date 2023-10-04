@@ -56,12 +56,12 @@ public:
     std::vector<size_t> get_loop_ids() const;
     void set_loop_ids(const std::vector<size_t>& loops);
 
-    void replace_input(size_t port, PortConnectorPtr to);
-
 protected:
     // Note: The constructor initialization is private since an expression can be created only by Linear IR.
     //       The method must be used only by Linear IR builder of expressions!
     Expression(const std::shared_ptr<Node>& n, const std::shared_ptr<IShapeInferSnippetsFactory>& factory);
+
+    void replace_input(size_t port, PortConnectorPtr to);
 
     std::shared_ptr<Node> m_source_node{nullptr};
     std::shared_ptr<Emitter> m_emitter{nullptr};

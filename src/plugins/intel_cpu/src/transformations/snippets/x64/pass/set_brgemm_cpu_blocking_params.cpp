@@ -51,14 +51,12 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         };
 
         const auto brgemm_in0_dims = snippets::utils::get_planar_pshape(brgemm->input_value(0)).get_shape();
+        const auto M = *(brgemm_in0_dims.rbegin() + 1);
         const auto K = *brgemm_in0_dims.rbegin();
+        const auto brgemm_in1_dims = snippets::utils::get_planar_pshape(brgemm->input_value(1)).get_shape();
+        const auto N = *brgemm_in1_dims.rbegin();
         if (brgemm->is_with_data_repacking()) {
             const auto brgemm_copy_b = brgemm->get_brgemm_copy();
-            const auto out_dims = snippets::utils::get_planar_pshape(brgemm_copy_b->output(0)).get_shape();
-            // Due to the semantic of BrgemmCopyB operation its N dimension might be not equal
-            // to the corresponding BrgemmCPU dimension.
-            const auto N = *out_dims.rbegin();
-
             const bool isAMXSupported = dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core_amx);
             const auto precision = brgemm_copy_b->get_src_element_type();
             const auto brgemmVNNIFactor = brgemm_copy_b->get_brgemm_vnni_factor();
@@ -70,10 +68,6 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             brgemm_copy_b->set_k_block_size(copy_b_block_size_k);
             brgemm_copy_b->set_n_block_size(copy_b_block_size_n);
         }
-
-        const auto brgemm_in1_dims = snippets::utils::get_planar_pshape(brgemm->input_value(1)).get_shape();
-        const auto N = *brgemm_in1_dims.rbegin();
-        const auto M = *(brgemm_in0_dims.rbegin() + 1);
 
         brgemm->set_m_block_size(get_block_size_m(M));
         brgemm->set_k_block_size(get_block_size_k(K));

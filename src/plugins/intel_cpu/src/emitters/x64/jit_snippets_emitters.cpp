@@ -761,7 +761,13 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     m_brgCtx.N = m_N;
     m_brgCtx.K = m_K;
     m_brgCtx.LDA = leading_dimensions[0];
-    m_brgCtx.LDB = brgemm_node->is_with_data_repacking() ? rnd_up(m_N, brgemm_node->get_brgemm_copy()->get_n_block_size()) : leading_dimensions[1];
+    if (brgemm_node->is_with_data_repacking()) {
+        const auto brgemm_copy = brgemm_node->get_brgemm_copy();
+        const auto allocated_shape = brgemm_copy->get_data_repacking_shape(expr->get_input_port_descriptor(1)->get_shape());
+        m_brgCtx.LDB = *allocated_shape.rbegin();
+    } else {
+        m_brgCtx.LDB = leading_dimensions[1];
+    }
     m_brgCtx.LDC = leading_dimensions[2];
     m_brgCtx.dt_in0 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg0Prc));
     m_brgCtx.dt_in1 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::IEPrecisionToDataType(brg1Prc));

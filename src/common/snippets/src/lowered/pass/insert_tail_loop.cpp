@@ -21,8 +21,7 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
                                                               LinearIR::container::const_iterator end,
                                                               const size_t new_dim_value) {
     std::map<lowered::PortDescriptorPtr, snippets::VectorDims> original_shapes;
-
-    // First step: set tail to the corresponding entry_points' dimensions
+    // First step: set new dim value to the corresponding entry_points' dimensions
     if (new_dim_value != SIZE_MAX) {
         for (const auto& port : loop_info->entry_points) {
             if (port.is_incremented) {
@@ -85,6 +84,8 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
 
     auto shape_inference_end_it = end;
     const bool loop_by_last_dim = loop_info->get_dim_idx() == 0;
+    // Subtensors are updated using shape inference infrastructure:
+    // For inner loops propagation function is called recursively
     for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto expr = *expr_it;
         if (ov::is_type<snippets::op::LoopEnd>(expr->get_node()))
@@ -95,7 +96,7 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
             const auto inner_begin = std::next(expr_it);
             const auto inner_end = linear_ir.find(linear_ir.get_expr_by_node(loop_end));
 
-            // the corresponding shapes of inner loops entry points must be updated using existing subtensor values
+            // The corresponding shapes of inner loops entry points must be updated using existing subtensor values
             if (new_dim_value == SIZE_MAX) {
                 for (const auto& port : loop_info->entry_points)
                     update_only_dim_idx_with_subtensor_value(port);
@@ -118,7 +119,7 @@ void InsertTailLoop::propagate_updated_subtensor_through_loop(const LinearIR& li
         update_subtensors(expr->get_output_port_descriptors());
     }
 
-    // After subtensor propagation, the original shapes are restored
+    // After subtensor propagation, the original shapes must be restored
     for (const auto& elem : original_shapes)
         elem.first->set_shape(elem.second);
     for (auto expr_it = begin; expr_it != shape_inference_end_it; expr_it++)
@@ -289,6 +290,7 @@ void InsertTailLoop::tail_transformations(LinearIR& linear_ir,
                 if (auto fill = insertFill(op->input(i))) {
                     const auto& input = expr->get_input_port_connector(i);
                     const auto consumers = input->get_consumers();
+                    // If there are several consumers, fill expression must be inserted before first of them
                     auto fst_consumer = std::min_element(consumers.cbegin(), consumers.cend(), [&](ExpressionPort lhs, ExpressionPort rhs) {
                         auto lhs_it = linear_ir.find(lhs.get_expr());
                         auto rhs_it = linear_ir.find(rhs.get_expr());

@@ -67,7 +67,7 @@ ov::NodeVector LinearIR::get_ordered_ops(const std::shared_ptr<ov::Model>& m) {
 }
 
 void LinearIR::serialize(const std::string& xml, const std::string& bin) const {
-    auto first_node = std::make_shared<ov::op::v0::Parameter>(element::f32, ov::PartialShape{-1});
+    auto first_node = std::make_shared<ov::op::v0::Parameter>(element::f32, Shape{});
     first_node->set_friendly_name("Start");
     first_node->get_rt_info()["execTimeMcs"] = 0;
     std::shared_ptr<Node> serialization_node = first_node;
