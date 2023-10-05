@@ -7,6 +7,7 @@
 #include "test_utils/cpu_test_utils.hpp"
 #include "ie_plugin_config.hpp"
 #include "ie_system_conf.h"
+#include <shared_test_classes/base/benchmark.hpp>
 
 namespace ov {
 namespace test {
@@ -275,6 +276,30 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_MHAWithExtractedReshape, MHAWithExtracte
                                  ::testing::Values(ov::test::utils::DEVICE_CPU),
                                  ::testing::Values(std::map<std::string, std::string>{})),
                          MHA::getTestCaseName);
+
+namespace perf_tests {
+const std::vector<std::vector<ov::PartialShape>> inputShapes = {
+    {{16, 4, 1024, 80}, {16, 1, 80, 4096}, {16, 1, 4096, 80}}
+};
+
+struct MHABenchmarkTest : ov::test::BenchmarkLayerTest<MHAWOTransposeOnInputs> {};
+
+TEST_P(MHABenchmarkTest, MHA_Benchmark) {
+    run_benchmark("MHA", std::chrono::milliseconds(5000), 1000);
+}
+
+INSTANTIATE_TEST_SUITE_P(benchmark_Snippets_MHA,
+                         MHABenchmarkTest,
+                         ::testing::Combine(::testing::ValuesIn(inputShapes),
+                                            ::testing::ValuesIn(precision_f32(3)),
+                                            ::testing::Values(ov::element::f32),
+                                            ::testing::Values(true),
+                                            ::testing::Values(1),
+                                            ::testing::Values(1),
+                                            ::testing::Values(ov::test::utils::DEVICE_CPU),
+                                            ::testing::Values(CPUTestUtils::cpuEmptyPluginConfig)),
+                         MHABenchmarkTest::getTestCaseName);
+} // namespace perf_tests
 
 } // namespace
 } // namespace snippets
