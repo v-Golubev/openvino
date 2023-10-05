@@ -142,7 +142,8 @@ protected:
             transformed_weights_shape[in_channel_idx] = weights_shape[0] / group_size;
             transformed_weights_shape.insert(transformed_weights_shape.begin() + in_channel_idx + 1, group_size);
         }
-        auto weights = ngraph::builder::makeConstant<uint8_t>(weights_precision, transformed_weights_shape, {}, true);
+
+        auto weights = ngraph::builder::makeConstant<int8_t>(weights_precision, transformed_weights_shape, {}, true, 7);
         weights->set_friendly_name("Compressed_weights");
         auto weights_convert = std::make_shared<ngraph::opset1::Convert>(weights, decompression_precision);
 
@@ -164,7 +165,7 @@ protected:
         if (reshape_on_decompression_constant)
             scaleshift_const_shape.erase(std::remove(scaleshift_const_shape.begin(), scaleshift_const_shape.end(), 1), scaleshift_const_shape.end());
         if (add_subtract) {
-            auto shift_const = ngraph::builder::makeConstant<uint8_t>(weights_precision, scaleshift_const_shape, {}, true);
+            auto shift_const = ngraph::builder::makeConstant<uint8_t>(weights_precision, scaleshift_const_shape, {}, true, 7);
             std::shared_ptr<ov::Node> shift_convert = std::make_shared<ngraph::opset1::Convert>(shift_const, decompression_precision);
             if (reshape_on_decompression_constant) {
                 auto shift_reshape_const = ov::opset10::Constant::create(ov::element::i32, {scaleshift_target_shape.size()}, scaleshift_target_shape);
@@ -268,10 +269,7 @@ protected:
     void checkResults() {
         const auto& test_param = GetParam();
         const auto& weights_precision = std::get<1>(test_param);
-        // TODO: remove this condition when group decompression is supported
-        if (weights_precision == ov::element::nf4 || std::get<0>(test_param).weights_group_size != -1) {
-            return;
-        }
+
         bool weights_found = false;
         for (const auto& n : compiledModel.get_runtime_model()->get_ordered_ops()) {
             if (n->get_friendly_name() == "Compressed_weights") {
@@ -324,25 +322,28 @@ bool shouldUseDecompressionKernelBasic() {
     return shouldUseDecompressionKernelBig();
 }
 
-const std::vector<ov::test::ElementType> weights_precisions = {ov::element::u8, ov::element::nf4};
 const std::vector<ov::test::ElementType> decompression_precisions = {ov::element::f32};
+const std::vector<ov::test::ElementType> weights_precisions = {ov::element::u8,
+                                                               ov::element::u4,
+                                                               ov::element::i4,
+                                                               ov::element::nf4};
 const std::vector<ShapeParams> input_shapes_basic = {
     {{{-1, -1, -1}, {{1, 4, 16}, {10, 16, 16}}}, {16, 32}},
-    {{{}, {{1, 4, 16}}}, {16, 32}, 2ul},
+    {{{}, {{1, 8, 16}}}, {16, 32}, 4ul},
     {{{}, {{1, 4, 16}}}, {1, 16, 32}},
     {{{}, {{10, 40, 496}}}, {1, 496, 240}},
     {{{}, {{1, 4, 48}}}, {48, 256}},
-    {{{}, {{11, 339, 377}}}, {377, 335}},
 };
 const std::vector<ShapeParams> input_shapes_big = {
     {{{-1, -1, -1}, {{10, 40, 480}, {11, 40, 480}}}, {1, 480, 256}},
     {{{-1, 1, 4096}, {{1, 1, 4096}}}, {4096, 3840}, 128ul},
     {{{}, {{1, 4, 32}}}, {32, 256}},
-    {{{}, {{1, 4, 512}}}, {512, 256}},
     {{{}, {{1, 16, 32}}}, {32, 64}},
     {{{}, {{2, 4, 32}}}, {32, 65}},
     {{{}, {{3, 12, 768}}}, {768, 1024}},
     {{{}, {{11, 339, 577}}}, {577, 335}},
+    {{{}, {{1, 11, 154}}}, {154, 77}, 154ul},
+    {{{}, {{1, 1, 256}}}, {256, 128}, 64ul},
 };
 const std::vector<fusingSpecificParams> fusingParamsSet {
     emptyFusingSpec,
