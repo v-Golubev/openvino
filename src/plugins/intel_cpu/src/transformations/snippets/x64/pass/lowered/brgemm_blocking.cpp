@@ -46,6 +46,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
     };
 
     bool modified = false;
+    size_t count = 0;
     for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
         const auto& brgemm_expr = *expr_it;
         const auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(brgemm_expr->get_node());
@@ -168,50 +169,60 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
             }
         };
 
-        try {
-            if (auto order = std::getenv("ORDER")) {
-                if (std::string(order) == "mnk") {
-                    apply_m_blocking();
-                    apply_n_blocking();
-                    apply_k_blocking();
-                    std::cout << "[ INFO ] Blocking order: mnk\n";
-                } else if (std::string(order) == "mkn") {
-                    apply_m_blocking();
-                    apply_k_blocking();
-                    apply_n_blocking();
-                    std::cout << "[ INFO ] Blocking order: mkn\n";
-                } else if (std::string(order) == "nmk") {
-                    apply_n_blocking();
-                    apply_m_blocking();
-                    apply_k_blocking();
-                    std::cout << "[ INFO ] Blocking order: nmk\n";
-                } else if (std::string(order) == "nkm") {
-                    apply_n_blocking();
-                    apply_k_blocking();
-                    apply_m_blocking();
-                    std::cout << "[ INFO ] Blocking order: nkm\n";
-                } else if (std::string(order) == "kmn") {
-                    apply_k_blocking();
-                    apply_m_blocking();
-                    apply_n_blocking();
-                    std::cout << "[ INFO ] Blocking order: kmn\n";
-                } else if (std::string(order) == "knm") {
-                    apply_k_blocking();
-                    apply_n_blocking();
-                    apply_m_blocking();
-                    std::cout << "[ INFO ] Blocking order: knm\n";
+        auto apply_order = [&](const char* env_name) {
+            try {
+                std::cout << "[ INFO ] Blocking " << env_name << ": ";
+                if (auto order = std::getenv(env_name)) {
+                    if (std::string(order) == "mnk") {
+                        apply_m_blocking();
+                        apply_n_blocking();
+                        apply_k_blocking();
+                        std::cout << "mnk\n";
+                    } else if (std::string(order) == "mkn") {
+                        apply_m_blocking();
+                        apply_k_blocking();
+                        apply_n_blocking();
+                        std::cout << "mkn\n";
+                    } else if (std::string(order) == "nmk") {
+                        apply_n_blocking();
+                        apply_m_blocking();
+                        apply_k_blocking();
+                        std::cout << "nmk\n";
+                    } else if (std::string(order) == "nkm") {
+                        apply_n_blocking();
+                        apply_k_blocking();
+                        apply_m_blocking();
+                        std::cout << "nkm\n";
+                    } else if (std::string(order) == "kmn") {
+                        apply_k_blocking();
+                        apply_m_blocking();
+                        apply_n_blocking();
+                        std::cout << "kmn\n";
+                    } else if (std::string(order) == "knm") {
+                        apply_k_blocking();
+                        apply_n_blocking();
+                        apply_m_blocking();
+                        std::cout << "knm\n";
+                    } else {
+                        throw "wrong blocking order";
+                    }
                 } else {
                     throw "wrong blocking order";
                 }
-            } else {
-                throw "wrong blocking order";
+            } catch (...) {
+                std::cout << "fallback - knm is chosen\n";
+                apply_k_blocking();
+                apply_n_blocking();
+                apply_m_blocking();
             }
-        } catch(...) {
-            std::cout << "[ WARNING ] Blocking order fallback: knm is chosen\n";
-            apply_k_blocking();
-            apply_n_blocking();
-            apply_m_blocking();
+        };
+
+        if (count == 0) {
+            apply_order("ORDER0");
+        } else {
+            apply_order("ORDER1");
         }
+        count++;
 
         brgemm_expr->get_input_port_descriptor(0)->set_subtensor(input_0_subtensor);
         brgemm_expr->get_input_port_descriptor(1)->set_subtensor(input_1_subtensor);

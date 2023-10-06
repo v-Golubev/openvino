@@ -72,36 +72,46 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         size_t brgemm_block_size_m = 0;
         size_t brgemm_block_size_k = 0;
         size_t brgemm_block_size_n = 0;
-        try {
-            if (auto m = std::getenv("M")) {
-                brgemm_block_size_m = std::atoi(m);
+        auto apply_blocking_parameters = [&](const std::shared_ptr<ov::Node>& node) {
+            auto name = node->get_friendly_name();
+            char* m; char* k; char* n;
+            if (name.find("MatMul_1") != std::string::npos) {
+                m = "M1"; k = "K1"; n = "N1";
+            } else {
+                m = "M0"; k = "K0"; n = "N0";
             }
-            if (auto k = std::getenv("K")) {
-                brgemm_block_size_k = std::atoi(k);
+            try {
+                if (auto m_block = std::getenv(m)) {
+                    brgemm_block_size_m = std::atoi(m_block);
+                }
+                if (auto k_block = std::getenv(k)) {
+                    brgemm_block_size_k = std::atoi(k_block);
+                }
+                if (auto n_block = std::getenv(n)) {
+                    brgemm_block_size_n = std::atoi(n_block);
+                }
+                if (brgemm_block_size_m == 0 || brgemm_block_size_k == 0 || brgemm_block_size_n == 0) {
+                    throw "incorrect blocking params";
+                }
+                std::cout << "[ INFO ] Blocking: env variables\n";
+            } catch (...) {
+                std::cout << "[ INFO ] Blocking: fallback\n";
+                brgemm_block_size_m = get_block_size_m(M);
+                brgemm_block_size_k = get_block_size_k(K);
+                brgemm_block_size_n = get_block_size_n(N);
             }
-            if (auto n = std::getenv("N")) {
-                brgemm_block_size_n = std::atoi(n);
-            }
-            if (brgemm_block_size_m == 0 || brgemm_block_size_k == 0 || brgemm_block_size_n == 0) {
-                throw "incorrect blocking params";
-            }
-            std::cout << "[ INFO ] Blocking: env variables\n";
-        } catch (...) {
-            std::cout << "[ INFO ] Blocking: fallback\n";
-            brgemm_block_size_m = get_block_size_m(M);
-            brgemm_block_size_k = get_block_size_k(K);
-            brgemm_block_size_n = get_block_size_n(N);
-        }
 
-        if (input_1_precision != ov::element::f32) {
-            std::cout << "[ WARNING ] non f32 precision: K & N blocking params are ignored\n";
-            brgemm_block_size_k = K;
-            brgemm_block_size_n = N;
-        }
+            if (input_1_precision != ov::element::f32) {
+                std::cout << "[ WARNING ] non f32 precision: K & N blocking params are ignored\n";
+                brgemm_block_size_k = K;
+                brgemm_block_size_n = N;
+            }
 
-        std::cout << "\tM = " << brgemm_block_size_m << "\n";
-        std::cout << "\tK = " << brgemm_block_size_k << "\n";
-        std::cout << "\tN = " << brgemm_block_size_n << "\n";
+            std::cout << "\t" << m << " = " << brgemm_block_size_m << "\n";
+            std::cout << "\t" << k << " = " << brgemm_block_size_k << "\n";
+            std::cout << "\t" << n << " = " << brgemm_block_size_n << "\n";
+        };
+        apply_blocking_parameters(brgemm);
 
         brgemm->set_m_block_size(brgemm_block_size_m);
         brgemm->set_k_block_size(brgemm_block_size_k);
