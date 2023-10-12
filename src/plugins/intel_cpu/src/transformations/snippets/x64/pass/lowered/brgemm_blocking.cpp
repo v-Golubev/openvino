@@ -7,6 +7,7 @@
 #include "openvino/pass/pattern/matcher.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "snippets/itt.hpp"
+#include "snippets/utils.hpp"
 #include "snippets/lowered/linear_ir.hpp"
 #include "snippets/lowered/loop_manager.hpp"
 #include "snippets/lowered/pass/insert_tail_loop.hpp"
@@ -31,7 +32,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
     const auto& loop_manager = linear_ir.get_loop_manager();
     auto blocking_loop_exists = [&](const ExpressionPtr& brgemm_expr, const std::shared_ptr<ov::intel_cpu::BrgemmCPU>& brgemm) {
         auto check_port = [&](const LoopPort& p) {
-            return p.expr_port->get_expr() == brgemm_expr && (p.dim_idx == 0 || p.dim_idx == 1);
+            return p.expr_port->get_expr() == brgemm_expr && ov::snippets::utils::one_of(p.dim_idx, 0ul, 1ul);
         };
 
         const auto& loop_ids = brgemm_expr->get_loop_ids();
@@ -74,7 +75,8 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
                 *(input_0_subtensor.rbegin() + 1) = block_size_m;
                 *(output_subtensor.rbegin() + 1) = block_size_m;
 
-                std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), true), LoopPort(brgemm_expr->get_input_port(1), false)};
+                std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), true),
+                                              LoopPort(brgemm_expr->get_input_port(1), false)};
                 if (brgemm->is_with_scratchpad())
                     entries.emplace_back(brgemm_expr->get_input_port(2), false);
                 std::vector<LoopPort> exits{LoopPort(brgemm_expr->get_output_port(0), true)};
@@ -98,8 +100,11 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
 
                 std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), false),
                                               LoopPort(brgemm_expr->get_input_port(1), true)};
-                if (brgemm->is_with_scratchpad())
-                    entries.emplace_back(brgemm_expr->get_input_port(2), true);
+                if (brgemm->is_with_scratchpad()) {
+                    // The second input of Brgemm for AMX case is scratch buffer so it mustn't be incremented
+                    const bool is_incremented = brgemm->is_with_compensations() ? true : false;
+                    entries.emplace_back(brgemm_expr->get_input_port(2), is_incremented);
+                }
                 std::vector<LoopPort> exits{LoopPort(brgemm_expr->get_output_port(0), true)};
                 loop_manager->mark_loop(expr_it, std::next(expr_it), n, block_size_n, 0, entries, exits);
             }
@@ -129,6 +134,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
 
                 auto first_iter_handler = [](LinearIR& linear_ir, LinearIR::constExprIt expr_it) {
                     const auto loop_end = ov::as_type_ptr<snippets::op::LoopEnd>(expr_it->get()->get_node());
+                    OPENVINO_ASSERT(loop_end, "First loop iteraton handler must be called on LoopEnd expression");
                     const auto loop_id = loop_end->get_id();
                     const auto& loop_manager = linear_ir.get_loop_manager();
                     const auto& loop_info = loop_manager->get_loop_info(loop_id);
