@@ -24,12 +24,7 @@ TRANSFORMATIONS_API bool is_keep_original_precision(const std::shared_ptr<const 
 class TRANSFORMATIONS_API KeepOriginalPrecision : public RuntimeAttribute {
 public:
     OPENVINO_RTTI("keep_original_precision", "0");
-
     KeepOriginalPrecision() = default;
-
-    bool is_copyable() const override {
-        return false;
-    }
 };
 
 }  // namespace ov

@@ -195,12 +195,12 @@ void Transformations::PreLpt(const std::vector<ov::element::Type>& defaultPrecis
     CPU_REGISTER_PASS_COMMON(manager, ov::pass::InitNodeInfo);
     CPU_REGISTER_PASS_COMMON(manager, ov::pass::MarkShapeOfSubgraphs);
 
+    // We need to fuse Transpose to MatMul to have a simpler callbacks for the next weights compression related transformations
+    CPU_REGISTER_PASS_COMMON(manager, ov::pass::TransposeMatMul);
     const bool useLpt = !defaultPrecisions.empty();
     if (useLpt) {
         CPU_REGISTER_PASS_COMMON(manager, ov::pass::MarkDequantizationSubgraph, defaultPrecisions);
     } else {
-        // We need to fuse Transpose to MatMul to have a simpler callback for the next transformation
-        CPU_REGISTER_PASS_COMMON(manager, ov::pass::TransposeMatMul);
         const ov::element::TypeVector decompression_precisions{
             ov::element::u8,
             // TODO: Uncomment when group decompression is supported

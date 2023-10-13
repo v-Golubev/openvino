@@ -189,7 +189,9 @@ protected:
             last_node = std::make_shared<ov::opset10::Reshape>(last_node, target_shape_node, false);
         }
         if (decompression_precision != data_precision) {
+            // This convert must be marked as decompressed because it is usually done on model conversion stage
             last_node = std::make_shared<ov::opset10::Convert>(last_node, data_precision);
+            ov::mark_as_decompression(last_node);
         }
         if (transpose_weights) {
             const size_t rank = last_node->get_output_partial_shape(0).size();

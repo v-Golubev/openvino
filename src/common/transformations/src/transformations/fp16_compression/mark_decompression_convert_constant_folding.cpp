@@ -53,20 +53,23 @@ pass::DisableDecompressionConvertConstantFolding::DisableDecompressionConvertCon
 
 pass::KeepConstAndDecompression::KeepConstAndDecompression() {
     MATCHER_SCOPE(KeepDecompressionsInFP32Matcher);
-
-    auto node_pattern = pattern::wrap_type<ov::op::v0::Convert>();
+    auto weights_decompression_path = [](const ov::Output<ov::Node>& output) {
+        const auto node = output.get_node_shared_ptr();
+        return is_decompression(node) && !ov::is_shape_subgraph(node->shared_from_this()) && ov::op::util::is_on_constant_path(output);
+    };
+    auto node_pattern = pattern::wrap_type<ov::op::v0::Convert>(weights_decompression_path);
 
     matcher_pass_callback callback = [=](pattern::Matcher& m) {
         auto node = m.get_match_root();
-        if (!is_decompression(node) || !is_type<ov::op::v0::Convert>(node) ||
-            ov::is_shape_subgraph(node->shared_from_this()) || transformation_callback(node))
+        if (transformation_callback(node))
             return false;
 
         disable_constant_folding(node);
-
-        if (!is_type<ov::op::v0::Constant>(node->input_value(0).get_node_shared_ptr()))
-            return false;
-        enable_keep_original_precision(node->input_value(0).get_node_shared_ptr());
+        // All operations in this decompression subgraph must be marked with KeepOriginalPrecision attribute
+        std::unordered_set<Node*> visited;
+        ov::op::util::visit_shape_path(node->get_input_node_ptr(0), visited, [](Node* node) {
+            ov::enable_keep_original_precision(node->shared_from_this());
+        });
 
         return false;
     };
