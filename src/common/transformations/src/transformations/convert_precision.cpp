@@ -26,7 +26,7 @@
 #include "transformations/fp16_compression/mark_subgraphs_to_keep_in_mixed_precision.hpp"
 #include "transformations/rt_info/decompression.hpp"
 #include "transformations/rt_info/disable_fp16_compression.hpp"
-#include "transformations/rt_info/keep_const_precision.hpp"
+#include "transformations/rt_info/keep_original_precision.hpp"
 #include "transformations/utils/utils.hpp"
 
 using namespace ov;
@@ -195,6 +195,9 @@ bool convert_function_precision(const std::shared_ptr<Model>& f,
     // otherwise we insert Convert operation.
     auto ops = f->get_ordered_ops();
     for (auto& node : ops) {
+        // Layers marked with KeepOriginalPrecision should be kept in their own precision until they reach the plugin
+        if (is_keep_original_precision(node))
+            continue;
         if (skip_precision_sensitive && fp16_compression_is_disabled(node) && has_fp16_compression)
             continue;
         is_changed |= convert_node_input_precision(node, precisions, type_to_extend);
@@ -225,6 +228,9 @@ bool convert_function_precision(const std::shared_ptr<Model>& f,
     register_constants(ops);
 
     for (auto& node : ops) {
+        // Layers marked with KeepOriginalPrecision should be kept in their own precision until they reach the plugin
+        if (is_keep_original_precision(node))
+            continue;
         // skip precision sensitive nodes
         if (skip_precision_sensitive && fp16_compression_is_disabled(node) && has_fp16_compression)
             continue;
@@ -1125,10 +1131,6 @@ std::shared_ptr<Node> convert_low_precisions_int(std::shared_ptr<opset4::Constan
 bool fuse_type_to_constant(const std::shared_ptr<ov::Node>& node,
                            const precisions_map& precisions,
                            const std::vector<Input<Node>>& consumers) {
-    // Consts marked with is_keep_const_precision should be kept in their own precision until they reach the plugin
-    if (is_keep_const_precision(node))
-        return false;
-
     auto from = node->get_element_type();
     auto it = precisions.find(from);
     if (it == precisions.end())

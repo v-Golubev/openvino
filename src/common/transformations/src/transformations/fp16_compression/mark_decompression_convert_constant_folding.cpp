@@ -14,7 +14,8 @@
 #include "transformations/rt_info/disable_constant_folding.hpp"
 #include "transformations/rt_info/disable_fp16_compression.hpp"
 #include "transformations/rt_info/is_shape_subgraph.hpp"
-#include "transformations/rt_info/keep_const_precision.hpp"
+#include "transformations/rt_info/keep_original_precision.hpp"
+#include "transformations/utils/utils.hpp"
 
 using namespace ov;
 
@@ -58,18 +59,14 @@ pass::KeepConstAndDecompression::KeepConstAndDecompression() {
     matcher_pass_callback callback = [=](pattern::Matcher& m) {
         auto node = m.get_match_root();
         if (!is_decompression(node) || !is_type<ov::op::v0::Convert>(node) ||
-            ov::is_shape_subgraph(node->shared_from_this()))
+            ov::is_shape_subgraph(node->shared_from_this()) || transformation_callback(node))
             return false;
-
-        if (transformation_callback(node)) {
-            return false;
-        }
 
         disable_constant_folding(node);
 
         if (!is_type<ov::op::v0::Constant>(node->input_value(0).get_node_shared_ptr()))
             return false;
-        enable_keep_const_precision(node->input_value(0).get_node_shared_ptr());
+        enable_keep_original_precision(node->input_value(0).get_node_shared_ptr());
 
         return false;
     };
@@ -88,7 +85,7 @@ pass::KeepConstantsPrecisionAndAddConverts::KeepConstantsPrecisionAndAddConverts
             return false;
         }
 
-        enable_keep_const_precision(const_node);
+        enable_keep_original_precision(const_node);
 
         const auto& constant_target_inputs = const_node->get_output_target_inputs(0);
         const auto& next_node = constant_target_inputs.begin()->get_node()->shared_from_this();
