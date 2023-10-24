@@ -103,7 +103,20 @@ bool evaluate(const ngraph::HostTensorPtr& arg0,
                                           axis,
                                           batch_dims);
     } else {
-        OPENVINO_THROW("Unexpected type ", arg1->get_element_type().c_type_string(), " for Gather evaluate method.");
+        std::vector<int32_t> tmp(ov::shape_size(arg1->get_shape()));
+        auto ptr = arg1->get_data_ptr<uint32_t>();
+        for (size_t i = 0; i < ov::shape_size(arg1->get_shape()); ++i) {
+            tmp[i] = static_cast<int32_t>(ptr[i]);
+        }
+        ov::reference::gather<T, int32_t>(arg0->get_data_ptr<ET>(),
+                                    tmp.data(),
+                                    out->get_data_ptr<ET>(),
+                                    arg0->get_shape(),
+                                    arg1->get_shape(),
+                                    out->get_shape(),
+                                    axis,
+                                    batch_dims);
+        // OPENVINO_THROW("Unexpected type ", arg1->get_element_type().c_type_string(), " for Gather evaluate method.");
     }
 
     return true;

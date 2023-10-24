@@ -82,7 +82,8 @@ public:
      * @return the current capacity value
      */
      size_t getCapacity() const noexcept {
-         return _capacity;
+        return 0;
+        //  return _capacity;
      }
 
 private:
