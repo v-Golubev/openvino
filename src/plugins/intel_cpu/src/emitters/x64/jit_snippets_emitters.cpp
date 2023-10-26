@@ -783,12 +783,6 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     }
     init_out_scheduling_params(output_desc);
 
-    const auto& output_subtensor = output_desc->get_subtensor();
-    const auto& input_0_subtensor = input_0_desc->get_subtensor();
-    m_K = *input_0_subtensor.rbegin();
-    m_M = *(output_subtensor.rbegin() + 1);
-    m_N = *output_subtensor.rbegin();
-
     auto brg0Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(0));
     auto brg1Prc = InferenceEngine::details::convertPrecision(brgemm_node->get_input_element_type(1));
     bool brgWithAMX = brgemm_node->is_amx();
@@ -801,9 +795,20 @@ BrgemmEmitter::BrgemmEmitter(jit_generator* h, cpu_isa_t isa, const ExpressionPt
     m_with_comp = brgemm_node->is_with_compensations();
     m_with_scratch = brgemm_node->is_with_scratchpad();
 
-    m_brgCtx.M = m_M;
-    m_brgCtx.N = m_N;
-    m_brgCtx.K = m_K;
+    const auto& output_subtensor = output_desc->get_subtensor();
+    const auto& input_0_subtensor = input_0_desc->get_subtensor();
+    const auto& input_1_subtensor = input_1_desc->get_subtensor();
+
+    OPENVINO_ASSERT(*(output_subtensor.rbegin() + 1) == *(input_0_subtensor.rbegin() + 1),
+                    "Brgemm has different M dimension subtensors on input0 and output");
+    OPENVINO_ASSERT(*output_subtensor.rbegin() == *input_1_subtensor.rbegin(),
+                    "Brgemm has different N dimension subtensors on input1 and output");
+    OPENVINO_ASSERT(*input_0_subtensor.rbegin() == *(input_1_subtensor.rbegin() + 1),
+                    "Brgemm has different K dimension subtensors on input0 and input1");
+
+    m_brgCtx.M = *(output_subtensor.rbegin() + 1);
+    m_brgCtx.N = *output_subtensor.rbegin();
+    m_brgCtx.K = *input_0_subtensor.rbegin();
     m_brgCtx.LDA = leading_dimensions[0];
     m_brgCtx.LDB = leading_dimensions[1];
     m_brgCtx.LDC = leading_dimensions[2];
