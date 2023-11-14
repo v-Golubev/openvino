@@ -4,15 +4,15 @@
 
 #include "snippets/generator.hpp"
 
+#include "snippets/itt.hpp"
 #include "snippets/lowered/linear_ir.hpp"
 #include "snippets/lowered/pass/assign_registers.hpp"
 #include "snippets/lowered/pass/cleanup_loop_offsets.hpp"
 #include "snippets/lowered/pass/insert_tail_loop.hpp"
 #include "snippets/lowered/pass/optimize_loop_single_evaluation.hpp"
 
+#include "snippets/lowered/pass/pass_pipeline.hpp"
 #include "snippets/op/kernel.hpp"
-
-#include "snippets/itt.hpp"
 
 namespace ov {
 namespace snippets {
@@ -20,8 +20,7 @@ namespace snippets {
 void Generator::generate(lowered::LinearIR& linear_ir, LoweringResult& result, const void* compile_params) const {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::Generator::generate")
     OV_ITT_TASK_CHAIN(GENERATE, ov::pass::itt::domains::SnippetsTransform, "Snippets::Generator", "::Transformations")
-    if (!target->is_supported())
-        OPENVINO_THROW("unsupported architecture for code generation");
+    OPENVINO_ASSERT(target->is_supported(), "unsupported architecture for code generation");
 
     std::function<opRegType(const std::shared_ptr<Node>& op)> reg_type_mapper = [&](const std::shared_ptr<Node>& op) -> opRegType {
         return get_op_reg_type(op);

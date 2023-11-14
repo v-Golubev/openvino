@@ -35,32 +35,12 @@ public:
         return get_type_info_static();
     }
 
-    const char* get_type_name() const {
+    std::string get_name() const {
         return get_type_info().name;
     }
 
     virtual bool run(lowered::LinearIR& linear_ir) = 0;
 };
-
-class PassPipeline {
-public:
-    PassPipeline() = default;
-
-    void register_pass(const std::shared_ptr<Pass>& pass);
-
-    template<typename T, class... Args>
-    void register_pass(Args&&... args) {
-        static_assert(std::is_base_of<Pass, T>::value, "Pass not derived from lowered::Pass");
-        auto pass = std::make_shared<T>(std::forward<Args>(args)...);
-        register_pass(pass);
-    }
-
-    void run(lowered::LinearIR& linear_ir) const;
-
-private:
-    std::vector<std::shared_ptr<Pass>> m_passes;
-};
-
 } // namespace pass
 } // namespace lowered
 } // namespace snippets

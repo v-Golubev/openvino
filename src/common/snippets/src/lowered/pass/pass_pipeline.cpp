@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "snippets/lowered/pass/pass.hpp"
+#include "snippets/lowered/pass/pass_pipeline.hpp"
 
 
 namespace ov {
@@ -18,6 +18,16 @@ void PassPipeline::run(LinearIR& linear_ir) const {
     for (const auto& pass : m_passes) {
         pass->run(linear_ir);
     }
+}
+
+void PassPipeline::register_positioned_passes(const std::vector<PositionedPass>& pos_passes) {
+    for (const auto& pp : pos_passes)
+        insert_pass_instance(pp.position, pp.pass);
+}
+
+void PassPipeline::insert_pass_instance(const ov::snippets::pass::PassPosition& position,
+                                        const std::shared_ptr<Pass>& pass) {
+    m_passes.insert(position.get_insert_position(m_passes), pass);
 }
 
 } // namespace pass
