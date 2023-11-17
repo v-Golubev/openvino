@@ -192,20 +192,20 @@ void SyncInferRequest::infer() {
 
     graph->Infer(this);
 
-    if (m_memory_states.size() != 0) {
-        pull_states();
-    }
+    // if (m_memory_states.size() != 0) {
+    //     pull_states();
+    // }
 
-    throw_if_canceled();
+    // throw_if_canceled();
 
-    // update output control blocks, if any, in order to refresh internal buffers
-    if (Graph::Status::ReadyDynamic == graph->getStatus()) {
-        for (auto&& item : outputControlBlocks) {
-            item.second.update();
-        }
-    }
+    // // update output control blocks, if any, in order to refresh internal buffers
+    // if (Graph::Status::ReadyDynamic == graph->getStatus()) {
+    //     for (auto&& item : outputControlBlocks) {
+    //         item.second.update();
+    //     }
+    // }
 
-    graph->PullOutputData(m_outputs);
+    // graph->PullOutputData(m_outputs);
 }
 
 std::vector<ov::ProfilingInfo> SyncInferRequest::get_profiling_info() const {

@@ -1260,6 +1260,7 @@ void Graph::InferDynamic(SyncInferRequest* request) {
     } else {
         updateNodes.reset(new UpdateNodesSeq(executableGraphNodes));
     }
+    updateNodes.reset(new UpdateNodesSeq(executableGraphNodes));
     size_t inferCounter = 0;
 
     for (auto stopIndx : syncIndsWorkSet) {
@@ -1269,9 +1270,9 @@ void Graph::InferDynamic(SyncInferRequest* request) {
             VERBOSE(node, getConfig().debugCaps.verbose);
             PERF(node, getConfig().collectPerfCounters);
 
-            if (request)
-                request->throw_if_canceled();
-            ExecuteNode(node, stream);
+            // if (request)
+            //     request->throw_if_canceled();
+            // ExecuteNode(node, stream);
         }
     }
 }
