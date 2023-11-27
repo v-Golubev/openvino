@@ -34,7 +34,6 @@
 #include "snippets/lowered/pass/load_movebroadcast_to_broadcastload.hpp"
 #include "snippets/lowered/pass/allocate_buffers.hpp"
 #include "snippets/lowered/pass/propagate_layout.hpp"
-#include "snippets/lowered/pass/cleanup_loop_offsets.hpp"
 #include "snippets/lowered/pass/softmax_decomposition.hpp"
 #include "snippets/lowered/pass/move_scalar_to_consumer.hpp"
 #include "snippets/lowered/pass/move_result_out_of_loop.hpp"
@@ -428,12 +427,19 @@ void Subgraph::control_flow_transformations(lowered::LinearIR& linear_ir,
     const size_t vector_size = get_generator()->get_target_machine()->get_lanes();
     const int32_t buffer_allocation_rank = static_cast<int32_t>(linear_ir.get_config().m_loop_depth);
 
+    // We have to call MarkLoops before backend markup passes
+    // because these passes can update subtensor but not insert Loop (e.g. when loop increment is equal to the corresponding dim)
+    // If MarkLoops is called on such LIR, it inserts Eltwise-like loops which might not reflect backend expectations
+    // It should be fixed by ticket 113666
+    lowered::pass::PassPipeline markup_pipeline;
+    markup_pipeline.register_pass<lowered::pass::MarkLoops>(vector_size);
+    markup_pipeline.run(linear_ir);
+
     // Ticket: 113666
     // TODO: Make pass pipeline with backend passes more flexible
     backend_passes_pre_common.run(linear_ir);
 
     lowered::pass::PassPipeline common_pipeline;
-    common_pipeline.register_pass<lowered::pass::MarkLoops>(vector_size);
     common_pipeline.register_pass<lowered::pass::SoftmaxDecomposition>(vector_size);
     common_pipeline.register_pass<lowered::pass::FuseLoops>();
     common_pipeline.register_pass<lowered::pass::SplitLoops>();
@@ -462,7 +468,6 @@ void Subgraph::control_flow_transformations(lowered::LinearIR& linear_ir,
 
     lowered::pass::PassPipeline final_pipeline;
     final_pipeline.register_pass<lowered::pass::PropagateLayout>();
-    final_pipeline.register_pass<lowered::pass::CleanupLoopOffsets>();
     final_pipeline.run(linear_ir);
 
     lowering_result.buffer_scratchpad_size = buffer_allocation_pass->get_scratchpad_size();

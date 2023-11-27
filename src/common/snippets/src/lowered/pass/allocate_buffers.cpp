@@ -20,20 +20,18 @@ void AllocateBuffers::propagate_offset(const LinearIR& linear_ir, const Expressi
     buffer->set_offset(static_cast<int64_t>(offset));
 
     // Propagate to up: in Store. Buffer can have only one Store
-    {
-        if (buffer->is_intermediate_memory()) {
-            OPENVINO_ASSERT(buffer_expr->get_input_port_connectors().size() == 1, "Buffer with intermediate memory must have one parent");
-            const auto& parent_output = buffer_expr->get_input_port_connector(0)->get_source();
-            const auto& parent_expr = parent_output.get_expr();
-            const auto port = parent_output.get_index();
-            const auto& parent_node = parent_expr->get_node();
-            auto memory_access = ov::as_type_ptr<ov::snippets::op::MemoryAccess>(parent_node);
-            if (memory_access && memory_access->is_memory_access_output_port(port)) {
-                memory_access->set_output_offset(offset, port);
-            } else {
-                OPENVINO_THROW(
-                        "Buffer::set_offset() was called when Buffer didn't have the corresponding MemoryAccess op for offset propagation");
-            }
+    if (ov::is_type<op::IntermediateMemoryBuffer>(buffer)) {
+        OPENVINO_ASSERT(buffer_expr->get_input_port_connectors().size() == 1, "Buffer with intermediate memory must have one parent");
+        const auto& parent_output = buffer_expr->get_input_port_connector(0)->get_source();
+        const auto& parent_expr = parent_output.get_expr();
+        const auto port = parent_output.get_index();
+        const auto& parent_node = parent_expr->get_node();
+        auto memory_access = ov::as_type_ptr<ov::snippets::op::MemoryAccess>(parent_node);
+        if (memory_access && memory_access->is_memory_access_output_port(port)) {
+            memory_access->set_output_offset(offset, port);
+        } else {
+            OPENVINO_THROW(
+                    "Buffer::set_offset() was called when Buffer didn't have the corresponding MemoryAccess op for offset propagation");
         }
     }
     // Propagate to down: in Load. Buffer can have several Load
@@ -89,7 +87,7 @@ bool AllocateBuffers::run(LinearIR& linear_ir) {
                 continue;
             }
 
-            if (buffer->is_intermediate_memory()) {
+            if (ov::is_type<op::IntermediateMemoryBuffer>(buffer)) {
                 const auto& parent_expr = expr->get_input_port_connector(0)->get_source().get_expr();
                 const auto& parent_node = parent_expr->get_node();
                 // Full MemoryAccess ops need new memory. Previous logic is to check for parent isn't Loop
@@ -142,6 +140,7 @@ bool AllocateBuffers::run(LinearIR& linear_ir) {
                 allocated_buffers.insert(expr);
                 prev_data_size = current_data_size;
             } else {
+                OPENVINO_ASSERT(ov::is_type<op::NewMemoryBuffer>(buffer), "NewMemoryBuffer is expected");
                 if (!new_memory_buffer_allocated) {
                     allocate(buffer, *expr_it, buffer_size);
                     new_memory_buffer_allocated = true;
