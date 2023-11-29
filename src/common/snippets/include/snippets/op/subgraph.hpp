@@ -104,13 +104,13 @@ public:
                                 const std::vector<ov::element::Type>& input_precisions = {},
                                 const std::vector<ov::element::Type>& output_precisions = {},
                                 const std::vector<pass::Manager::PositionedPass>& data_flow_passes = {},
-                                const lowered::pass::PassPipeline& control_flow_passes_pre_common = {},
-                                const lowered::pass::PassPipeline& control_flow_passes_post_common = {},
+                                const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
+                                const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
                                 const std::shared_ptr<IShapeInferSnippetsFactory>& factory = nullptr,
                                 const void* compile_params = nullptr);
 
-    snippets::Schedule generate_from_linear_ir(const lowered::pass::PassPipeline& backend_passes_pre_common = {},
-                                               const lowered::pass::PassPipeline& backend_passes_post_common = {},
+    snippets::Schedule generate_from_linear_ir(const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
+                                               const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
                                                const void* compile_params = nullptr) const;
     IShapeInferSnippets::Result shape_infer(const std::vector<VectorDimsRef>& input_shapes);
 
@@ -149,8 +149,8 @@ public:
 private:
     void control_flow_transformations(lowered::LinearIR& linear_ir,
                                       LoweringResult& lowering_result,
-                                      const lowered::pass::PassPipeline& backend_passes_pre_common,
-                                      const lowered::pass::PassPipeline& backend_passes_post_common) const;
+                                      const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
+                                      const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {}) const;
     void init_config();
     // Count of Subgraph virtual ports:
     //  - Potential non-scalar Constants that will be created after some transformations (At the moment it's relevant only for FakeQuantize decomposition)
