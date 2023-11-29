@@ -45,6 +45,15 @@ namespace ov {
     } \
 }
 
+#define CREATE_UNDEFINED_EMITTER(node_type) { \
+    [this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
+        return nullptr; \
+    }, \
+    [](const std::shared_ptr<ov::Node>& n) -> std::set<std::vector<element::Type>> { \
+        return node_type::get_supported_precisions(n); \
+    } \
+}
+
 class jit_snippet : public dnnl::impl::cpu::x64::jit_generator {
 public:
     DECLARE_CPU_JIT_AUX_FUNCTIONS(jit_snippet)
@@ -158,6 +167,9 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[snippets::op::LoopEnd::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(LoopEndEmitter);
     jitters[intel_cpu::BrgemmCPU::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(BrgemmEmitter);
     jitters[intel_cpu::BrgemmCopyB::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(BrgemmCopyBEmitter);
+
+    jitters[snippets::op::ReduceMax::get_type_info_static()] = CREATE_UNDEFINED_EMITTER(snippets::op::ReduceMax);
+    jitters[snippets::op::ReduceSum::get_type_info_static()] = CREATE_UNDEFINED_EMITTER(snippets::op::ReduceSum);
 }
 
 size_t intel_cpu::CPUTargetMachine::get_lanes() const {
