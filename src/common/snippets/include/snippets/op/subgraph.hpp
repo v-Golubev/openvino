@@ -100,18 +100,18 @@ public:
     bool is_quantized() const { return config.m_is_quantized; }
     bool has_domain_sensitive_ops() const { return config.m_has_domain_sensitive_ops; }
 
-    snippets::Schedule generate(const BlockedShapeVector& blocked_input_shapes = {},
-                                const std::vector<ov::element::Type>& input_precisions = {},
-                                const std::vector<ov::element::Type>& output_precisions = {},
-                                const std::vector<pass::Manager::PositionedPass>& data_flow_passes = {},
-                                const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
-                                const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
-                                const std::shared_ptr<IShapeInferSnippetsFactory>& factory = nullptr,
-                                const void* compile_params = nullptr);
+    Schedule generate(const BlockedShapeVector& blocked_input_shapes = {},
+                      const std::vector<ov::element::Type>& input_precisions = {},
+                      const std::vector<ov::element::Type>& output_precisions = {},
+                      const std::vector<pass::Manager::PositionedPass>& data_flow_passes = {},
+                      const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = std::make_shared<lowered::pass::PassConfig>(),
+                      const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
+                      const std::shared_ptr<IShapeInferSnippetsFactory>& factory = nullptr,
+                      const void* compile_params = nullptr);
 
-    snippets::Schedule generate_from_linear_ir(const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
-                                               const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
-                                               const void* compile_params = nullptr) const;
+    Schedule generate_from_linear_ir(const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = std::make_shared<lowered::pass::PassConfig>(),
+                                     const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {},
+                                     const void* compile_params = nullptr) const;
     IShapeInferSnippets::Result shape_infer(const std::vector<VectorDimsRef>& input_shapes);
 
     // plugin sets generator for a snippet to some specific generator.
@@ -149,7 +149,7 @@ public:
 private:
     void control_flow_transformations(lowered::LinearIR& linear_ir,
                                       LoweringResult& lowering_result,
-                                      const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = nullptr,
+                                      const std::shared_ptr<lowered::pass::PassConfig>& lowered_pass_config = std::make_shared<lowered::pass::PassConfig>(),
                                       const std::vector<lowered::pass::PassPipeline::PositionedPass>& lowered_backend_passes = {}) const;
     void init_config();
     // Count of Subgraph virtual ports:
