@@ -49,7 +49,7 @@ namespace ov {
 }
 
 #define CREATE_UNDEFINED_EMITTER(node_type) { \
-    [this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
+    [](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
         return nullptr; \
     }, \
     [](const std::shared_ptr<ov::Node>& n) -> std::set<std::vector<element::Type>> { \
