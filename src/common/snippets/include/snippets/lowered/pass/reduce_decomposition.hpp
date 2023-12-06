@@ -13,7 +13,8 @@ namespace pass {
 
 /**
  * @interface ReduceDecomposition
- * @brief Decomposes supported Reduce operations to a range of low-level operations on linear IR
+ * @brief Decomposes snippets::Reduce operations to a range of low-level operations on linear IR
+ * @attention Only Reduce by last dimension is supported
  * @ingroup snippets
  */
 class ReduceDecomposition : public Pass {

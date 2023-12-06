@@ -49,7 +49,7 @@ LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount,
       m_entry_points(entries),
       m_exit_points(exits),
       m_outer_splited_loop(outer_splited_loop) {
-    initialize_handlers();
+    handlers.resize(3);
 }
 
 LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount,
@@ -66,7 +66,7 @@ LinearIR::LoopManager::LoopInfo::LoopInfo(size_t work_amount,
         m_entry_points.emplace_back(port);
     for (const auto& port : exits)
         m_exit_points.emplace_back(port);
-    initialize_handlers();
+    handlers.resize(3);
 }
 
 std::shared_ptr<LoopInfo> LoopInfo::clone_with_new_expr(const ExressionMap& expr_map) const {
@@ -148,10 +148,6 @@ void LoopInfo::set_exit_points(std::vector<LoopPort> exit_points) {
 
 void LoopInfo::set_outer_splited_loop(bool outer_splited_loop) {
     m_outer_splited_loop = outer_splited_loop;
-}
-
-void LoopInfo::initialize_handlers() {
-    handlers.resize(3);
 }
 
 bool operator==(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopManager::LoopPort& rhs) {

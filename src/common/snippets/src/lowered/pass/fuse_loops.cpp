@@ -60,7 +60,7 @@ bool FuseLoops::can_be_fused(const LoopInfoPtr& loop_current, const LoopInfoPtr&
 
     // WA: we can't fuse 2 loops if one of them has first iteration handler but second hasn't,
     // because in this case Main/Tail body handlers of the loop wo first iter handler must be reset with new parameters
-    // (e.g. tail size). This logic is not implemented for now.
+    // (e.g. tail size). This logic is not implemented for now, so fusion for such loops is skipped.
     const bool first_iter_handlers_match = loop_current->handlers[LoopManager::LoopInfo::FIRST_ITER].empty() ==
                                            loop_target->handlers[LoopManager::LoopInfo::FIRST_ITER].empty();
     const bool equal_parameters = current_work_amount == target_work_amount && current_increment == target_increment;

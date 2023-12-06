@@ -13,7 +13,8 @@ namespace op {
 
 /**
  * @interface ReduceBase
- * @brief
+ * @brief Base class for reduce operations.
+ * @arg m_axis reduce axis.
  * @ingroup snippets
  */
 class ReduceBase : public ov::op::Op {
@@ -31,11 +32,6 @@ protected:
     size_t m_axis;
 };
 
-/**
- * @interface ReduceSum
- * @brief
- * @ingroup snippets
- */
 class ReduceSum : public ReduceBase {
 public:
     OPENVINO_OP("ReduceSum", "SnippetsOpset", ReduceBase);
@@ -47,11 +43,6 @@ public:
     }
 };
 
-/**
- * @interface ReduceMax
- * @brief
- * @ingroup snippets
- */
 class ReduceMax : public ReduceBase {
 public:
     OPENVINO_OP("ReduceMax", "SnippetsOpset", ReduceBase);

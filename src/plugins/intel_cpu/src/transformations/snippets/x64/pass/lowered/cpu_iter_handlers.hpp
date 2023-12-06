@@ -12,7 +12,7 @@ namespace pass {
 class SetBrgemmBeta : public snippets::lowered::pass::SubgraphPass {
 public:
     SetBrgemmBeta(float beta);
-    OPENVINO_RTTI("SetBrgemmBeta", "Pass")
+    OPENVINO_RTTI("SetBrgemmBeta", "SubgraphPass")
     bool run(const snippets::lowered::LinearIR& linear_ir,
              snippets::lowered::LinearIR::constExprIt begin,
              snippets::lowered::LinearIR::constExprIt end) override;

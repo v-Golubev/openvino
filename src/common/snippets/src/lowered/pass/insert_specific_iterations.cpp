@@ -73,10 +73,10 @@ bool InsertSpecificIterations::run(LinearIR& linear_ir) {
         if (!loop_end)
             continue;
 
-        std::vector<lowered::pass::SubgraphPassPipeline> pipelines_to_run;
-        for (const auto& handlers : loop_manager->get_loop_info(loop_end->get_id())->handlers) {
-            if (!handlers.empty())
-                pipelines_to_run.emplace_back(handlers);
+        std::vector<std::reference_wrapper<const lowered::pass::SubgraphPassPipeline>> pipelines_to_run;
+        for (const auto& pipeline : loop_manager->get_loop_info(loop_end->get_id())->handlers) {
+            if (!pipeline.empty())
+                pipelines_to_run.emplace_back(pipeline);
         }
         if (pipelines_to_run.empty())
             continue;
@@ -90,10 +90,10 @@ bool InsertSpecificIterations::run(LinearIR& linear_ir) {
         };
 
         for (size_t i = 0; i < pipelines_to_run.size() - 1; ++i) {
-            copy_and_run_specific_handlers(pipelines_to_run[i]);
+            copy_and_run_specific_handlers(pipelines_to_run[i].get());
         }
         // Last pipeline is run on original body to avoid unnecesarry copy
-        pipelines_to_run.back().run(linear_ir, main_body_begin_it, main_body_end_it);
+        pipelines_to_run.back().get().run(linear_ir, main_body_begin_it, main_body_end_it);
         modified = true;
     }
     return modified;

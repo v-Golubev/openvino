@@ -63,8 +63,8 @@ bool ReduceDecomposition::run(LinearIR& linear_ir) {
     bool modified = false;
     for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
         const auto& reduce_expr = *expr_it;
-        const auto& reduce = reduce_expr->get_node();
-        if (!ov::is_type<ov::snippets::op::ReduceBase>(reduce))
+        const auto& reduce = ov::as_type_ptr<ov::snippets::op::ReduceBase>(reduce_expr->get_node());
+        if (!reduce)
             continue;
 
         const auto& reduce_type_info = reduce->get_type_info();
@@ -72,6 +72,7 @@ bool ReduceDecomposition::run(LinearIR& linear_ir) {
         const auto work_amount = *(input_shape.rbegin());
         const auto increment = m_vector_size <= work_amount ? m_vector_size : work_amount;
         const bool is_dynamic = reduce->is_dynamic();
+        OPENVINO_ASSERT(reduce->get_axis() == input_shape.size() - 1, "ReduceDecomposition supports only Reduce by last dimension.");
 
         // We need an iterator to the inserted element
         auto push_node = [&](const std::shared_ptr<Node>& n) {

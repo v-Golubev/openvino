@@ -74,8 +74,6 @@ public:
         std::vector<lowered::pass::SubgraphPassPipeline> handlers;
 
     private:
-        void initialize_handlers();
-
         size_t m_work_amount = 0;
         size_t m_increment = 0;
         // The order of entry and exit expressions is important:

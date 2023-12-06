@@ -17,7 +17,7 @@ namespace pass {
 class SetSingleIterationWithWorkAmount : public pass::SubgraphPass {
 public:
     SetSingleIterationWithWorkAmount(size_t work_amount);
-    OPENVINO_RTTI("SetSingleIterationWithWorkAmount", "Pass")
+    OPENVINO_RTTI("SetSingleIterationWithWorkAmount", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
@@ -27,7 +27,7 @@ private:
 class UpdateMemoryAccessOps : public pass::SubgraphPass {
 public:
     UpdateMemoryAccessOps(size_t count);
-    OPENVINO_RTTI("UpdateMemoryAccessOps", "Pass")
+    OPENVINO_RTTI("UpdateMemoryAccessOps", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
@@ -37,7 +37,7 @@ private:
 class ReduceWorkAmount : public pass::SubgraphPass {
 public:
     ReduceWorkAmount(size_t reduce_value);
-    OPENVINO_RTTI("ReduceWorkAmount", "Pass")
+    OPENVINO_RTTI("ReduceWorkAmount", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
@@ -46,14 +46,14 @@ private:
 
 class ZeroFinalizationOffsets : public pass::SubgraphPass {
 public:
-    OPENVINO_RTTI("ZeroFinalizationOffsets", "Pass")
+    OPENVINO_RTTI("ZeroFinalizationOffsets", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 };
 
 class SetFillOffset : public pass::SubgraphPass {
 public:
     SetFillOffset(size_t offset);
-    OPENVINO_RTTI("SetFillOffset", "Pass")
+    OPENVINO_RTTI("SetFillOffset", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
@@ -63,7 +63,7 @@ private:
 class TransformInnerSplitLoop : public pass::SubgraphPass {
 public:
     TransformInnerSplitLoop(size_t tail_size);
-    OPENVINO_RTTI("TransformInnerSplitLoop", "Pass")
+    OPENVINO_RTTI("TransformInnerSplitLoop", "SubgraphPass")
     bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
