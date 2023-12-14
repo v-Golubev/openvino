@@ -80,6 +80,63 @@ private:
     std::vector<std::shared_ptr<Pass>> m_passes;
 };
 
+class SubgraphPass {
+public:
+    SubgraphPass() = default;
+    virtual ~SubgraphPass() = default;
+    // Note that get_type_info_static and get_type_info are needed to mimic OPENVINO_RTTI interface,
+    // so the standard OPENVINO_RTTI(...) macros could be used in derived classes.
+    _OPENVINO_HIDDEN_METHOD static const ::ov::DiscreteTypeInfo& get_type_info_static() {
+        static ::ov::DiscreteTypeInfo type_info_static {"SubgraphPass"};
+        type_info_static.hash();
+        return type_info_static;
+    }
+
+    virtual const DiscreteTypeInfo& get_type_info() const {
+        return get_type_info_static();
+    }
+
+    const char* get_type_name() const {
+        return get_type_info().name;
+    }
+
+    virtual bool run(const lowered::LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) = 0;
+};
+
+class SubgraphPassPipeline {
+public:
+    using PositionedSubgraphPassLowered = snippets::pass::PositionedPass<lowered::pass::SubgraphPass>;
+
+    SubgraphPassPipeline();
+    SubgraphPassPipeline(const std::shared_ptr<PassConfig>& pass_config);
+
+    void run(const lowered::LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) const;
+    const std::vector<std::shared_ptr<SubgraphPass>>& get_passes() const { return m_passes; }
+    bool empty() const { return m_passes.empty(); }
+
+    void register_pass(const snippets::pass::PassPosition& position, const std::shared_ptr<SubgraphPass>& pass);
+    void register_pass(const std::shared_ptr<SubgraphPass>& pass);
+
+    template<typename T, class... Args>
+    void register_pass(Args&&... args) {
+        static_assert(std::is_base_of<SubgraphPass, T>::value, "Pass not derived from lowered::SubgraphPass");
+        auto pass = std::make_shared<T>(std::forward<Args>(args)...);
+        register_pass(pass);
+    }
+    template<typename T, class Pos, class... Args, std::enable_if<std::is_same<snippets::pass::PassPosition, Pos>::value, bool>() = true>
+    void register_pass(const snippets::pass::PassPosition& position, Args&&... args) {
+        static_assert(std::is_base_of<SubgraphPass, T>::value, "Pass not derived from lowered::SubgraphPass");
+        auto pass = std::make_shared<T>(std::forward<Args>(args)...);
+        register_pass(position, pass);
+    }
+
+    void register_positioned_passes(const std::vector<PositionedSubgraphPassLowered>& pos_passes);
+
+private:
+    std::shared_ptr<PassConfig> m_pass_config;
+    std::vector<std::shared_ptr<SubgraphPass>> m_passes;
+};
+
 } // namespace pass
 } // namespace lowered
 } // namespace snippets

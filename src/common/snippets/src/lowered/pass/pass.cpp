@@ -41,6 +41,36 @@ void PassPipeline::register_positioned_passes(const std::vector<PositionedPassLo
         register_pass(pp.position, pp.pass);
 }
 
+SubgraphPassPipeline::SubgraphPassPipeline() : m_pass_config(std::make_shared<PassConfig>()) {}
+SubgraphPassPipeline::SubgraphPassPipeline(const std::shared_ptr<PassConfig>& pass_config) : m_pass_config(pass_config) {
+    OPENVINO_ASSERT(m_pass_config != nullptr, "PassConfig is not initialized!");
+}
+
+void SubgraphPassPipeline::register_pass(const snippets::pass::PassPosition& position, const std::shared_ptr<SubgraphPass>& pass) {
+    OPENVINO_ASSERT(pass != nullptr, "SubgraphPassPipeline cannot register empty pass!");
+    m_passes.insert(position.get_insert_position(m_passes), pass);
+}
+
+void SubgraphPassPipeline::register_pass(const std::shared_ptr<SubgraphPass>& pass) {
+    OPENVINO_ASSERT(pass != nullptr, "SubgraphPassPipeline cannot register empty pass!");
+    m_passes.push_back(pass);
+}
+
+void SubgraphPassPipeline::run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) const {
+    for (const auto& pass : m_passes) {
+        OPENVINO_ASSERT(pass != nullptr, "SubgraphPassPipeline has empty pass!");
+        if (m_pass_config->is_disabled(pass->get_type_info())) {
+            continue;
+        }
+        pass->run(linear_ir, begin, end);
+    }
+}
+
+void SubgraphPassPipeline::register_positioned_passes(const std::vector<PositionedSubgraphPassLowered>& pos_passes) {
+    for (const auto& pp : pos_passes)
+        register_pass(pp.position, pp.pass);
+}
+
 } // namespace pass
 } // namespace lowered
 } // namespace snippets

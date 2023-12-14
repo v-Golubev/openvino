@@ -13,6 +13,7 @@
 #include "snippets/lowered/pass/insert_loops.hpp"
 #include "snippets/lowered/pass/insert_tail_loop.hpp"
 #include "snippets/lowered/pass/optimize_loop_single_evaluation.hpp"
+#include "snippets/lowered/pass/pass.hpp"
 #include "snippets/lowered/pass/validate_loops.hpp"
 #include "snippets/shape_inference/shape_inference.hpp"
 #include "subgraph_simple.hpp"

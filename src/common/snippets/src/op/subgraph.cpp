@@ -62,6 +62,8 @@ namespace ov {
 namespace snippets {
 namespace op {
 
+using PassPipeline = lowered::pass::PassPipeline;
+
 void Subgraph::set_generator(std::shared_ptr<ov::snippets::Generator> generator) {
     m_generator = std::move(generator);
 }
