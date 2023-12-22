@@ -13,7 +13,7 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-bool EnumerateExpressions::run(LinearIR& linear_ir) {
+bool EnumerateExpressions::run(const LinearIR& linear_ir) {
     // [113536]: Temporary solution is reusing of topological order from tokenization.
     //           Need to add execution order of Expression support
     int64_t order = 0;

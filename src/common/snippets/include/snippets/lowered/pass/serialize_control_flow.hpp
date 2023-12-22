@@ -21,7 +21,7 @@ class SerializeControlFlow : public SerializeBase {
 public:
     OPENVINO_RTTI("SerializeControlFlow", "Pass", SerializeBase)
     SerializeControlFlow(const std::string& xml_path) : SerializeBase(xml_path) {}
-    bool run(LinearIR& linear_ir) override;
+    bool run(const LinearIR& linear_ir) override;
 };
 
 } // namespace pass

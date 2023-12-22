@@ -12,21 +12,21 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
-class UpdateMemoryAccessOps : public pass::RangedPass {
+class UpdateMemoryAccessOps : public pass::ConstRangedPass {
 public:
     UpdateMemoryAccessOps(size_t count);
-    OPENVINO_RTTI("UpdateMemoryAccessOps", "RangedPass")
-    bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
+    OPENVINO_RTTI("UpdateMemoryAccessOps", "ConstRangedPass")
+    bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
     size_t m_count;
 };
 
-class SetFillOffset : public pass::RangedPass {
+class SetFillOffset : public pass::IsolatedRangedPass {
 public:
     SetFillOffset(size_t offset);
-    OPENVINO_RTTI("SetFillOffset", "RangedPass")
-    bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
+    OPENVINO_RTTI("SetFillOffset", "IsolatedRangedPass")
+    bool run(LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
     size_t m_offset;

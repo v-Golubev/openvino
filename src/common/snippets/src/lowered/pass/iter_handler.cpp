@@ -15,9 +15,9 @@ namespace ov {
 namespace snippets {
 namespace lowered {
 namespace pass {
-UpdateMemoryAccessOps::UpdateMemoryAccessOps(size_t count) : RangedPass(), m_count(count) {}
+UpdateMemoryAccessOps::UpdateMemoryAccessOps(size_t count) : ConstRangedPass(), m_count(count) {}
 
-bool UpdateMemoryAccessOps::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
+bool UpdateMemoryAccessOps::run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     for (auto expr_it = std::next(begin); expr_it != end; expr_it++) {
         // Skip inner Loops
         const auto loop_begin = ov::as_type_ptr<op::LoopBegin>(expr_it->get()->get_node());
@@ -45,9 +45,9 @@ bool UpdateMemoryAccessOps::run(LinearIR& linear_ir, LinearIR::constExprIt begin
     return true;
 }
 
-SetFillOffset::SetFillOffset(size_t offset) : RangedPass(), m_offset(offset) {}
+SetFillOffset::SetFillOffset(size_t offset) : IsolatedRangedPass(), m_offset(offset) {}
 
-bool SetFillOffset::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
+bool SetFillOffset::run(LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     for (auto expr_it = std::next(begin); expr_it != end; expr_it++) {
         const auto& node = expr_it->get()->get_node();
         if (const auto fill = ov::as_type_ptr<ov::snippets::op::Fill>(node)) {

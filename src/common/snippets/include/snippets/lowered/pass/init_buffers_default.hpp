@@ -17,7 +17,7 @@ namespace pass {
  * @ingroup snippets
  */
 
-class InitBuffersDefault : public Pass {
+class InitBuffersDefault : public IsolatedRangedPass {
 public:
     OPENVINO_RTTI("InitBuffersDefault", "Pass")
 
@@ -29,7 +29,7 @@ public:
      * @param linear_ir the target Linear IR
      * @return status of the pass
      */
-    bool run(lowered::LinearIR& linear_ir) override;
+    bool run(lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 
 private:
     size_t& m_buffer_scratchpad_size;

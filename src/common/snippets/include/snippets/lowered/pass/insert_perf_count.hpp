@@ -21,11 +21,11 @@ namespace pass {
  *  Developers could modify this to insert perf count pairs around interested sequence of nodes.
  * @ingroup snippets
  */
-class InsertPerfCount: public Pass {
+class InsertPerfCount: public RangedPass {
 public:
     OPENVINO_RTTI("InsertPerfCount", "Pass")
     InsertPerfCount() = default;
-    bool run(LinearIR& linear_ir) override;
+    bool run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 };
 
 } // namespace pass

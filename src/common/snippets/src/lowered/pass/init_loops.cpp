@@ -35,7 +35,7 @@ int64_t get_output_stride(size_t dim, const VectorDims& shape) {
 }
 }  // namespace
 
-InitLoops::InitLoops() : Pass() {}
+InitLoops::InitLoops() : ConstPass() {}
 
 void InitLoops::init_ptr_increments(const LinearIR::LoopManager::LoopInfoPtr& loop_info) {
     const auto work_amount = loop_info->get_work_amount();
@@ -108,7 +108,7 @@ void InitLoops::init_element_type_sizes(const LinearIR::LoopManager::LoopInfoPtr
     loop_info->set_exit_points(loop_exits);
 }
 
-bool InitLoops::run(LinearIR& linear_ir) {
+bool InitLoops::run(const LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::InitLoops")
     if (linear_ir.empty())
         return false;

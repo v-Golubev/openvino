@@ -17,10 +17,10 @@ namespace pass {
  *        This transformation "fuses" the offsets with an outer loop's ptr_increments, and zeroes the offsets before Results.
  * @ingroup snippets
  */
-class CleanupLoopOffsets : public Pass {
+class CleanupLoopOffsets : public IsolatedRangedPass {
 public:
     OPENVINO_RTTI("CleanupLoopOffsets", "Pass")
-    bool run(LinearIR& linear_ir) override;
+    bool run(lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 };
 
 } // namespace pass

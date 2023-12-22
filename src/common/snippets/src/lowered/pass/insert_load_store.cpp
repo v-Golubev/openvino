@@ -111,11 +111,11 @@ bool InsertLoadStore::insert_store(LinearIR& linear_ir, const LinearIR::constExp
     return true;
 }
 
-bool InsertLoadStore::run(LinearIR& linear_ir) {
+bool InsertLoadStore::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::InsertLoadStore")
 
     bool modified = false;
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto expr = *expr_it;
         const auto& node = expr->get_node();
         if (ov::is_type<ov::op::v0::Parameter>(node)) {

@@ -18,7 +18,7 @@ using LoopPort = LinearIR::LoopManager::LoopPort;
 
 ValidateLoops::ValidateLoops() {}
 
-bool ValidateLoops::run(LinearIR& linear_ir) {
+bool ValidateLoops::run(const LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::ValidateLoops")
     if (linear_ir.empty())
         return false;

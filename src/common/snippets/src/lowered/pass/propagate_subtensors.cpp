@@ -129,9 +129,9 @@ void propagate_updated_subtensor_through_loop(const LinearIR& linear_ir,
 }
 }  // namespace
 
-UpdateSubtensors::UpdateSubtensors(size_t tail_size) : RangedPass(), m_tail_size(tail_size) {}
+UpdateSubtensors::UpdateSubtensors(size_t tail_size) : ConstRangedPass(), m_tail_size(tail_size) {}
 
-bool UpdateSubtensors::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
+bool UpdateSubtensors::run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     const auto& expr = *end;
     const auto node = expr->get_node();
     const auto loop_end = ov::as_type_ptr<op::LoopEnd>(node);

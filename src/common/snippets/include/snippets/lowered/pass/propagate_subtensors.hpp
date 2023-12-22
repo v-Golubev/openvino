@@ -12,11 +12,11 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-class UpdateSubtensors : public pass::RangedPass {
+class UpdateSubtensors : public pass::ConstRangedPass {
 public:
     UpdateSubtensors(size_t tail_size);
     OPENVINO_RTTI("UpdateSubtensors", "Pass")
-    bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
+    bool run(const LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
     size_t m_tail_size;

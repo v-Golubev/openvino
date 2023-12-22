@@ -13,7 +13,7 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-bool InsertPerfCount::run(LinearIR& linear_ir) {
+bool InsertPerfCount::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::InsertPerfCount")
     if (linear_ir.empty())
         return false;
@@ -26,10 +26,10 @@ bool InsertPerfCount::run(LinearIR& linear_ir) {
     };
 
     // mark perf_count_begin and perf_count_end position
-    auto perf_count_begin_pos = linear_ir.cbegin();
+    auto perf_count_begin_pos = begin;
     auto perf_count_end_pos = perf_count_begin_pos;
     bool first_result_marked = false;
-    for (auto expr_it = linear_ir.cbegin(); expr_it != linear_ir.cend(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto expr = *expr_it;
         const auto& node = expr->get_node();
         if (is_parameter(node))

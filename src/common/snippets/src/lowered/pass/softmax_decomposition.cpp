@@ -24,7 +24,7 @@ using LoopInfo = LinearIR::LoopManager::LoopInfo;
 
 SoftmaxDecomposition::SoftmaxDecomposition(size_t vector_size) : m_vector_size{vector_size} {}
 
-bool SoftmaxDecomposition::run(LinearIR& linear_ir) {
+bool SoftmaxDecomposition::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::SoftmaxDecompositionLowered")
     bool modified = false;
     const auto& loop_manager = linear_ir.get_loop_manager();
@@ -32,7 +32,7 @@ bool SoftmaxDecomposition::run(LinearIR& linear_ir) {
     auto match_softmax = ov::pass::pattern::wrap_type<ov::op::v1::Softmax>();
     auto matcher = std::make_shared<ov::pass::pattern::Matcher>(match_softmax, "SoftmaxDecompositionLowered");
 
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto& op = (*expr_it)->get_node();
         if (matcher->match(op)) {
             const auto& pm = matcher->get_pattern_map();

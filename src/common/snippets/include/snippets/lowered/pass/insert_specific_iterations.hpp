@@ -11,10 +11,10 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-class InsertSpecificIterations : public Pass {
+class InsertSpecificIterations : public RangedPass {
 public:
     OPENVINO_RTTI("InsertSpecificIterations", "Pass")
-    bool run(LinearIR& linear_ir) override;
+    bool run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 
     static LinearIR::container copy_loop(const LinearIR& linear_ir, const size_t loop_id);
 };

@@ -64,7 +64,7 @@ void AllocateBuffers::set_buffer_offset(const ExpressionPtr& buffer_expr, const 
     }
 }
 
-bool AllocateBuffers::run(lowered::LinearIR& linear_ir) {
+bool AllocateBuffers::run(lowered::LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::AllocateBuffers");
     m_buffer_scratchpad_size = 0;
     PassPipeline pipeline;
@@ -78,7 +78,7 @@ bool AllocateBuffers::run(lowered::LinearIR& linear_ir) {
     } else {
         pipeline.register_pass<InitBuffersDefault>(m_buffer_scratchpad_size);
     }
-    pipeline.run(linear_ir);
+    pipeline.run(linear_ir, begin, end);
 
     return m_buffer_scratchpad_size > 0;
 }

@@ -43,7 +43,7 @@ public:
 
 /**
  * @interface Pass
- * @brief Base class for LIR passes which are performed on a full LIR body
+ * @brief Base class for LIR passes which are performed on a full LIR body and change the body
  * @ingroup snippets
  */
 class Pass : public PassBase {
@@ -58,7 +58,22 @@ public:
 
 /**
  * @interface Pass
- * @brief Base class for LIR passes which are performed on a range of a LIR body
+ * @brief Base class for LIR passes which are performed on a full LIR body and don't change the body
+ * @ingroup snippets
+ */
+class ConstPass : public PassBase {
+public:
+    /**
+     * @brief Apply the pass to the Linear IR
+     * @param linear_ir the target Linear IR
+     * @return status of the pass
+     */
+    virtual bool run(const lowered::LinearIR& linear_ir) = 0;
+};
+
+/**
+ * @interface Pass
+ * @brief Base class for LIR passes which are performed on a range of a LIR body and change the body
  * @ingroup snippets
  */
 class RangedPass : public PassBase {
@@ -73,6 +88,39 @@ public:
     virtual bool run(lowered::LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) = 0;
 };
 
+/**
+ * @interface ConstRangedPass
+ * @brief Base class for LIR passes which are performed on a range of a LIR body and don't change the body
+ * @ingroup snippets
+ */
+class ConstRangedPass : public PassBase {
+public:
+    /**
+     * @brief Apply the pass to the Linear IR
+     * @param linear_ir the target Linear IR
+     * @param begin begin of the range on which the pass is performed
+     * @param end end of the range on which the pass is performed
+     * @return status of the pass
+     */
+    virtual bool run(const lowered::LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) = 0;
+};
+
+/**
+ * @interface Pass
+ * @brief Base class for LIR passes which are performed on a range of a LIR body
+ * @ingroup snippets
+ */
+class IsolatedRangedPass : public PassBase {
+public:
+    /**
+     * @brief Apply the pass to the Linear IR
+     * @param linear_ir the target Linear IR
+     * @param begin begin of the range on which the pass is performed
+     * @param end end of the range on which the pass is performed
+     * @return status of the pass
+     */
+    virtual bool run(lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) = 0;
+};
 class PassPipeline {
 public:
     using PositionedPassLowered = snippets::pass::PositionedPass<lowered::pass::PassBase>;

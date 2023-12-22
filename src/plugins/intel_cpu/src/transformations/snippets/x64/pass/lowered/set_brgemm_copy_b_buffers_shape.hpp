@@ -17,11 +17,11 @@ namespace pass {
  *        Ticket: 113744
  * @ingroup snippets
  */
-class SetBrgemmCopyBBuffersShape: public snippets::lowered::pass::Pass {
+class SetBrgemmCopyBBuffersShape: public snippets::lowered::pass::IsolatedRangedPass {
 public:
     SetBrgemmCopyBBuffersShape() = default;
     OPENVINO_RTTI("SetBrgemmCopyBBuffersShape", "Pass");
-    bool run(snippets::lowered::LinearIR& linear_ir) override;
+    bool run(snippets::lowered::LinearIR::constExprIt begin, snippets::lowered::LinearIR::constExprIt end) override;
 };
 
 }  // namespace pass

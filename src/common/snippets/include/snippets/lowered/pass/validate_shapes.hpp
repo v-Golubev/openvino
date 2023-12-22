@@ -18,11 +18,11 @@ namespace pass {
  * @brief The pass checks that there are no dynamic shapes in the IR
  * @ingroup snippets
  */
-class ValidateShapes : public Pass {
+class ValidateShapes : public IsolatedRangedPass {
 public:
     OPENVINO_RTTI("ValidateShapes", "Pass")
     ValidateShapes() = default;
-    bool run(LinearIR& linear_ir) override;
+    bool run(lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 };
 
 } // namespace pass

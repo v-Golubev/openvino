@@ -18,11 +18,11 @@ namespace pass {
  * Note that changing of the IR is likely to invalidate register assignment.
  * @ingroup snippets
  */
-class AssignRegisters : public Pass {
+class AssignRegisters : public ConstRangedPass {
 public:
     OPENVINO_RTTI("AssignRegisters", "Pass")
     explicit AssignRegisters(const std::function<Generator::opRegType(const std::shared_ptr<Node>& op)>& mapper) : m_reg_type_mapper(mapper) {}
-    bool run(LinearIR& linear_ir) override;
+    bool run(const LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) override;
 
 private:
     std::function<Generator::opRegType(const std::shared_ptr<Node>& op)> m_reg_type_mapper;

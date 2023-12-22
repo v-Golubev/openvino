@@ -18,11 +18,11 @@ namespace pass {
  * @brief The pass initializes scheduling information in LoopInfo
  * @ingroup snippets
  */
-class InitLoops : public Pass {
+class InitLoops : public ConstPass {
 public:
     OPENVINO_RTTI("InitLoops", "Pass")
     InitLoops();
-    bool run(LinearIR& linear_ir) override;
+    bool run(const LinearIR& linear_ir) override;
 
 private:
     static void init_ptr_increments(const LinearIR::LoopManager::LoopInfoPtr& loop_info);

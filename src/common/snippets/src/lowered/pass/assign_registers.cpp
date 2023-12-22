@@ -16,18 +16,18 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-bool AssignRegisters::run(LinearIR& linear_ir) {
+bool AssignRegisters::run(const LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::AssignRegisters")
     using Reg = size_t;
     using tensor = PortConnectorPtr;
-    const auto& expressions = linear_ir.get_ops();
 
     std::vector<std::pair<Generator::opRegType, ExpressionPtr>> typed_ops;
     NodeVector ops;
     Reg num_parameters = 0;
     Reg num_results = 0;
     Reg num_expressions = 0;
-    for (auto& expr : expressions) {
+    for (auto expr_it = begin; expr_it != end; ++expr_it) {
+        const auto& expr = *expr_it;
         auto op = expr->get_node();
         auto reg_type = m_reg_type_mapper(op);
         typed_ops.emplace_back(reg_type, expr);
@@ -43,7 +43,8 @@ bool AssignRegisters::run(LinearIR& linear_ir) {
     std::map<tensor, Reg> manually_assigned_gprs, manually_assigned_vecs;
     const auto IS_MANUALLY_ALLOCATED_REG = SIZE_MAX;
     auto accumulator_reg = 0lu;
-    for (const auto& expr : expressions) {
+    for (auto expr_it = begin; expr_it != end; ++expr_it) {
+        const auto& expr = *expr_it;
         auto op = expr->get_node();
         if (const auto io_expr = std::dynamic_pointer_cast<IOExpression>(expr)) {
             if (io_expr->get_type() == IOExpression::io_type::INPUT) {
@@ -207,10 +208,10 @@ bool AssignRegisters::run(LinearIR& linear_ir) {
             for (const auto& out : expr->get_output_port_connectors()) {
                 for (const auto& child_expr_input : out->get_consumers()) {
                     const auto& child_expr = child_expr_input.get_expr();
-                    auto child_it = linear_ir.begin();
+                    auto child_it = begin;
                     std::advance(child_it, n);
                     size_t k = n;
-                    while (child_it != linear_ir.end() && *child_it != child_expr) {
+                    while (child_it != end && *child_it != child_expr) {
                         child_it++;
                         k++;
                     }

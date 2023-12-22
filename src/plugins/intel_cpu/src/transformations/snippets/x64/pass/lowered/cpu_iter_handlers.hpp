@@ -9,13 +9,11 @@
 namespace ov {
 namespace intel_cpu {
 namespace pass {
-class SetBrgemmBeta : public snippets::lowered::pass::RangedPass {
+class SetBrgemmBeta : public snippets::lowered::pass::IsolatedRangedPass {
 public:
     SetBrgemmBeta(float beta);
-    OPENVINO_RTTI("SetBrgemmBeta", "RangedPass")
-    bool run(snippets::lowered::LinearIR& linear_ir,
-             snippets::lowered::LinearIR::constExprIt begin,
-             snippets::lowered::LinearIR::constExprIt end) override;
+    OPENVINO_RTTI("SetBrgemmBeta", "IsolatedRangedPass")
+    bool run(snippets::lowered::LinearIR::constExprIt begin, snippets::lowered::LinearIR::constExprIt end) override;
 
 private:
     size_t m_beta;

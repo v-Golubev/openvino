@@ -22,7 +22,7 @@ bool is_loop_id_found(const std::vector<size_t>& ids, size_t id) {
 using LoopManager = LinearIR::LoopManager;
 using LoopInfoPtr = LoopManager::LoopInfoPtr;
 
-FuseLoops::FuseLoops() : Pass() {}
+FuseLoops::FuseLoops() : RangedPass() {}
 
 bool FuseLoops::loop_ports_are_compatible(const LinearIR::LoopManagerPtr& loop_manager,
                                           const size_t loop_lower_id,
@@ -183,7 +183,7 @@ bool FuseLoops::fuse_lower_into_current(LinearIR& linear_ir, const LinearIR::Loo
     return true;
 }
 
-bool FuseLoops::run(LinearIR& linear_ir) {
+bool FuseLoops::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::FuseLoops")
     if (linear_ir.empty())
         return false;
@@ -191,7 +191,7 @@ bool FuseLoops::run(LinearIR& linear_ir) {
     const auto& loop_manager = linear_ir.get_loop_manager();
     std::set<size_t> prev_fused_loops;
 
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto expr = *expr_it;
         const auto& node = expr->get_node();
         if (ov::is_type<ov::op::v0::Parameter>(node) ||

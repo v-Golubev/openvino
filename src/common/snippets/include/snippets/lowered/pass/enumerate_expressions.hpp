@@ -16,10 +16,10 @@ namespace pass {
  * @brief The pass enumerates expression by execution order
  * @ingroup snippets
  */
-class EnumerateExpressions : public Pass {
+class EnumerateExpressions : public ConstPass {
 public:
     OPENVINO_RTTI("EnumerateExpressions", "Pass")
-    bool run(LinearIR& linear_ir) override;
+    bool run(const LinearIR& linear_ir) override;
 };
 
 } // namespace pass

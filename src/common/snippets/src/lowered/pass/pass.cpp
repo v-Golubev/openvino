@@ -38,8 +38,14 @@ void PassPipeline::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearI
         }
         if (auto lir_pass = std::dynamic_pointer_cast<Pass>(pass)) {
             lir_pass->run(linear_ir);
+        } else if (auto const_pass = std::dynamic_pointer_cast<ConstPass>(pass)) {
+            const_pass->run(linear_ir);
         } else if (auto ranged_pass = std::dynamic_pointer_cast<RangedPass>(pass)) {
             ranged_pass->run(linear_ir, begin, end);
+        } else if (auto const_ranged_pass = std::dynamic_pointer_cast<ConstRangedPass>(pass)) {
+            const_ranged_pass->run(linear_ir, begin, end);
+        } else if (auto isolated_pass = std::dynamic_pointer_cast<IsolatedRangedPass>(pass)) {
+            isolated_pass->run(begin, end);
         } else {
             OPENVINO_THROW("Unexpected pass (", pass->get_type_info(), ") is registered in PassPipeline");
         }

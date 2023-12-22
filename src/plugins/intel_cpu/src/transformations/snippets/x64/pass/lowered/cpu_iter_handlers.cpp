@@ -13,9 +13,9 @@ namespace pass {
 using LinearIR = snippets::lowered::LinearIR;
 using ExpressionPtr = ov::snippets::lowered::ExpressionPtr;
 
-SetBrgemmBeta::SetBrgemmBeta(float beta) : snippets::lowered::pass::RangedPass(), m_beta(beta) {}
+SetBrgemmBeta::SetBrgemmBeta(float beta) : snippets::lowered::pass::IsolatedRangedPass(), m_beta(beta) {}
 
-bool SetBrgemmBeta::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
+bool SetBrgemmBeta::run(LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     for (auto expr_it = begin; expr_it != end; ++expr_it) {
         const auto& expr = expr_it->get();
         if (const auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node())) {

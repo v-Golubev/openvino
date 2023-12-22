@@ -24,7 +24,7 @@ using ExpressionPtr = ov::snippets::lowered::ExpressionPtr;
 using LoopInfo = LinearIR::LoopManager::LoopInfo;
 using namespace ov::snippets::lowered::pass;
 
-BrgemmBlocking::BrgemmBlocking() : Pass() {}
+BrgemmBlocking::BrgemmBlocking() : RangedPass() {}
 
 void BrgemmBlocking::move_new_memory_buffer(snippets::lowered::LinearIR& linear_ir, const snippets::lowered::LinearIR::constExprIt& brgemm_it) {
     const auto& brgemm_expr = brgemm_it->get();
@@ -38,7 +38,7 @@ void BrgemmBlocking::move_new_memory_buffer(snippets::lowered::LinearIR& linear_
     }
 }
 
-bool BrgemmBlocking::run(LinearIR& linear_ir) {
+bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::BrgemmBlocking")
     if (linear_ir.empty())
         return false;
@@ -61,7 +61,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir) {
     };
 
     bool modified = false;
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto& brgemm_expr = *expr_it;
         const auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(brgemm_expr->get_node());
         if (!brgemm || blocking_loop_exists(brgemm_expr, brgemm))

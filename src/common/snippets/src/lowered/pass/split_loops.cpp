@@ -19,7 +19,7 @@ using LoopManager = LinearIR::LoopManager;
 using LoopInfo = LoopManager::LoopInfo;
 using LoopInfoPtr = LoopManager::LoopInfoPtr;
 
-SplitLoops::SplitLoops() : Pass() {}
+SplitLoops::SplitLoops() : RangedPass() {}
 
 bool SplitLoops::can_be_split(const LoopInfoPtr& loop_to_split, const LoopInfoPtr& loop_to_fuse) {
     const auto current_dim_idx = loop_to_split->get_dim_idx();
@@ -31,14 +31,15 @@ bool SplitLoops::can_be_split(const LoopInfoPtr& loop_to_split, const LoopInfoPt
            loop_to_split->get_increment() != loop_to_fuse->get_increment() && equal_dim_idxes && only_main_body;
 }
 
-bool SplitLoops::run(LinearIR& linear_ir) {
+bool SplitLoops::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begin, lowered::LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::SplitLoops")
     if (linear_ir.empty())
         return false;
 
     const auto& loop_manager = linear_ir.get_loop_manager();
     bool loop_was_split = false;
-    for (const auto& expr : linear_ir) {
+    for (auto expr_it = begin; expr_it != end; ++expr_it) {
+        const auto& expr = *expr_it;
         const auto& loop_ids = expr->get_loop_ids();
         if (loop_ids.empty())
             continue;
@@ -102,7 +103,7 @@ bool SplitLoops::run(LinearIR& linear_ir) {
     // FuseLoops pass is explicitly run here in order to avoid unnecessary computations
     // in case if loops are not split but FuseLoops is registered in pass manager after SplitLoops
     if (loop_was_split)
-        FuseLoops().run(linear_ir);
+        FuseLoops().run(linear_ir, begin, end);
     return loop_was_split;
 }
 } // namespace pass

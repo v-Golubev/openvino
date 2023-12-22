@@ -24,11 +24,11 @@ namespace pass {
  *          - TODO [112196] : probably, it's a temporary design. Need to investigate it and remove these limitations
  * @ingroup snippets
  */
-class ValidateLoops : public Pass {
+class ValidateLoops : public ConstPass {
 public:
     OPENVINO_RTTI("ValidateLoops", "Pass")
     ValidateLoops();
-    bool run(LinearIR& linear_ir) override;
+    bool run(const LinearIR& linear_ir) override;
 };
 
 } // namespace pass
