@@ -374,7 +374,9 @@ void Input::cloneBlobIfRequired() {
         ptr->Create(memDesc, constOp->get_data_ptr());
         memoryPtr = MemoryCPtr(ptr);
     } else {
-        memoryPtr = std::const_pointer_cast<const Memory>(cloneBlob());
+        auto ptr = new Memory(getEngine());
+        ptr->Create(memDesc, constOp->get_data_ptr());
+        memoryPtr = MemoryCPtr(ptr);
     }
 }
 
