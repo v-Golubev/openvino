@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "snippets/lowered/pass/reduce_decomposition.hpp"
+#include "reduce_decomposition.hpp"
 
 #include "snippets/itt.hpp"
 #include "snippets/lowered/linear_ir.hpp"
@@ -11,15 +11,19 @@
 #include "snippets/snippets_isa.hpp"
 
 namespace ov {
-namespace snippets {
-namespace lowered {
+namespace intel_cpu {
 namespace pass {
+
+using LinearIR = snippets::lowered::LinearIR;
+using HandlerType = LinearIR::LoopManager::LoopInfo::SpecificIterationHandlers::HandlerType;
+using namespace ov::snippets::lowered;
+
 
 namespace {
 uint32_t get_initial_value(const ov::DiscreteTypeInfo& type_info) {
     static const std::map<ov::DiscreteTypeInfo, uint32_t> reduce_initial_values {
-        {op::ReduceMax::get_type_info_static(), uint32_t(0xff7fffff)},
-        {op::ReduceSum::get_type_info_static(), uint32_t(0x00000000)},
+        {ov::snippets::op::ReduceMax::get_type_info_static(), uint32_t(0xff7fffff)},
+        {ov::snippets::op::ReduceSum::get_type_info_static(), uint32_t(0x00000000)},
     };
     OPENVINO_ASSERT(reduce_initial_values.count(type_info), "Unexpected ReduceType");
     return reduce_initial_values.at(type_info);
@@ -28,9 +32,9 @@ uint32_t get_initial_value(const ov::DiscreteTypeInfo& type_info) {
 std::shared_ptr<ov::Node> get_accumulation_node(const ov::Output<ov::Node>& input0,
                                                 const ov::Output<ov::Node>& input1,
                                                 const ov::DiscreteTypeInfo& type_info) {
-    if (type_info == op::ReduceMax::get_type_info_static()) {
+    if (type_info == ov::snippets::op::ReduceMax::get_type_info_static()) {
         return std::make_shared<ov::op::v1::Maximum>(input0, input1);
-    } else if (type_info == op::ReduceSum::get_type_info_static()) {
+    } else if (type_info == ov::snippets::op::ReduceSum::get_type_info_static()) {
         return std::make_shared<ov::op::v1::Add>(input0, input1);
     } else {
         OPENVINO_THROW("Unsupported reduce type: ", type_info);
@@ -38,26 +42,23 @@ std::shared_ptr<ov::Node> get_accumulation_node(const ov::Output<ov::Node>& inpu
 }
 
 std::shared_ptr<ov::Node> get_horizon_node(const ov::Output<ov::Node>& input, const ov::DiscreteTypeInfo& type_info) {
-    if (type_info == op::ReduceMax::get_type_info_static()) {
-        return std::make_shared<op::HorizonMax>(input);
-    } else if (type_info == op::ReduceSum::get_type_info_static()) {
-        return std::make_shared<op::HorizonSum>(input);
+    if (type_info == ov::snippets::op::ReduceMax::get_type_info_static()) {
+        return std::make_shared<ov::snippets::op::HorizonMax>(input);
+    } else if (type_info == ov::snippets::op::ReduceSum::get_type_info_static()) {
+        return std::make_shared<ov::snippets::op::HorizonSum>(input);
     } else {
         OPENVINO_THROW("Unsupported reduce type: ", type_info);
     }
 }
 }  // namespace
 
-using LoopInfo = LinearIR::LoopManager::LoopInfo;
-using HandlerType = LoopInfo::SpecificIterationHandlers::HandlerType;
-
 ReduceDecomposition::ReduceDecomposition(size_t vector_size) : m_vector_size{vector_size} {}
 
-bool ReduceDecomposition::run(LinearIR& linear_ir) {
+bool ReduceDecomposition::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::ReduceMaxDecompositionLowered")
     const auto& loop_manager = linear_ir.get_loop_manager();
     bool modified = false;
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto& reduce_expr = *expr_it;
         const auto& reduce = ov::as_type_ptr<ov::snippets::op::ReduceBase>(reduce_expr->get_node());
         if (!reduce)
@@ -81,11 +82,11 @@ bool ReduceDecomposition::run(LinearIR& linear_ir) {
         const auto fill_value = get_initial_value(reduce_type_info);
         // Note: VectorBuffer is a special case, since it should go before the initial Load.
         // The buffer must be initialized with fill_value before reduction
-        const auto vector_buffer = push_node(std::make_shared<op::VectorBuffer>());
-        const auto initial_fill = push_node(std::make_shared<op::Fill>(vector_buffer.second, 0, fill_value));
+        const auto vector_buffer = push_node(std::make_shared<ov::snippets::op::VectorBuffer>());
+        const auto initial_fill = push_node(std::make_shared<ov::snippets::op::Fill>(vector_buffer.second, 0, fill_value));
 
         // Reduce loop
-        const auto fill = push_node(std::make_shared<op::Fill>(reduce->get_input_source_output(0), increment, fill_value));
+        const auto fill = push_node(std::make_shared<ov::snippets::op::Fill>(reduce->get_input_source_output(0), increment, fill_value));
         const auto accumulation = push_node(get_accumulation_node(fill.second, initial_fill.second, reduce_type_info));
 
         const auto reduce_loop_id = loop_manager->mark_loop(
@@ -98,7 +99,7 @@ bool ReduceDecomposition::run(LinearIR& linear_ir) {
             std::vector<ExpressionPort>{(*accumulation.first)->get_output_port(0)});
         const auto tail_size = work_amount % increment;
         if (tail_size != 0) {
-            loop_manager->get_loop_info(reduce_loop_id)->register_handler<HandlerType::LAST_ITER, SetFillOffset>(tail_size);
+            loop_manager->get_loop_info(reduce_loop_id)->register_handler<HandlerType::LAST_ITER, ov::snippets::lowered::pass::SetFillOffset>(tail_size);
         }
         const auto horizon = push_node(get_horizon_node(accumulation.second, reduce_type_info));
 
@@ -124,7 +125,6 @@ bool ReduceDecomposition::run(LinearIR& linear_ir) {
     return modified;
 }
 
-} // namespace pass
-} // namespace lowered
-} // namespace snippets
-} // namespace ov
+}  // namespace pass
+}  // namespace intel_cpu
+}  // namespace ov

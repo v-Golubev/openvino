@@ -4,11 +4,10 @@
 
 #pragma once
 
-#include "pass.hpp"
+#include "snippets/lowered/pass/pass.hpp"
 
 namespace ov {
-namespace snippets {
-namespace lowered {
+namespace intel_cpu {
 namespace pass {
 
 /**
@@ -17,17 +16,18 @@ namespace pass {
  * @attention Only Reduce by last dimension is supported
  * @ingroup snippets
  */
-class ReduceDecomposition : public Pass {
+class ReduceDecomposition : public snippets::lowered::pass::RangedPass {
 public:
     OPENVINO_RTTI("ReduceDecomposition", "Pass")
     explicit ReduceDecomposition(size_t vector_size);
-    bool run(LinearIR& linear_ir) override;
+    bool run(snippets::lowered::LinearIR& linear_ir,
+             snippets::lowered::LinearIR::constExprIt begin,
+             snippets::lowered::LinearIR::constExprIt end) override;
 
 private:
     size_t m_vector_size;
 };
 
-} // namespace pass
-} // namespace lowered
-} // namespace snippets
-} // namespace ov
+}  // namespace pass
+}  // namespace intel_cpu
+}  // namespace ov

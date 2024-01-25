@@ -43,7 +43,6 @@
 #include "snippets/lowered/pass/insert_perf_count.hpp"
 #include "snippets/lowered/pass/validate_shapes.hpp"
 #include "snippets/lowered/pass/pass_config.hpp"
-#include "snippets/lowered/pass/reduce_decomposition.hpp"
 
 #include "transformations/utils/utils.hpp"
 
@@ -424,7 +423,6 @@ void Subgraph::control_flow_transformations(lowered::LinearIR& linear_ir,
 
     lowered::pass::PassPipeline pipeline(lowered_pass_config);
     pipeline.register_pass<lowered::pass::MarkLoops>(vector_size);
-    pipeline.register_pass<lowered::pass::ReduceDecomposition>(vector_size);
     pipeline.register_pass<lowered::pass::FuseLoops>();
     pipeline.register_pass<lowered::pass::SplitLoops>();
     pipeline.register_pass<lowered::pass::MoveResultOutOfLoop>();

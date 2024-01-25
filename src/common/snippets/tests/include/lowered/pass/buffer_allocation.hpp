@@ -53,13 +53,6 @@ protected:
     std::shared_ptr<ov::Model> GetModel() const override;
 };
 
-class MHABufferAllocationTest : public BufferAllocationTest {
-protected:
-    std::shared_ptr<ov::Model> GetModel() const override;
-
-    static void MarkBrgemm(const std::shared_ptr<ov::snippets::op::Brgemm>& node, const std::vector<size_t>& subtensor);
-};
-
 }  // namespace snippets
 }  // namespace test
 }  // namespace ov
