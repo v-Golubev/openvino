@@ -70,7 +70,7 @@ public:
     std::shared_ptr<LinearIR> clone() const;
     static LinearIR::container deep_copy_range(LinearIR::container::const_iterator begin,
                                                LinearIR::container::const_iterator end,
-                                               ExressionMap& expression_map);
+                                               ExpressionMap& expression_map);
 
     const container& get_ops() const { return m_expressions; }
     const io_container& get_IO_ops() const { return m_io_expressions; }

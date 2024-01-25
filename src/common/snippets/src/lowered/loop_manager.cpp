@@ -102,7 +102,7 @@ LoopInfo::LoopInfo(size_t work_amount,
         m_exit_points.emplace_back(port);
 }
 
-std::shared_ptr<LoopInfo> LoopInfo::clone_with_new_expr(const ExressionMap& expr_map) const {
+std::shared_ptr<LoopInfo> LoopInfo::clone_with_new_expr(const ExpressionMap& expr_map) const {
     auto clone_loop_ports = [&expr_map](const std::vector<LoopPort>& port_points) {
         std::vector<LoopPort> cloned_port_points;
         cloned_port_points.reserve(port_points.size());
@@ -197,7 +197,7 @@ bool operator<(const LinearIR::LoopManager::LoopPort& lhs, const LinearIR::LoopM
              (lhs.is_incremented == rhs.is_incremented && lhs.dim_idx < rhs.dim_idx)));
 }
 
-std::shared_ptr<LoopManager> LoopManager::clone_with_new_expr(const ExressionMap& expr_map) const {
+std::shared_ptr<LoopManager> LoopManager::clone_with_new_expr(const ExpressionMap& expr_map) const {
     auto new_loop_manager = std::make_shared<LoopManager>();
     for (const auto& id_info : m_map)
         new_loop_manager->m_map.insert({id_info.first, id_info.second->clone_with_new_expr(expr_map)});

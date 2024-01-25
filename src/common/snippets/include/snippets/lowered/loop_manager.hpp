@@ -89,7 +89,7 @@ public:
                  const std::vector<ExpressionPort>& exits,
                  const SpecificIterationHandlers& handlers = SpecificIterationHandlers());
 
-        std::shared_ptr<LoopInfo> clone_with_new_expr(const ExressionMap& expr_map) const;
+        std::shared_ptr<LoopInfo> clone_with_new_expr(const ExpressionMap& expr_map) const;
 
         // Returns dimension index if dimension indices for all entry and exit points are equal, and UNDEFINED_DIM_IDX otherwise
         size_t get_dim_idx() const;
@@ -125,7 +125,7 @@ public:
     };
     using LoopInfoPtr = std::shared_ptr<LoopInfo>;
 
-    std::shared_ptr<LoopManager> clone_with_new_expr(const ExressionMap& expr_map) const;
+    std::shared_ptr<LoopManager> clone_with_new_expr(const ExpressionMap& expr_map) const;
     size_t add_loop_info(const LoopInfoPtr& loop);
     void remove_loop_info(size_t index);
     LoopInfoPtr get_loop_info(size_t index) const;

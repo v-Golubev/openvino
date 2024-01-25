@@ -15,12 +15,14 @@ namespace snippets {
 namespace lowered {
 namespace pass {
 
-LinearIR::container InsertSpecificIterations::copy_loop(const LinearIR& linear_ir, const size_t loop_id) {
+LinearIR::constExprIt InsertSpecificIterations::insert_copy_loop(LinearIR& linear_ir, const size_t loop_id, const LinearIR::constExprIt& insert_pos) {
     const auto& loop_manager = linear_ir.get_loop_manager();
     LinearIR::constExprIt loop_begin_pos, loop_end_pos;
     loop_manager->get_loop_bounds(linear_ir, loop_id, loop_begin_pos, loop_end_pos, true);
-    ExressionMap expression_map;
+    ExpressionMap expression_map;
     const auto& loop_copy_range = LinearIR::deep_copy_range(loop_begin_pos, std::next(loop_end_pos), expression_map);
+    const auto new_loop_begin_pos = linear_ir.insert(insert_pos, loop_copy_range.begin(), loop_copy_range.end());
+    const auto new_loop_end_pos = insert_pos;
 
     const auto original_loop_info = loop_manager->get_loop_info(loop_id);
     std::vector<LinearIR::LoopManager::LoopPort> new_entry_points, new_exit_points;
@@ -44,8 +46,6 @@ LinearIR::container InsertSpecificIterations::copy_loop(const LinearIR& linear_i
             loop_manager->update_loops_port(outer_loop_ids, expr->get_output_port(i), {expr->get_output_port(i), new_expr->get_output_port(i)}, false);
     }
 
-    const auto new_loop_begin_pos = loop_copy_range.begin();
-    const auto new_loop_end_pos = loop_copy_range.end();
     const auto new_id = loop_manager->replace_with_new_loop(linear_ir,
                                                             std::next(new_loop_begin_pos),
                                                             std::prev(new_loop_end_pos),
@@ -57,7 +57,7 @@ LinearIR::container InsertSpecificIterations::copy_loop(const LinearIR& linear_i
     const auto loop_end = ov::as_type_ptr<op::LoopEnd>(std::prev(new_loop_end_pos)->get()->get_node());
     OPENVINO_ASSERT(loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
     loop_end->set_id(new_id);
-    return loop_copy_range;
+    return new_loop_begin_pos;
 }
 
 using LoopInfo = LinearIR::LoopManager::LoopInfo;
@@ -100,13 +100,16 @@ bool InsertSpecificIterations::run(LinearIR& linear_ir, lowered::LinearIR::const
         };
 
         auto copy_and_run_specific_handlers = [&](const PassPipeline& handlers) {
-            const auto& cloned_body = copy_loop(linear_ir, loop_end->get_id());
-            lowered::LinearIR::constExprIt start = linear_ir.insert(main_loop_begin_it, cloned_body.begin(), cloned_body.end());
-            const auto cloned_loop_end = *std::prev(cloned_body.end());
-            auto end = linear_ir.find_after(start, cloned_loop_end);
+            const auto new_loop_begin_pos = insert_copy_loop(linear_ir, loop_end->get_id(), main_loop_begin_it);
+            const auto new_loop_begin = ov::as_type_ptr<op::LoopBegin>(new_loop_begin_pos->get()->get_node());
+            OPENVINO_ASSERT(new_loop_begin, "Cloned Loop does not contain LoopBegin op at the expected place.");
+            const auto new_loop_end = new_loop_begin->get_loop_end();
+            const auto new_loop_end_pos = linear_ir.find_after(new_loop_begin_pos, linear_ir.get_expr_by_node(new_loop_end));
+            OPENVINO_ASSERT(new_loop_end, "Cloned Loop does not contain LoopEnd op at the expected place.");
+
             // Note: handlers must be run on the range started with the first operation in the loop body.
-            handlers.run(linear_ir, std::next(start), end);
-            return ov::as_type_ptr<op::LoopEnd>(cloned_loop_end->get_node());
+            handlers.run(linear_ir, std::next(new_loop_begin_pos), new_loop_end_pos);
+            return new_loop_end;
         };
 
         const bool specific_first_iteration = !handlers.get_first_iter_handelrs().empty();
