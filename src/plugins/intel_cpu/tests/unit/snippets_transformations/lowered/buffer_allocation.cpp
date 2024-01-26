@@ -156,11 +156,11 @@ protected:
         const auto relu1 = std::make_shared<ov::op::v0::Relu>(brgemm_cpu0);
 
         // Decomposed Softmax
-        const auto reduce_max = ov::snippets::op::ReduceMax::make_reduce_max(relu1, 3);
+        const auto reduce_max = ov::snippets::op::ReduceMax::make(relu1, 3);
         const auto subtract = std::make_shared<ov::op::v1::Subtract>(relu1, reduce_max);
         const auto exp = std::make_shared<ov::op::v0::Exp>(subtract);
 
-        const auto reduce_sum = ov::snippets::op::ReduceSum::make_reduce_sum(exp, 3);
+        const auto reduce_sum = ov::snippets::op::ReduceSum::make(exp, 3);
         const auto power = std::make_shared<ov::snippets::op::PowerStatic>(reduce_sum, -1.f);
         const auto multiply = std::make_shared<ov::op::v1::Multiply>(exp, power);
 

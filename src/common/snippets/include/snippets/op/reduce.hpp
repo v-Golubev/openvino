@@ -38,15 +38,12 @@ public:
     ReduceSum(const Output<Node>& x, size_t axis) : ReduceBase(x, axis) {}
     ReduceSum() = default;
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
-    static std::set<ov::element::TypeVector> get_supported_precisions(const std::shared_ptr<ov::Node>& node) {
-        return {{ov::element::f32}};
-    }
     /**
-     * @brief Creates ReduceSum operation, computes and sets input/output subtensors
+     * @brief Creates ReduceSum operation, computes and sets subtensors to input/output PortDescriptors
      * @param x Reduce input
      * @param axis Reduce axis
      */
-    static std::shared_ptr<ReduceSum> make_reduce_sum(const Output<Node>& x, size_t axis);
+    static std::shared_ptr<ReduceSum> make(const Output<Node>& x, size_t axis);
 };
 
 class ReduceMax : public ReduceBase {
@@ -55,15 +52,12 @@ public:
     ReduceMax(const Output<Node>& x, size_t axis) : ReduceBase(x, axis) {}
     ReduceMax() = default;
     std::shared_ptr<Node> clone_with_new_inputs(const OutputVector& new_args) const override;
-    static std::set<ov::element::TypeVector> get_supported_precisions(const std::shared_ptr<ov::Node>& node) {
-        return {{ov::element::f32}};
-    }
     /**
-     * @brief Creates ReduceMax operation, computes and sets input/output subtensors
+     * @brief Creates ReduceMax operation, computes and sets subtensors to input/output PortDescriptors
      * @param x Reduce input
      * @param axis Reduce axis
      */
-    static std::shared_ptr<ReduceMax> make_reduce_max(const Output<Node>& x, size_t axis);
+    static std::shared_ptr<ReduceMax> make(const Output<Node>& x, size_t axis);
 };
 
 } // namespace op

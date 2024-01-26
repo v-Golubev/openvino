@@ -37,9 +37,9 @@ snippets::pass::ReduceToSnippetsReduce::ReduceToSnippetsReduce() {
 
         std::shared_ptr<snippets::op::ReduceBase> snippets_reduce = nullptr;
         if (ov::is_type<ov::op::v1::ReduceSum>(reduce))
-            snippets_reduce = ov::snippets::op::ReduceSum::make_reduce_sum(data_input, axis);
+            snippets_reduce = ov::snippets::op::ReduceSum::make(data_input, axis);
         else if (ov::is_type<ov::op::v1::ReduceMax>(reduce))
-            snippets_reduce = ov::snippets::op::ReduceMax::make_reduce_max(data_input, axis);
+            snippets_reduce = ov::snippets::op::ReduceMax::make(data_input, axis);
         else
             OPENVINO_THROW("Reduce ", reduce, " can't be converted to snippets opset.");
 

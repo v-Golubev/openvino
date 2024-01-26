@@ -5,6 +5,10 @@
 #include "snippets/target_machine.hpp"
 
 using namespace ov::snippets;
+std::set<ov::element::TypeVector> TargetMachine::supported_precisions_for_emitterless_node(const ov::DiscreteTypeInfo& type) const {
+    OPENVINO_THROW("supported_precisions_for_emitterless_node for this class is not implemented");
+}
+
 std::function<std::shared_ptr<Emitter>(const lowered::ExpressionPtr&)> TargetMachine::get(const ov::DiscreteTypeInfo& type) const {
     auto jitter = jitters.find(type);
     if (jitter == jitters.end()) {

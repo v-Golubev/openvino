@@ -46,7 +46,7 @@ std::shared_ptr<Node> ReduceSum::clone_with_new_inputs(const OutputVector& new_a
     return std::make_shared<ReduceSum>(new_args.at(0), m_axis);
 }
 
-std::shared_ptr<ReduceSum> ReduceSum::make_reduce_sum(const Output<Node>& x, size_t axis) {
+std::shared_ptr<ReduceSum> ReduceSum::make(const Output<Node>& x, size_t axis) {
     const auto reduce = std::make_shared<ReduceSum>(x, axis);
     compute_and_set_reduce_subtensors(reduce);
     return reduce;
@@ -58,7 +58,7 @@ std::shared_ptr<Node> ReduceMax::clone_with_new_inputs(const OutputVector& new_a
     return std::make_shared<ReduceMax>(new_args.at(0), m_axis);
 }
 
-std::shared_ptr<ReduceMax> ReduceMax::make_reduce_max(const Output<Node>& x, size_t axis) {
+std::shared_ptr<ReduceMax> ReduceMax::make(const Output<Node>& x, size_t axis) {
     const auto reduce = std::make_shared<ReduceMax>(x, axis);
     compute_and_set_reduce_subtensors(reduce);
     return reduce;
