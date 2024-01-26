@@ -42,11 +42,11 @@ SoftmaxDecomposition::SoftmaxDecomposition() {
         }
 
         const auto& softmax_input = softmax->input_value(0);
-        const auto reduce_max = std::make_shared<ov::snippets::op::ReduceMax>(softmax_input, axis);
+        const auto reduce_max = ov::snippets::op::ReduceMax::make_reduce_max(softmax_input, axis);
         const auto subtract = std::make_shared<ov::op::v1::Subtract>(softmax_input, reduce_max);
         const auto exp = std::make_shared<ov::op::v0::Exp>(subtract);
 
-        const auto reduce_sum = std::make_shared<ov::snippets::op::ReduceSum>(exp, axis);
+        const auto reduce_sum = ov::snippets::op::ReduceSum::make_reduce_sum(exp, axis);
         const auto power = std::make_shared<ov::snippets::op::PowerStatic>(reduce_sum, -1.f);
         const auto multiply = std::make_shared<ov::op::v1::Multiply>(exp, power);
 
@@ -55,10 +55,6 @@ SoftmaxDecomposition::SoftmaxDecomposition() {
         for (size_t i = axis; i < rank; ++i)
             subtensor[i] = PortDescriptor::ServiceDimensions::FULL_DIM;
 
-        PortDescriptorUtils::set_port_descriptor_ptr(reduce_max->input(0), std::make_shared<PortDescriptor>(reduce_max->input(0), subtensor));
-        PortDescriptorUtils::set_port_descriptor_ptr(reduce_max->output(0), std::make_shared<PortDescriptor>(reduce_max->output(0), subtensor));
-        PortDescriptorUtils::set_port_descriptor_ptr(reduce_sum->input(0), std::make_shared<PortDescriptor>(reduce_sum->input(0), subtensor));
-        PortDescriptorUtils::set_port_descriptor_ptr(reduce_sum->output(0), std::make_shared<PortDescriptor>(reduce_sum->output(0), subtensor));
         PortDescriptorUtils::set_port_descriptor_ptr(power->input(0), std::make_shared<PortDescriptor>(power->input(0), subtensor));
         PortDescriptorUtils::set_port_descriptor_ptr(power->output(0), std::make_shared<PortDescriptor>(power->output(0), subtensor));
 

@@ -14,7 +14,7 @@ namespace op {
 /**
  * @interface ReduceBase
  * @brief Base class for reduce operations.
- * @arg m_axis reduce axis.
+ * @param m_axis reduce axis.
  * @ingroup snippets
  */
 class ReduceBase : public ov::op::Op {
@@ -41,6 +41,12 @@ public:
     static std::set<ov::element::TypeVector> get_supported_precisions(const std::shared_ptr<ov::Node>& node) {
         return {{ov::element::f32}};
     }
+    /**
+     * @brief Creates ReduceSum operation, computes and sets input/output subtensors
+     * @param x Reduce input
+     * @param axis Reduce axis
+     */
+    static std::shared_ptr<ReduceSum> make_reduce_sum(const Output<Node>& x, size_t axis);
 };
 
 class ReduceMax : public ReduceBase {
@@ -52,6 +58,12 @@ public:
     static std::set<ov::element::TypeVector> get_supported_precisions(const std::shared_ptr<ov::Node>& node) {
         return {{ov::element::f32}};
     }
+    /**
+     * @brief Creates ReduceMax operation, computes and sets input/output subtensors
+     * @param x Reduce input
+     * @param axis Reduce axis
+     */
+    static std::shared_ptr<ReduceMax> make_reduce_max(const Output<Node>& x, size_t axis);
 };
 
 } // namespace op

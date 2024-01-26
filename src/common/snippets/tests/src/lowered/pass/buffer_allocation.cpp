@@ -129,7 +129,7 @@ std::shared_ptr<ov::Model> MHABufferAllocationTest::GetModel() const {
     const auto subtensor_scalar = std::vector<size_t>{1};
     const auto subtensor_eltwise = std::vector<size_t>{1, m_vector_size};
     const auto subtensor_brgemm = std::vector<size_t>{32, ov::snippets::lowered::PortDescriptor::ServiceDimensions::FULL_DIM};
-    const auto subtensor_softmax = std::vector<size_t>{1, ov::snippets::lowered::PortDescriptor::ServiceDimensions::FULL_DIM};
+    const auto subtensor_power = std::vector<size_t>{1, ov::snippets::lowered::PortDescriptor::ServiceDimensions::FULL_DIM};
 
     const auto parameter0 = std::make_shared<ov::op::v0::Parameter>(ov::element::f32, ov::PartialShape({1, 12, 128, 64}));
     const auto parameter1 = std::make_shared<ov::op::v0::Parameter>(ov::element::f32, ov::PartialShape({1, 128, 12, 64}));
@@ -142,11 +142,11 @@ std::shared_ptr<ov::Model> MHABufferAllocationTest::GetModel() const {
     const auto relu1 = std::make_shared<ov::op::v0::Relu>(matmul0);
 
     // Decomposed Softmax
-    const auto reduce_max = std::make_shared<ov::snippets::op::ReduceMax>(relu1, 3);
+    const auto reduce_max = ov::snippets::op::ReduceMax::make_reduce_max(relu1, 3);
     const auto subtract = std::make_shared<ov::op::v1::Subtract>(relu1, reduce_max);
     const auto exp = std::make_shared<ov::op::v0::Exp>(subtract);
 
-    const auto reduce_sum = std::make_shared<ov::snippets::op::ReduceSum>(exp, 3);
+    const auto reduce_sum = ov::snippets::op::ReduceSum::make_reduce_sum(exp, 3);
     const auto power = std::make_shared<ov::snippets::op::PowerStatic>(reduce_sum, -1.f);
     const auto multiply = std::make_shared<ov::op::v1::Multiply>(exp, power);
 
@@ -157,9 +157,7 @@ std::shared_ptr<ov::Model> MHABufferAllocationTest::GetModel() const {
 
     MarkOp(load_reshape, subtensor_scalar);
     MarkOp(store, subtensor_scalar);
-    MarkOp(reduce_max, subtensor_softmax);
-    MarkOp(reduce_sum, subtensor_softmax);
-    MarkOp(power, subtensor_softmax);
+    MarkOp(power, subtensor_power);
 
     MarkBrgemm(matmul0, subtensor_brgemm);
     MarkBrgemm(matmul1, subtensor_brgemm);

@@ -169,10 +169,10 @@ auto is_supported_op(const std::shared_ptr<const Node> &n) -> bool {
         if (ov::is_type<const ov::op::v1::ReduceMax>(n) || ov::is_type<const ov::op::v1::ReduceSum>(n)) {
             const auto& reduce_base = ov::as_type_ptr<const ov::op::util::ArithmeticReductionKeepDims>(n);
             const auto& axis_constant = ov::as_type_ptr<const ov::op::v0::Constant>(n->get_input_node_shared_ptr(1));
-            if (!reduce_base->get_keep_dims() || !axis_constant || shape_size(axis_constant->get_shape()) != 1)
+            const auto rank = n->get_input_partial_shape(0).rank();
+            if (rank.is_dynamic() || !reduce_base->get_keep_dims() || !axis_constant || shape_size(axis_constant->get_shape()) != 1)
                 return false;
 
-            const auto rank = n->get_input_partial_shape(0).rank();
             const auto axis_value = axis_constant->cast_vector<int32_t>(1)[0];
             const auto normalized_axis = ov::util::normalize_axis(n->get_friendly_name(), axis_value, rank);
             // Note: Reduction only over the last dimension is currently supported

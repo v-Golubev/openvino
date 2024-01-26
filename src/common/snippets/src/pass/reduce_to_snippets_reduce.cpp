@@ -29,23 +29,19 @@ snippets::pass::ReduceToSnippetsReduce::ReduceToSnippetsReduce() {
         const auto& axis_constant = ov::as_type_ptr<ov::op::v0::Constant>(reduce->get_input_node_shared_ptr(1));
         // Note: we do not check the Constant value here. If the Reduce was tokenized, then we assume that it is supported
         OPENVINO_ASSERT(reduce_base->get_keep_dims() && axis_constant, "Unspported Reduce was tokenized by Snippets");
+
         const auto& data_input = reduce->get_input_source_output(0);
         const auto reduce_rank = reduce->get_input_partial_shape(0).rank();
+        OPENVINO_ASSERT(reduce_rank.is_static(), "ReduceToSnippetsReduce doesn't support dynamic ranks.");
         const auto axis = ov::util::normalize_axis(reduce->get_friendly_name(), axis_constant->cast_vector<int32_t>(1)[0], reduce_rank);
 
         std::shared_ptr<snippets::op::ReduceBase> snippets_reduce = nullptr;
         if (ov::is_type<ov::op::v1::ReduceSum>(reduce))
-            snippets_reduce = std::make_shared<snippets::op::ReduceSum>(data_input, axis);
+            snippets_reduce = ov::snippets::op::ReduceSum::make_reduce_sum(data_input, axis);
         else if (ov::is_type<ov::op::v1::ReduceMax>(reduce))
-            snippets_reduce = std::make_shared<snippets::op::ReduceMax>(data_input, axis);
+            snippets_reduce = ov::snippets::op::ReduceMax::make_reduce_max(data_input, axis);
         else
             OPENVINO_THROW("Reduce ", reduce, " can't be converted to snippets opset.");
-
-        std::vector<size_t> subtensor(reduce_rank.get_length(), 1);
-        for (auto i = axis; i < reduce_rank.get_length(); ++i)
-            subtensor[i] = PortDescriptor::ServiceDimensions::FULL_DIM;
-        PortDescriptorUtils::set_port_descriptor_ptr(snippets_reduce->input(0), std::make_shared<PortDescriptor>(snippets_reduce->input(0), subtensor));
-        PortDescriptorUtils::set_port_descriptor_ptr(snippets_reduce->output(0), std::make_shared<PortDescriptor>(snippets_reduce->output(0), subtensor));
 
         ov::replace_node(reduce, snippets_reduce);
         snippets_reduce->set_friendly_name(reduce->get_friendly_name());
