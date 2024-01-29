@@ -144,9 +144,14 @@ bool UpdateSubtensors::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Lin
     return true;
 }
 
-bool UpdateSubtensors::can_be_merged(const std::shared_ptr<pass::PassBase>& other) {
+std::shared_ptr<pass::PassBase> UpdateSubtensors::merge(const std::shared_ptr<pass::PassBase>& other) {
+    const auto merged_pass = std::make_shared<UpdateSubtensors>(m_tail_size);
+    if (other == nullptr)
+        return merged_pass;
     const auto casted_pass = ov::as_type_ptr<UpdateSubtensors>(other);
-    return casted_pass && m_tail_size == casted_pass->m_tail_size;
+    if (!casted_pass || m_tail_size != casted_pass->m_tail_size)
+        return nullptr;
+    return merged_pass;
 }
 
 } // namespace pass

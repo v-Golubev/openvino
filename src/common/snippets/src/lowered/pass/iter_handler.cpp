@@ -48,9 +48,14 @@ bool UpdateMemoryAccessCounts::run(LinearIR& linear_ir, LinearIR::constExprIt be
     return status;
 }
 
-bool UpdateMemoryAccessCounts::can_be_merged(const std::shared_ptr<pass::PassBase>& other) {
+std::shared_ptr<pass::PassBase> UpdateMemoryAccessCounts::merge(const std::shared_ptr<pass::PassBase>& other) {
+    const auto merged_pass = std::make_shared<UpdateMemoryAccessCounts>(m_count);
+    if (other == nullptr)
+        return merged_pass;
     const auto casted_pass = ov::as_type_ptr<UpdateMemoryAccessCounts>(other);
-    return casted_pass && m_count == casted_pass->m_count;
+    if (!casted_pass || m_count != casted_pass->m_count)
+        return nullptr;
+    return merged_pass;
 }
 
 SetFillOffset::SetFillOffset(size_t offset) : RangedPass(), m_offset(offset) {}
@@ -65,9 +70,14 @@ bool SetFillOffset::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linear
     return true;
 }
 
-bool SetFillOffset::can_be_merged(const std::shared_ptr<pass::PassBase>& other) {
+std::shared_ptr<pass::PassBase> SetFillOffset::merge(const std::shared_ptr<pass::PassBase>& other) {
+    const auto merged_pass = std::make_shared<SetFillOffset>(m_offset);
+    if (other == nullptr)
+        return merged_pass;
     const auto casted_pass = ov::as_type_ptr<SetFillOffset>(other);
-    return casted_pass && m_offset == casted_pass->m_offset;
+    if (!casted_pass || m_offset != casted_pass->m_offset)
+        return nullptr;
+    return merged_pass;
 }
 
 TransformInnerSplitLoop::TransformInnerSplitLoop(size_t tail_size) : RangedPass(), m_tail_size(tail_size) {}
@@ -116,9 +126,14 @@ bool TransformInnerSplitLoop::run(LinearIR& linear_ir, LinearIR::constExprIt beg
     return modified;
 }
 
-bool TransformInnerSplitLoop::can_be_merged(const std::shared_ptr<pass::PassBase>& other) {
+std::shared_ptr<pass::PassBase> TransformInnerSplitLoop::merge(const std::shared_ptr<pass::PassBase>& other) {
+    const auto merged_pass = std::make_shared<TransformInnerSplitLoop>(m_tail_size);
+    if (other == nullptr)
+        return merged_pass;
     const auto casted_pass = ov::as_type_ptr<TransformInnerSplitLoop>(other);
-    return casted_pass && m_tail_size == casted_pass->m_tail_size;
+    if (!casted_pass || m_tail_size != casted_pass->m_tail_size)
+        return nullptr;
+    return merged_pass;
 }
 
 } // namespace pass

@@ -24,7 +24,7 @@ public:
     UpdateMemoryAccessCounts(size_t count);
     OPENVINO_RTTI("UpdateMemoryAccessCounts", "RangedPass")
     bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
-    bool can_be_merged(const std::shared_ptr<pass::PassBase>& other) override;
+    std::shared_ptr<pass::PassBase> merge(const std::shared_ptr<pass::PassBase>& other) override;
 
 private:
     size_t m_count;
@@ -41,7 +41,7 @@ public:
     SetFillOffset(size_t offset);
     OPENVINO_RTTI("SetFillOffset", "RangedPass")
     bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
-    bool can_be_merged(const std::shared_ptr<pass::PassBase>& other) override;
+    std::shared_ptr<pass::PassBase> merge(const std::shared_ptr<pass::PassBase>& other) override;
 
 private:
     size_t m_offset;
@@ -58,7 +58,7 @@ public:
     TransformInnerSplitLoop(size_t tail_size);
     OPENVINO_RTTI("TransformInnerSplitLoop", "RangedPass")
     bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
-    bool can_be_merged(const std::shared_ptr<pass::PassBase>& other) override;
+    std::shared_ptr<pass::PassBase> merge(const std::shared_ptr<pass::PassBase>& other) override;
 
 private:
     size_t m_tail_size;

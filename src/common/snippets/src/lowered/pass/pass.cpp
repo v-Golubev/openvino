@@ -54,19 +54,22 @@ void PassPipeline::register_positioned_passes(const std::vector<PositionedPassLo
 PassPipeline PassPipeline::merge_pipelines(const PassPipeline& lhs, const PassPipeline& rhs) {
     OPENVINO_ASSERT(*lhs.get_pass_config() == *rhs.get_pass_config(), "2 passes with different PassConfigs can't be merged.");
     const auto& lhs_passes = lhs.get_passes();
-    std::unordered_map<ov::DiscreteTypeInfo, std::shared_ptr<lowered::pass::PassBase>> passes_map;
+    std::unordered_map<ov::DiscreteTypeInfo, std::shared_ptr<lowered::pass::PassBase>> lhs_passes_map;
     for (const auto& pass : lhs_passes) {
-        passes_map[pass->get_type_info()] = pass;
+        lhs_passes_map[pass->get_type_info()] = pass;
+    }
+    OPENVINO_ASSERT(lhs_passes_map.size() == lhs_passes.size(), "The pass pipeline must not contain several passes with equal type info");
+
+    PassPipeline merged_pipeline;
+    for (const auto& rhs_pass : rhs.get_passes()) {
+        const auto lhs_pass = rhs_pass->merge(lhs_passes_map[rhs_pass->get_type_info()]);
+        OPENVINO_ASSERT(lhs_pass, "2 passes with type info ", rhs_pass->get_type_info(), " can't be merged.");
+        merged_pipeline.register_pass(lhs_pass);
+        lhs_passes_map.erase(rhs_pass->get_type_info());
     }
 
-    auto merged_pipeline = lhs;
-    for (const auto& pass : rhs.get_passes()) {
-        auto lhs_pass_it = passes_map.find(pass->get_type_info());
-        if (lhs_pass_it == passes_map.end()) {
-            merged_pipeline.register_pass(pass);
-        } else {
-            OPENVINO_ASSERT(lhs_pass_it->second->can_be_merged(pass), "2 passes with type info ", pass->get_type_info(), " can't be merged.");
-        }
+    for (const auto& rest_pass : lhs_passes_map) {
+        merged_pipeline.register_pass(rest_pass.second);
     }
     return merged_pipeline;
 }

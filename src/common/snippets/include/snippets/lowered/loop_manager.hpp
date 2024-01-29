@@ -56,21 +56,28 @@ public:
             const lowered::pass::PassPipeline& get_last_iter_handelrs() const;
             static SpecificIterationHandlers merge_handlers(const SpecificIterationHandlers& lhs, const SpecificIterationHandlers& rhs);
 
-            template <HandlerType Type, typename T, class... Args>
+            template <HandlerType Type,
+                      typename T,
+                      class... Args,
+                      typename std::enable_if<Type == HandlerType::FIRST_ITER, bool>::type = true>
             void register_handler(Args&&... args) {
-                switch (Type) {
-                    case HandlerType::FIRST_ITER:
-                        m_first_iter_handlers.register_pass<T>(args...);
-                        break;
-                    case HandlerType::MAIN_BODY:
-                        m_main_body_handlers.register_pass<T>(args...);
-                        break;
-                    case HandlerType::LAST_ITER:
-                        m_last_iter_handlers.register_pass<T>(args...);
-                        break;
-                    default:
-                        OPENVINO_THROW("register_handler is called for unknown HandlerType.");
-                }
+                m_first_iter_handlers.register_pass<T>(args...);
+            }
+
+            template <HandlerType Type,
+                      typename T,
+                      class... Args,
+                      typename std::enable_if<Type == HandlerType::MAIN_BODY, bool>::type = true>
+            void register_handler(Args&&... args) {
+                m_main_body_handlers.register_pass<T>(args...);
+            }
+
+            template <HandlerType Type,
+                      typename T,
+                      class... Args,
+                      typename std::enable_if<Type == HandlerType::LAST_ITER, bool>::type = true>
+            void register_handler(Args&&... args) {
+                m_last_iter_handlers.register_pass<T>(args...);
             }
 
         private:

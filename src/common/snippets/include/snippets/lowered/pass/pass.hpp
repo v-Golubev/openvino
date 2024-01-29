@@ -41,12 +41,14 @@ public:
     }
 
     /**
-     * @brief Checks if the current pass can be merged with another one (e.g. during 2 pass pipelines fusion)
+     * @brief Merges the current pass with other (e.g. during 2 pass pipelines fusion).
      * @param other  Pointer on the another pass.
-     * @return bool value indicating whether the passes can be merged or not
+     * @return The merged pass
+     * @attention If 'other' pass is empty (aka nullptr), it can be merged to any other pass.
+     * @attention If the merge fails, then nullptr is returned.
      */
-    virtual bool can_be_merged(const std::shared_ptr<PassBase>& other) {
-        return false;
+    virtual std::shared_ptr<PassBase> merge(const std::shared_ptr<PassBase>& other) {
+        return nullptr;
     }
 };
 
