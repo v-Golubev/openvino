@@ -3,6 +3,7 @@
 //
 
 #include "jit_brgemm_emitter.hpp"
+#include "jit_kernel_emitter.hpp"
 
 #include "snippets/utils.hpp"
 #include "snippets/lowered/expression.hpp"
@@ -21,7 +22,6 @@ using namespace dnnl::impl::cpu::x64;
 
 namespace ov {
 namespace intel_cpu {
-
 size_t jit_brgemm_emitter::get_in_leading_dim(const VectorDims& shape, const std::vector<size_t>& layout) {
     // Input shape is original, so we need to correctly read this data by order
     // Example:
@@ -49,7 +49,10 @@ size_t jit_brgemm_emitter::get_out_leading_dim(const VectorDims& shape, const st
     return std::accumulate(shape.cbegin() + dim + 1, shape.cend(), 1, std::multiplies<size_t>()); // shape[1] x shape[2] x shape[3] = 2 x 7 x 39
 }
 
-jit_brgemm_emitter::jit_brgemm_emitter(jit_generator* h, cpu_isa_t isa, const ov::snippets::lowered::ExpressionPtr& expr) : jit_emitter(h, isa) {
+std::atomic<int> jit_brgemm_emitter::m_next_id(0);
+
+jit_brgemm_emitter::jit_brgemm_emitter(jit_generator* h, cpu_isa_t isa, const ov::snippets::lowered::ExpressionPtr& expr) : jit_emitter(h, isa),
+    m_brgemm_id(m_next_id.fetch_add(1)) {
     in_out_type_ = emitter_in_out_map::gpr_to_gpr;
     const auto& brgemm_node = as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node());
     OV_CPU_JIT_EMITTER_ASSERT(!brgemm_node->is_dynamic(), "Snippets don't support code generation for dynamic Brgemm");
@@ -87,12 +90,8 @@ jit_brgemm_emitter::jit_brgemm_emitter(jit_generator* h, cpu_isa_t isa, const ov
 
     const auto& brg0Prc = brgemm_node->get_input_element_type(0);
     const auto& brg1Prc = brgemm_node->get_input_element_type(1);
+    const auto& outPrc = brgemm_node->get_output_element_type(0);
     bool with_amx = brgemm_node->is_amx();
-
-    io_data_size = {brg0Prc.size(), brg1Prc.size()};
-    if (brgemm_node->get_input_size() == 3)
-        io_data_size.push_back(brgemm_node->get_input_element_type(2).size());
-    io_data_size.push_back(brgemm_node->get_output_element_type(0).size());
 
     m_with_comp = brgemm_node->is_with_compensations();
     m_with_scratch = brgemm_node->is_with_scratchpad();
@@ -116,7 +115,27 @@ jit_brgemm_emitter::jit_brgemm_emitter(jit_generator* h, cpu_isa_t isa, const ov
     m_ctx.LDC = leading_dimensions[2];
     m_ctx.dt_in0 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(brg0Prc));
     m_ctx.dt_in1 = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(brg1Prc));
+    m_ctx.dt_out = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(outPrc));
     m_ctx.beta = brgemm_node->get_beta();
+    m_ctx.id = m_brgemm_id;
+
+    std::cout << "[ Compilation ] Brgemm Type = ";
+    auto type = brgemm_node->get_type();
+    if (type == BrgemmCPU::Type::AMX) {
+        std::cout << "AMX\n";
+        std::cout << "\tid: " << m_brgemm_id << std::endl;
+        std::cout << "\tM = " << m_ctx.M << std::endl;
+        std::cout << "\tK = " << m_ctx.K << std::endl;
+        std::cout << "\tN = " << m_ctx.N << std::endl;
+    } else if (type == BrgemmCPU::Type::Floating) {
+        std::cout << "Floating\n";
+    } else if (type == BrgemmCPU::Type::WithCompensations) {
+        std::cout << "WithCompensations\n";
+    } else if (type == BrgemmCPU::Type::WithDataRepacking) {
+        std::cout << "WithDataRepacking\n";
+    } else {
+        OPENVINO_THROW("Unknown brgemm type");
+    }
 
     init_brgemm_kernel(m_ctx, m_kernel, with_amx);
 
@@ -159,8 +178,6 @@ void jit_brgemm_emitter::init_brgemm_kernel(brgemmCtx& ctx, std::unique_ptr<brge
 
     ctx.is_with_amx = use_amx;
     status = brgemm_init_tiles(desc, ctx.palette);
-    if (use_amx)
-        amx_tile_configure(ctx.palette);
 
     ctx.is_with_comp = ctx.dt_in0 == dnnl_data_type_t::dnnl_s8 && !ctx.is_with_amx;
 
@@ -184,7 +201,6 @@ void jit_brgemm_emitter::emit_impl(const std::vector<size_t>& in, const std::vec
         Xbyak::Reg64 input_2(static_cast<int>(m_with_scratch ? in[2] : 0));  // scratch. Default reg index is 0 if there isn't scratch
         Xbyak::Reg64 output_0(static_cast<int>(out[0]));
         emit_brgemm_kernel_call(m_kernel.get(),
-                                m_ctx,
                                 input_0,
                                 input_1,
                                 input_2,
@@ -198,42 +214,25 @@ void jit_brgemm_emitter::emit_impl(const std::vector<size_t>& in, const std::vec
     }
 }
 
-void jit_brgemm_emitter::emit_brgemm_kernel_call(const brgemm_kernel_t *brg_kernel, const brgemmCtx& ctx,
+void jit_brgemm_emitter::emit_brgemm_kernel_call(const brgemm_kernel_t *brg_kernel,
                                                  Reg64 addr_A, Reg64 addr_B, Reg64 scratch, Reg64 addr_C,
                                                  const size_t in0_kernel_offset, const size_t in1_kernel_offset,
                                                  const size_t in2_kernel_offset, const size_t out0_kernel_offset) const {
-    constexpr size_t gpr_size = 8;
-    if (ctx.is_with_amx) {
-        Xbyak::Operand gprs_to_save[] = {h->r8, h->r9, h->r10, h->r11, h->rax,
-                                         h->rcx, h->rdx, h->rdi, h->rsi, h->rbp, h->rbx};
-        size_t n_gprs_to_save = sizeof(gprs_to_save) / sizeof(gprs_to_save[0]);
+    if (m_ctx.is_with_amx) {
+        internal_call_preamble();
+        const auto& tile_configure_overload =
+            static_cast<void (*)(jit_snippets_call_args*, brgemmCtx*)>(amx_tile_configure_if_needed);
+        h->mov(h->rbp, reinterpret_cast<uintptr_t>(tile_configure_overload));
+        h->mov(abi_param2, reinterpret_cast<uintptr_t>(&m_ctx));
 
-        h->sub(h->rsp, n_gprs_to_save * gpr_size);
-        for (size_t i = 0; i < n_gprs_to_save; ++i)
-            h->mov(h->ptr[h->rsp + i * gpr_size], gprs_to_save[i]);
-
-        // save function address in gpr to pass in call instruction
-        const auto& overload = static_cast<status_t(*)(const char*)>(amx_tile_configure);
-        h->mov(h->rbp, reinterpret_cast<uintptr_t>(overload));
-        h->mov(abi_param1, reinterpret_cast<uintptr_t>(ctx.palette));
-
-        // align stack on 16-byte as ABI requires
-        // note that RBX must not be changed by the callee
-        h->mov(h->rbx, h->rsp);
-        h->and_(h->rbx, 0xf);
-        h->sub(h->rsp, h->rbx);
-
+        internal_call_rsp_align();
         h->call(h->rbp);
+        internal_call_rsp_restore();
 
-        h->add(h->rsp, h->rbx);
-        // restore gpr registers
-        for (int i = n_gprs_to_save - 1; i >= 0; --i)
-            h->mov(gprs_to_save[i], h->ptr[h->rsp + i * gpr_size]);
-        h->add(h->rsp, n_gprs_to_save * gpr_size);
+        internal_call_postamble();
     }
 
     internal_call_preamble();
-
     // save function address in gpr to pass in call instruction
     const auto& brgemm_kernel_overload = static_cast<void (*)(const brgemm_kernel_t*,
                                                               const void*,
@@ -297,6 +296,21 @@ void jit_brgemm_emitter::emit_brgemm_kernel_call(const brgemm_kernel_t *brg_kern
     internal_call_postamble();
 }
 
+void jit_brgemm_emitter::amx_tile_configure_if_needed(jit_snippets_call_args* call_args, brgemmCtx* ctx) {
+    OPENVINO_ASSERT(call_args);
+    auto& amx_tile_config = call_args->tile_config;
+    OPENVINO_ASSERT(amx_tile_config);
+    if (ctx->M != amx_tile_config->M || ctx->K != amx_tile_config->K || ctx->N != amx_tile_config->N) {
+        amx_tile_config->M = ctx->M;
+        amx_tile_config->K = ctx->K;
+        amx_tile_config->N = ctx->N;
+        amx_tile_configure(ctx->palette);
+        std::cout << " Configure\n";
+    } else {
+        std::cout << " Skipped\n";
+    }
+}
+
 void jit_brgemm_emitter::kernel_execute(const brgemm_kernel_t *brg_kernel, const void *A, const void *B, void *C, void *scratch, int with_comp) {
     brgemm_kernel_params_t brgemm_p;
 
@@ -312,6 +326,7 @@ void jit_brgemm_emitter::kernel_execute(const brgemm_kernel_t *brg_kernel, const
     brgemm_p.skip_accm = 0;
     brgemm_p.BS = 1;  // default value
     OV_CPU_JIT_EMITTER_ASSERT(brg_kernel != nullptr, "has nullptr kernel");
+
     (*brg_kernel)(&brgemm_p);
 }
 

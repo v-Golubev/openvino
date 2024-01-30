@@ -18,9 +18,18 @@ namespace intel_cpu {
 #define SNIPPETS_DYNAMIC_MASTER_SHAPE_RANK 6
 #define GET_OFF(field) offsetof(jit_snippets_call_args, field)
 struct jit_snippets_call_args {
+    struct amx_tile_config_t;
+
     const void *src_ptrs[SNIPPETS_MAX_SNIPPETS_DIMS] = {};
     void *dst_ptrs[SNIPPETS_MAX_SNIPPETS_DIMS] = {};
     void *buffer_scratchpad_ptr = nullptr;
+    amx_tile_config_t* tile_config = nullptr;
+};
+
+struct jit_snippets_call_args::amx_tile_config_t {
+    size_t M = 0;
+    size_t K = 0;
+    size_t N = 0;
 };
 
 struct jit_snippets_compile_args {
@@ -75,8 +84,8 @@ private:
     std::vector<size_t> data_ptr_regs_idx;
     std::vector<size_t> vec_regs_pool;
 
-    const size_t reg_indexes_idx;
     const size_t reg_const_params_idx;
+    const size_t reg_indexes_idx;
 
 #ifdef SNIPPETS_DEBUG_CAPS
     friend std::string init_info_jit_kernel_emitter(const jit_kernel_emitter *emitter);

@@ -25,7 +25,7 @@ inline static std::vector<size_t> transform_snippets_regs_to_idxs(const std::vec
 }
 
 jit_kernel_emitter::jit_kernel_emitter(jit_generator* h, cpu_isa_t isa, const ov::snippets::lowered::ExpressionPtr& expr)
-    : jit_container_emitter(h, isa), reg_indexes_idx(abi_param1.getIdx()), reg_const_params_idx(abi_param2.getIdx()) {
+    : jit_container_emitter(h, isa), reg_const_params_idx(abi_param1.getIdx()), reg_indexes_idx(abi_param2.getIdx()) {
     const auto kernel = ov::as_type_ptr<snippets::op::Kernel>(expr->get_node());
     OV_CPU_JIT_EMITTER_ASSERT(kernel != nullptr, "invoked with invalid op argument");
     OV_CPU_JIT_EMITTER_ASSERT(!kernel->region.empty(), "invoked with empty body");
@@ -91,7 +91,7 @@ jit_kernel_emitter::jit_kernel_emitter(jit_generator* h, cpu_isa_t isa, const ov
     // Reserve stack base and pointer for push(...) and pop(...) operations
     // Reserve abi_param1 and abi_param2, since they'll be used to pass runtime call args to kernel
     remove_regs_from_pool(gp_regs_pool, {Xbyak::Operand::RSP, Xbyak::Operand::RBP,
-                                         reg_indexes_idx, reg_const_params_idx});
+                                         reg_const_params_idx, reg_indexes_idx});
 
     mapping_info gpr_map_pool({}, gp_regs_pool);
     mapping_info vec_map_pool({}, vec_regs_pool);
@@ -123,8 +123,8 @@ jit_kernel_emitter::jit_kernel_emitter(jit_generator* h, cpu_isa_t isa, const ov
         data_ptr_regs_idx.push_back(abstract_to_physical.second);
     // However we can use reg_indexes_idx and reg_const_params_idx for other operations since we won't need them
     // after offsets calculation
-    gpr_map_pool.second.push_back(reg_indexes_idx);
     gpr_map_pool.second.push_back(reg_const_params_idx);
+    gpr_map_pool.second.push_back(reg_indexes_idx);
     map_abstract_registers(gpr_map_pool, vec_map_pool, general_exprs);
 }
 
@@ -247,6 +247,7 @@ void jit_kernel_emitter::emit_impl(const std::vector<size_t>& in, const std::vec
         const auto& emitter = expression->get_emitter();
         emitter->emit_code(in_regs, out_regs, vec_regs_pool, gp_regs_pool);
     }
+
     h->postamble();
 }
 
