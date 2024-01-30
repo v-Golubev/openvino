@@ -51,13 +51,6 @@ public:
     virtual size_t get_lanes() const = 0;
 
     /**
-     * @brief reports supported precisions set for nodes which don't have emitters
-     * @param type node type for which the supported precisions set is requested
-     * @return set of supported precisions for the provided node type
-     */
-    virtual std::set<ov::element::TypeVector> supported_precisions_for_emitterless_node(const ov::DiscreteTypeInfo& type) const;
-
-    /**
      * @brief called by generator to all the emitter for a target machine
      * @return a map by node's type info with callbacks to create an instance of emitter for corresponding operation type
      */

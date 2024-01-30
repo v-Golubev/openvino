@@ -33,7 +33,6 @@ public:
     snippets::CompiledSnippetPtr get_snippet() override;
     size_t get_lanes() const override;
     dnnl::impl::cpu::x64::cpu_isa_t get_isa() const;
-    std::set<ov::element::TypeVector> supported_precisions_for_emitterless_node(const ov::DiscreteTypeInfo& type) const override;
 #ifdef SNIPPETS_DEBUG_CAPS
     SnippetsDebugCapsConfig debug_config;
 #endif
