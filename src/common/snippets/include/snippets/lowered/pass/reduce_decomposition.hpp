@@ -17,14 +17,14 @@ namespace pass {
  * @attention Only Reduce by last dimension is supported
  * @ingroup snippets
  */
-class ReduceDecomposition : public Pass {
+class ReduceDecomposition : public RangedPass {
 public:
-    OPENVINO_RTTI("ReduceDecomposition", "Pass")
+    OPENVINO_RTTI("ReduceDecomposition", "RangedPass")
     explicit ReduceDecomposition(size_t vector_size);
-    bool run(LinearIR& linear_ir) override;
+    bool run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) override;
 
 private:
-    size_t m_vector_size;
+    size_t m_vector_size = 0;
 };
 
 } // namespace pass

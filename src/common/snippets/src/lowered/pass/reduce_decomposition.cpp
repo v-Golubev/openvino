@@ -51,13 +51,13 @@ std::shared_ptr<ov::Node> get_horizon_node(const ov::Output<ov::Node>& input, co
 using LoopInfo = LinearIR::LoopManager::LoopInfo;
 using HandlerType = LoopInfo::SpecificIterationHandlers::HandlerType;
 
-ReduceDecomposition::ReduceDecomposition(size_t vector_size) : m_vector_size{vector_size} {}
+ReduceDecomposition::ReduceDecomposition(size_t vector_size) : RangedPass(), m_vector_size{vector_size} {}
 
-bool ReduceDecomposition::run(LinearIR& linear_ir) {
+bool ReduceDecomposition::run(LinearIR& linear_ir, LinearIR::constExprIt begin, LinearIR::constExprIt end) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::ReduceMaxDecompositionLowered")
     const auto& loop_manager = linear_ir.get_loop_manager();
     bool modified = false;
-    for (auto expr_it = linear_ir.begin(); expr_it != linear_ir.end(); expr_it++) {
+    for (auto expr_it = begin; expr_it != end; expr_it++) {
         const auto& reduce_expr = *expr_it;
         const auto& reduce = ov::as_type_ptr<ov::snippets::op::ReduceBase>(reduce_expr->get_node());
         if (!reduce)

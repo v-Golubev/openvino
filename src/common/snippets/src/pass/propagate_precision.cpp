@@ -30,10 +30,6 @@ bool ov::snippets::pass::PropagatePrecision::run_on_model(const std::shared_ptr<
     bool was_updated = false;
     for (const auto& op : f->get_ordered_ops()) {
         auto type_info = op->get_type_info();
-        OPENVINO_ASSERT(
-            target_machine->has(type_info),
-            "operation '" + std::string(type_info.version_id) + "::" + std::string(type_info.name) + "' was not found in target machine");
-
         auto exec = target_machine->get_supported_precisions(type_info);
         const auto& supported_precisions = exec(op);
 

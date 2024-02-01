@@ -41,7 +41,6 @@ void Reduce::SetUp() {
     ov::test::utils::ReductionType reduce_type;
     std::vector<int> axes;
     bool keep_dims;
-    size_t num_nodes, num_subgraphs;
     std::tie(input_shape, reduce_type, axes, keep_dims, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
     init_input_shapes({input_shape});
 

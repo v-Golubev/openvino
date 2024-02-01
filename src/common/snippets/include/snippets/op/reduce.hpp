@@ -29,7 +29,7 @@ public:
     size_t get_axis() const { return m_axis; }
 
 protected:
-    size_t m_axis;
+    size_t m_axis = 0;
 };
 
 class ReduceSum : public ReduceBase {
