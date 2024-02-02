@@ -142,11 +142,13 @@ std::shared_ptr<ov::Model> MHABufferAllocationTest::GetModel() const {
     const auto relu1 = std::make_shared<ov::op::v0::Relu>(matmul0);
 
     // Decomposed Softmax
-    const auto reduce_max = ov::snippets::op::ReduceMax::make(relu1, 3);
+    const auto reduce_max = std::make_shared<ov::snippets::op::ReduceMax>(relu1, 3);
+    ov::snippets::op::ReduceBase::compute_and_set_reduce_subtensors(reduce_max);
     const auto subtract = std::make_shared<ov::op::v1::Subtract>(relu1, reduce_max);
     const auto exp = std::make_shared<ov::op::v0::Exp>(subtract);
 
-    const auto reduce_sum = ov::snippets::op::ReduceSum::make(exp, 3);
+    const auto reduce_sum = std::make_shared<ov::snippets::op::ReduceSum>(exp, 3);
+    ov::snippets::op::ReduceBase::compute_and_set_reduce_subtensors(reduce_sum);
     const auto power = std::make_shared<ov::snippets::op::PowerStatic>(reduce_sum, -1.f);
     const auto multiply = std::make_shared<ov::op::v1::Multiply>(exp, power);
 
