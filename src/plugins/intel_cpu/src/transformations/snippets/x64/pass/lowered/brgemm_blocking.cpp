@@ -74,18 +74,14 @@ bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linea
         auto in_1_subtensor = in_1_desc->get_subtensor();
         auto out_subtensor = out_desc->get_subtensor();
 
+        auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
+
         auto apply_m_blocking = [&]() {
             const auto& m = *(out_preordered_dims.rbegin() + 1);
-            const auto block_size_m = brgemm->get_m_block_size();
-            if (block_size_m >= m) {
-                *(in_0_subtensor.rbegin() + 1) = m;
-                *(out_subtensor.rbegin() + 1) = m;
-                return;
-            }
+            const auto block_size_m = brgemm->get_m_block_size() < m ? brgemm->get_m_block_size() : m;
 
             *(in_0_subtensor.rbegin() + 1) = block_size_m;
             *(out_subtensor.rbegin() + 1) = block_size_m;
-            auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
             std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), true),
                                           LoopPort(brgemm_expr->get_input_port(1), false)};
             if (brgemm->is_with_compensations()) {
@@ -100,16 +96,11 @@ bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linea
 
         auto apply_n_blocking = [&]() {
             const auto& n = *out_preordered_dims.rbegin();
-            const auto block_size_n = brgemm->get_n_block_size();
-            if (block_size_n >= n) {
-                *in_1_subtensor.rbegin() = n;
-                *out_subtensor.rbegin() = n;
-                return;
-            }
+            const auto block_size_n = brgemm->get_n_block_size() < n ? brgemm->get_n_block_size() : n;
 
             *in_1_subtensor.rbegin() = block_size_n;
             *out_subtensor.rbegin() = block_size_n;
-            auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
+            // auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
             std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), false),
                                           LoopPort(brgemm_expr->get_input_port(1), true)};
             if (brgemm->is_with_compensations()) {
@@ -125,17 +116,11 @@ bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linea
         auto apply_k_blocking = [&]() {
             const auto& k = *in_0_planar_dims.rbegin();
             OPENVINO_ASSERT(k == *(in_1_planar_dims.rbegin() + 1), "Brgemm input descriptors have different K dimension value.");
-            const auto block_size_k = brgemm->get_k_block_size();
-            if (block_size_k >= k) {
-                *in_0_subtensor.rbegin() = k;
-                *(in_1_subtensor.rbegin() + 1) = k;
-                brgemm->set_beta(0.f);
-                return;
-            }
+            const auto block_size_k = brgemm->get_k_block_size() < k ? brgemm->get_k_block_size() : k;
 
             *in_0_subtensor.rbegin() = block_size_k;
             *(in_1_subtensor.rbegin() + 1) = block_size_k;
-            auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
+            // auto loop_begin_it = expr_it, loop_end_it = std::next(expr_it);
             std::vector<LoopPort> entries{LoopPort(brgemm_expr->get_input_port(0), true, 0),
                                           LoopPort(brgemm_expr->get_input_port(1), true, 1)};
             if (brgemm->is_with_compensations()) {
