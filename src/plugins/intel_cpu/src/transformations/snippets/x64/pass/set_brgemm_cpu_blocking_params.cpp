@@ -67,7 +67,6 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         if (brgemm->is_with_data_repacking()) {
             const auto brgemm_copy_b = brgemm->get_brgemm_copy();
             const auto brgemmVNNIFactor = brgemm_copy_b->get_brgemm_vnni_factor();
-            std::cout << "[ INFO ] copy_b_block_size_k = " << k_blk << std::endl;
             OPENVINO_ASSERT(k_blk == K || k_blk % brgemmVNNIFactor == 0,
                             "Block size which is not divisible by 4 is not supported for brgemm data repacking.");
             brgemm_copy_b->set_k_block_size(k_blk);
@@ -77,6 +76,8 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
         brgemm->set_m_block_size(m_blk);
         brgemm->set_k_block_size(k_blk);
         brgemm->set_n_block_size(n_blk);
+        std::cout << "\t brgemm " << brgemm->get_friendly_name() << ": M = " << M << ", m_blk = " << m_blk
+                  << ", K = " << K << ", k_blk = " << k_blk << ", N = " << N << ", n_blk = " << n_blk << std::endl;
         return false;
     };
 
