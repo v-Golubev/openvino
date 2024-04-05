@@ -11,6 +11,7 @@
 #include "snippets/pass/mha_tokenization.hpp"
 #include "snippets/pass/gn_tokenization.hpp"
 #include "snippets/pass/collapse_subgraph.hpp"
+#include "openvino/pass/pattern/op/wrap_type.hpp"
 
 
 namespace ov {
@@ -73,6 +74,34 @@ bool EnumerateNodes::run_on_model(const std::shared_ptr<ov::Model> &m) {
     return true;
 }
 
+class RemoveReshapes: public ov::pass::MatcherPass {
+public:
+    OPENVINO_RTTI("RemoveReshapes", "0");
+    RemoveReshapes() {
+        using namespace ov::pass;
+        MATCHER_SCOPE(ExtractReshapesFromMHA);
+        auto input_m = pattern::any_input();
+        auto reshape_1_m = pattern::wrap_type<opset1::Reshape>({input_m, pattern::any_input()});
+        auto softmax_m = pattern::wrap_type<opset1::Softmax>({reshape_1_m});
+        auto reshape_2_m = pattern::wrap_type<opset1::Reshape>({softmax_m, pattern::any_input()});
+
+        matcher_pass_callback callback = [=](pattern::Matcher& m) {
+            OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::op::ExtractReshapesFromMHA")
+            const auto& pattern_map = m.get_pattern_value_map();
+            if (!std::getenv("REMOVE_RESHAPES")) {
+                return false;
+            }
+            const auto& input = pattern_map.at(input_m);
+            const auto& reshape_2 = pattern_map.at(reshape_2_m);
+            const auto new_sm = std::make_shared<ov::op::v1::Softmax>(input, 3);
+            std::cout << "Reshapes around softmax are deleted\n";
+            return ov::replace_output_update_name(reshape_2, new_sm->output(0));
+        };
+
+        auto m = std::make_shared<pattern::Matcher>(reshape_2_m, matcher_name);
+        register_matcher(m, callback);
+    }
+};
 
 bool SnippetsTokenization::run_on_model(const std::shared_ptr<ov::Model>& m) {
     RUN_ON_FUNCTION_SCOPE(SnippetsTokenization);
@@ -82,8 +111,9 @@ bool SnippetsTokenization::run_on_model(const std::shared_ptr<ov::Model>& m) {
     manager.register_pass<EnumerateNodes>();
     manager.register_pass<ExtractReshapesFromMHA>();
     manager.register_pass<TokenizeMHASnippets>(m_config);
+    manager.register_pass<RemoveReshapes>();
     manager.register_pass<TokenizeGNSnippets>();
-    manager.register_pass<TokenizeSnippets>();
+    // manager.register_pass<TokenizeSnippets>();
     manager.register_pass<CommonOptimizations>(m_config);
     manager.run_passes(m);
 

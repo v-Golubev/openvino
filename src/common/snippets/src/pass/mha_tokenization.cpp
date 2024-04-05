@@ -211,6 +211,9 @@ ov::snippets::pass::TokenizeMHASnippets::TokenizeMHASnippets(const SnippetsToken
         OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::op::TokenizeMHASnippets")
         auto& pattern_to_output = m.get_pattern_value_map();
 
+        if (std::getenv("DISABLE_MHA")) {
+            return false;
+        }
         // Queries + Key + Values = 3 standard inputs of MHA
         size_t potential_body_params_count = 3;
         // After some transformations, a different number of Constants for some operations may be created
@@ -548,7 +551,7 @@ ov::snippets::pass::TokenizeMHASnippets::TokenizeMHASnippets(const SnippetsToken
 
         // mark the Subgraph as Completed to not allow Snippets to include any nodes into the MHA Subgraph in common Tokenization
         SetSnippetsSubgraphType(subgraph, SnippetsSubgraphType::Completed);
-
+        std::cout << "MHA tokenization finished for node " << subgraph->get_friendly_name() << std::endl;
         return true;
 
         /* ================================ */

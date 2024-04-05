@@ -22,6 +22,7 @@
 #include "common/primitive_hashing_utils.hpp"
 #include "cpu/x64/cpu_isa_traits.hpp"
 #include "shape_inference/custom/matmul.hpp"
+#include <unistd.h>
 using namespace dnnl;
 
 
@@ -639,6 +640,11 @@ void MatMul::execute(dnnl::stream strm) {
         execPtr->exec(primArgs, strm);
     } else {
         OPENVINO_THROW(errorPrefix, " doesn't have an initialized executor");
+    }
+    if (getName() == "1530") {
+        if (auto value = std::getenv("SLEEP")) {
+            usleep(std::atoi(value));
+        }
     }
 }
 
