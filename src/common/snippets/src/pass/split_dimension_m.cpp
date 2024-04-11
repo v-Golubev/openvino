@@ -32,6 +32,14 @@ std::pair<size_t, size_t> ov::snippets::pass::SplitDimensionM::get_splited_dimen
                                                                                       size_t optimal_parallelism_work_amount) {
     std::pair<size_t, size_t> splited = { 1, m_dim };
 
+    if (auto value = std::getenv("NEW_M")) {
+        auto new_m = std::atoi(value);
+        splited.first = m_dim / new_m;
+        splited.second = new_m;
+        OPENVINO_ASSERT(m_dim % new_m == 0, "Incorrect custom split_m configuration");
+        return splited;
+    }
+
     const size_t lower_bound = optimal_parallelism_work_amount / batch_dim;
     if (lower_bound * batch_dim == optimal_parallelism_work_amount && m_dim % lower_bound == 0) {
         splited.first = lower_bound;
@@ -91,10 +99,14 @@ bool ov::snippets::pass::SplitDimensionM::split(const ov::Shape& shape, size_t o
     };
 
     // We skip optimization if the current batch is optimal for concurrency
-    if (is_optimized(batch_dim))
+    if (is_optimized(batch_dim)) {
+        std::cout << "is_optimized already\n";
         return false;
+    }
 
     std::tie(batch_m_dim, new_m_dim) = get_splited_dimensions(batch_dim, m_dim, optimal_parallelism_work_amount);
+    std::cout << "new batch dim = " << batch_dim * batch_m_dim << std::endl;
+    std::cout << "is_optimized = " << is_optimized(batch_dim * batch_m_dim) << std::endl;
     return is_optimized(batch_dim * batch_m_dim);
 }
 
