@@ -61,8 +61,8 @@ TransposeDecomposition::TransposeDecomposition() {
 
         // todo: LoadReshape used here is essentially Load + an easy way to maintain correct shape propagation
         //  fix this in future and develop a more consistent shape propagation approach.
-        auto load = std::make_shared<snippets::op::LoadReshape>(data_input, subtensor[0], 0, layout);
-        auto store = std::make_shared<snippets::op::Store>(load, subtensor[0]);
+        auto load = std::make_shared<snippets::op::LoadReshape>(data_input, 0, 0, layout);
+        auto store = std::make_shared<snippets::op::Store>(load, 0);
 
         PortDescriptorUtils::set_port_descriptor_ptr(load->input(0), std::make_shared<PortDescriptor>(load->get_input_shape(0), subtensor, layout));
         PortDescriptorUtils::set_port_descriptor_ptr(load->output(0), std::make_shared<PortDescriptor>(load->get_output_shape(0), subtensor));
