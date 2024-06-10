@@ -1350,22 +1350,8 @@ void Graph::InferDynamic(SyncInferRequest* request) {
         updateNodes.reset(new UpdateNodesSeq(m_executableGraphNodes));
     }
 
-    size_t inferCounter = 0;
     for (auto stopIndx : m_executableSyncNodesInds) {
         updateNodes->run(stopIndx);
-        for (; inferCounter < stopIndx; ++inferCounter) {
-            auto& node = m_executableGraphNodes[inferCounter];
-            VERBOSE(node, getConfig().debugCaps.verbose);
-            PERF(node, getConfig().collectPerfCounters);
-
-            if (request)
-                request->throw_if_canceled();
-            try {
-                ExecuteNode(node, stream);
-            } catch (const std::exception& exp) {
-                OPENVINO_THROW(node, exp.what());
-            }
-        }
     }
 }
 
