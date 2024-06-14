@@ -30,7 +30,7 @@ private:
 
     static snippets::lowered::LinearIR::constExprIt get_loop_begin_pos(snippets::lowered::LinearIR& linear_ir,
                                                                        const snippets::lowered::LinearIR::constExprIt& brgemm_it,
-                                                                       bool include_repacking = true);
+                                                                       const snippets::lowered::ExpressionPtr& copy_b_expr);
 };
 
 }  // namespace pass

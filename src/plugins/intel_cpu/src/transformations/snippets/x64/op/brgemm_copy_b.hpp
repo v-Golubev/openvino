@@ -46,13 +46,14 @@ public:
     void set_k_block_size(size_t block_size) { m_K_blk = block_size; }
     void set_n_block_size(size_t block_size) { m_N_blk = block_size; }
 
-    ov::Shape get_repacking_buffer_shape() const;
-    ov::Shape get_compensations_buffer_shape() const;
+    size_t get_repacking_buffer_size() const;
+    size_t get_compensations_buffer_size() const;
 
     Type get_type() const { return m_type; }
     size_t get_brgemm_vnni_factor() const { return m_brgemmVNNIFactor; }
     element::Type get_src_element_type() const { return m_src_type; }
     bool is_with_compensations() const { return m_type == Type::WithCompensations; }
+    bool with_transpose() const { return m_transpose; }
 
     bool visit_attributes(AttributeVisitor& visitor) override;
     void validate_and_infer_types() override;
@@ -81,6 +82,8 @@ private:
     // Consequently, in snippets emitter, we need to invoke the oneDNN kernel iterating accordingly to this block
     size_t m_inner_n_block = 0;
     size_t m_brgemmVNNIFactor = 1;
+    // Defines if OneDNN impl should use realization with transpose
+    bool m_transpose = false;
 };
 } // namespace intel_cpu
 

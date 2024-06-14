@@ -66,13 +66,13 @@ TransposeDecomposition::TransposeDecomposition() {
         auto store = std::make_shared<snippets::op::Store>(load, subtensor[0]);
 
         PortDescriptorUtils::set_port_descriptor_ptr(load->input(0),
-            std::make_shared<PortDescriptor>(utils::pshape_to_vdims(load->get_input_partial_shape(0)), subtensor, layout));
+            std::make_shared<PortDescriptor>(load->get_input_partial_shape(0), subtensor, layout));
         PortDescriptorUtils::set_port_descriptor_ptr(load->output(0),
-            std::make_shared<PortDescriptor>(utils::pshape_to_vdims(load->get_output_partial_shape(0)), subtensor));
+            std::make_shared<PortDescriptor>(load->get_output_partial_shape(0), subtensor));
         PortDescriptorUtils::set_port_descriptor_ptr(store->input(0),
-            std::make_shared<PortDescriptor>(utils::pshape_to_vdims(store->get_input_partial_shape(0)), subtensor));
+            std::make_shared<PortDescriptor>(store->get_input_partial_shape(0), subtensor));
         PortDescriptorUtils::set_port_descriptor_ptr(store->output(0),
-            std::make_shared<PortDescriptor>(utils::pshape_to_vdims(store->get_output_partial_shape(0)), subtensor));
+            std::make_shared<PortDescriptor>(store->get_output_partial_shape(0), subtensor));
 
         for (auto& input : transpose->output(0).get_target_inputs()) {
             input.replace_source_output(store->output(0));

@@ -116,6 +116,7 @@ bool broadcast_merge_dim(size_t& dst, const size_t& d1, const size_t& d2);
 
 VectorDims pshape_to_vdims(const PartialShape&);
 ov::PartialShape vdims_to_pshape(const VectorDims&);
+size_t dimension_to_size_t(const ov::Dimension&);
 
 // dim_idx starts from the layout end: dim_idx = 0 -> last element in layout (layout.back())
 inline size_t get_input_dim_idx(const std::vector<size_t>& layout, size_t dim_idx) {

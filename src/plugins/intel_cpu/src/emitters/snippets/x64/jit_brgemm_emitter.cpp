@@ -74,7 +74,8 @@ std::set<std::vector<element::Type>> jit_brgemm_emitter::get_supported_precision
         case BrgemmCPU::Type::Floating:
             return {{element::f32, element::f32}};
         case BrgemmCPU::Type::WithDataRepacking:
-            return {{element::u8, element::i8},
+            return {{element::f32, element::f32},
+                    {element::u8, element::i8},
                     {element::bf16, element::bf16}};
         case BrgemmCPU::Type::WithCompensations:
             return {{element::i8, element::i8, element::f32}};

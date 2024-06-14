@@ -67,10 +67,10 @@ public:
      */
     struct Config {
         Config(size_t concurrency, size_t data_ptr_gpr_count, bool split_m_dimension, bool enable_transpose_on_output,
-               bool dyn_mha_token, std::set<size_t> mha_transpose_ranks)
+               bool dyn_mha_token, std::set<size_t> mha_transpose_ranks, bool matmul_native_transpose_b_support)
             : m_concurrency(concurrency), m_data_ptr_gpr_count(data_ptr_gpr_count), m_split_m_dimension(split_m_dimension),
               m_mha_token_enable_transpose_on_output(enable_transpose_on_output), m_is_dynamic_mha_token_enabled(dyn_mha_token),
-              m_mha_supported_transpose_ranks(std::move(mha_transpose_ranks)) {
+              m_mha_supported_transpose_ranks(std::move(mha_transpose_ranks)), m_matmul_native_transpose_b_support(matmul_native_transpose_b_support) {
             OPENVINO_ASSERT(concurrency > 0, "Concurrency should be greater than 0");
             OPENVINO_ASSERT(data_ptr_gpr_count > 0, "data_ptr_gpr_count should be greater than 0");
         }
@@ -103,6 +103,10 @@ public:
             return m_mha_supported_transpose_ranks;
         }
 
+        bool get_matmul_native_transpose_b_support() const {
+            return m_matmul_native_transpose_b_support;
+        }
+
     private:
         size_t m_concurrency = 0;
         // The number of gpr that can be used as data pointers for data nodes (Parameter (and non-Scalar Constants),
@@ -122,6 +126,8 @@ public:
         // Note that in general Snippets support Transpose of any ranks.
         // But at the moment Transpose is used only in MHA pattern where 3D and 4D tensors are supported.
         std::set<size_t> m_mha_supported_transpose_ranks = { 3, 4 };
+        // True if matmul implementation supports transpose_b flag natively
+        bool m_matmul_native_transpose_b_support = true;
     };
 
     OPENVINO_RTTI("SnippetsTokenization", "0");

@@ -22,34 +22,51 @@ using namespace dnnl::impl::cpu::x64;
 namespace ov {
 namespace intel_cpu {
 
-
 jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t isa, const  ov::snippets::lowered::ExpressionPtr& expr)
     : jit_emitter(h, isa) {
     in_out_type_ = emitter_in_out_map::gpr_to_gpr;
     const auto brgemm_repack = ov::as_type_ptr<ov::intel_cpu::BrgemmCopyB>(expr->get_node());
     if (!brgemm_repack)
         OV_CPU_JIT_EMITTER_THROW("expects BrgemmCopyB node");
-
     m_with_comp = brgemm_repack->is_with_compensations();
     m_in_offset = brgemm_repack->get_offset_in();
     m_out_offset = brgemm_repack->get_offset_out();
+    m_transpose = brgemm_repack->with_transpose();
     if (m_with_comp)
         m_comp_offset = brgemm_repack->get_offset_compensations();
 
+     auto check_on_planar = [](const std::vector<size_t>& layout, const snippets::VectorDims& io_shape) {
+        if (layout.empty()) return true;
+        std::vector<size_t> planar_layout(io_shape.size());
+        std::iota(planar_layout.begin(), planar_layout.end(), 0);
+        return layout == planar_layout;
+    };
+
     const auto& in_desc = expr->get_input_port_descriptor(0);
-    const auto& layout = in_desc->get_layout();
     const auto& original_shape = in_desc->get_shape();
-    auto transposed_shape = original_shape;
-    size_t leading_dimension = *(original_shape.rbegin());
-    if (!layout.empty()) {
-        transposed_shape = snippets::utils::get_planar_vdims(original_shape, layout);
-        leading_dimension = ov::snippets::utils::get_dim_stride(expr->get_input_port(0));
+    const auto& layout = in_desc->get_layout();
+    const bool is_planar_layout = check_on_planar(layout, original_shape);
+
+    const auto planar_shape = is_planar_layout ? original_shape : snippets::utils::get_planar_vdims(original_shape, layout);
+    const size_t N = *planar_shape.rbegin();
+    const size_t K = *++planar_shape.rbegin();
+
+    size_t wei_stride = 0;
+    // In case of non planar input shapes additional params may be necessary
+    if (!is_planar_layout) {
+        const auto k_dim_idx = m_transpose ? layout.size() - 1 : layout.size() - 2;
+        const auto idx = layout[std::distance(layout.begin(), std::find(layout.begin(), layout.end(), k_dim_idx))];
+        const size_t input_leading_dim = std::accumulate(original_shape.cbegin() + idx, original_shape.end(), 1, std::multiplies<size_t>());
+
+        // In case of strided access to the input tensor OneDNN wei_stride parameter must be specified as well
+        if ((m_transpose && input_leading_dim != K) || (!m_transpose && input_leading_dim != N))
+            wei_stride = input_leading_dim * brgemm_repack->get_output_element_type(0).size();
     }
 
     const auto& in_subtensor = in_desc->get_subtensor();
     m_N_blk = *in_subtensor.rbegin();
     m_K_blk = *++in_subtensor.rbegin();
-    OV_CPU_JIT_EMITTER_ASSERT(m_N_blk <= *transposed_shape.rbegin() && m_K_blk <= *++transposed_shape.rbegin(),
+    OV_CPU_JIT_EMITTER_ASSERT(m_N_blk <= *planar_shape.rbegin() && m_K_blk <= *++planar_shape.rbegin(),
                               "BrgemmCopyB has incompatible subtensor dimensions");
     m_inner_N_block = brgemm_repack->get_n_inner_block_size();
     m_inner_N_tail = m_N_blk % m_inner_N_block;
@@ -62,14 +79,10 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
             "compensations subtensor must be {1, m_N_blk}");
     }
 
-    OV_CPU_JIT_EMITTER_ASSERT(!one_of(m_brg_weight_etype, element::bf16, element::i8), "doesn't support precision ", m_brg_weight_etype);
-    const auto repacking_buffer_shape = brgemm_repack->get_repacking_buffer_shape();
-    OV_CPU_JIT_EMITTER_ASSERT(!repacking_buffer_shape.empty(), "Repacking buffer shape mustn't be empty");
-    const auto& LDB = repacking_buffer_shape.back();
-
     const auto& brg_src_etype = brgemm_repack->get_src_element_type();
     m_brg_weight_etype = brgemm_repack->get_input_element_type(0);
     m_brgemmVNNIFactor = brgemm_repack->get_brgemm_vnni_factor();
+    OV_CPU_JIT_EMITTER_ASSERT(one_of(m_brg_weight_etype, element::f32, element::bf16, element::i8), "doesn't support precision ", m_brg_weight_etype);
 
     const auto use_amx = mayiuse(avx512_core_amx) && brg_src_etype != ov::element::f32 &&
                          (m_K_blk % m_brgemmVNNIFactor == 0) && (m_N_blk % m_brgemmVNNIFactor == 0);
@@ -77,19 +90,22 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     const auto src_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(brg_src_etype));
     const auto wei_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(m_brg_weight_etype));
 
-    init_brgemm_copy(m_kernel, leading_dimension, m_inner_N_block, m_inner_N_tail, LDB, m_K_blk, use_amx, src_dt, wei_dt);
+    // Note: 4D format tags are used just to force the needed OneDNN primitive creation.
+    // However, the generated primitive can be also applied to tensors with other ranks
+    const auto format = wei_stride != 0 ? m_transpose ? dnnl_adbc : dnnl_acbd : m_transpose ? dnnl_abdc : dnnl_abcd;
+    init_brgemm_copy(m_kernel, N, m_inner_N_block, m_inner_N_tail, m_N_blk, m_K_blk, use_amx, src_dt, wei_dt, wei_stride, format);
 }
 
 void jit_brgemm_copy_b_emitter::init_brgemm_copy(std::unique_ptr<matmul::jit_brgemm_matmul_copy_b_t>& kernel,
-                                                 size_t N, size_t N_blk, size_t N_tail, size_t LDB, size_t K,
-                                                 bool is_with_amx, dnnl_data_type_t src_dt, dnnl_data_type_t wei_dt) const {
+                                                 size_t N, size_t N_blk, size_t N_tail, size_t out_leading_dim, size_t K, bool is_with_amx,
+                                                 dnnl_data_type_t src_dt, dnnl_data_type_t wei_dt, size_t wei_stride, dnnl_format_tag_t format) const {
     matmul::brgemm_matmul_conf_t brgCopyKernelConf;
     brgCopyKernelConf.src_dt = src_dt;
     brgCopyKernelConf.wei_dt = wei_dt;
     brgCopyKernelConf.wei_n_blk = static_cast<int>(N_blk);
-    brgCopyKernelConf.wei_tag = dnnl_abcd;  // What's about other ranks?
-    brgCopyKernelConf.copy_B_wei_stride = 0;
-    brgCopyKernelConf.LDB = static_cast<dim_t>(LDB);
+    brgCopyKernelConf.wei_tag = format;
+    brgCopyKernelConf.copy_B_wei_stride = wei_stride;
+    brgCopyKernelConf.LDB = static_cast<dim_t>(out_leading_dim);
     brgCopyKernelConf.N =  static_cast<dim_t>(N);
     brgCopyKernelConf.N_tail = static_cast<dim_t>(N_tail);
     brgCopyKernelConf.N_blk =  static_cast<dim_t>(N_blk);
@@ -131,15 +147,26 @@ void jit_brgemm_copy_b_emitter::emit_impl(const std::vector<size_t>& in, const s
     Xbyak::Reg64 comp(static_cast<int>(m_with_comp ? out[1] : 0));
 
     const size_t data_size = m_brg_weight_etype.size();
-    for (size_t nb = 0; nb < div_up(m_N_blk, m_inner_N_block); nb++) {
-        const size_t offset_in = m_in_offset + nb * m_inner_N_block * data_size;
-        const size_t offset_out = m_out_offset + nb * m_inner_N_block * m_brgemmVNNIFactor * data_size;
-        const size_t offset_comp = m_with_comp ? m_comp_offset + nb * m_inner_N_block * sizeof(int32_t) : 0;
+    size_t start_in = m_in_offset;
+    size_t start_out = m_out_offset;
+    size_t start_comp = m_comp_offset;
 
-        const bool is_N_tail = (m_N_blk - nb * m_inner_N_block < m_inner_N_block);
-        const auto current_N_blk = is_N_tail ? m_inner_N_tail : m_inner_N_block;
+    // OneDNN requires tail handling before main iterations
+    if (m_inner_N_tail != 0) {
+        emit_kernel_call(m_kernel.get(), src, dst, comp, m_inner_N_tail, m_K_blk, start_in, start_out, start_comp);
+        start_in += m_transpose ? m_K_blk * m_inner_N_tail * data_size : m_inner_N_tail * data_size;
+        start_out += m_inner_N_tail * m_brgemmVNNIFactor * data_size;
+        start_comp += m_inner_N_tail * sizeof(int32_t);
+    }
 
-        emit_kernel_call(m_kernel.get(), src, dst, comp, current_N_blk, m_K_blk, offset_in, offset_out, offset_comp);
+    const size_t in_ld = m_transpose ? m_K_blk * m_inner_N_block * data_size : m_inner_N_block * data_size;
+    const size_t out_ld = m_inner_N_block * m_brgemmVNNIFactor * data_size;
+    const size_t comp_ld = m_inner_N_block * sizeof(int32_t);
+    for (size_t nb = 0; nb < m_N_blk / m_inner_N_block; nb++) {
+        const size_t offset_in = start_in + nb * in_ld;
+        const size_t offset_out = start_out + nb * out_ld;
+        const size_t offset_comp = m_with_comp ? start_comp + nb * comp_ld : 0;
+        emit_kernel_call(m_kernel.get(), src, dst, comp, m_inner_N_block, m_K_blk, offset_in, offset_out, offset_comp);
     }
 }
 

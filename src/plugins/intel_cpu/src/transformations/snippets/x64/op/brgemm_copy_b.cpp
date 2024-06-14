@@ -2,21 +2,54 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "snippets/itt.hpp"
-#include "snippets/utils/utils.hpp"
-#include "snippets/op/buffer.hpp"
 #include "brgemm_copy_b.hpp"
 
+#include <cpu/x64/cpu_isa_traits.hpp>
+
+#include "snippets/itt.hpp"
+#include "snippets/op/buffer.hpp"
+#include "snippets/utils.hpp"
 #include "utils/general_utils.h"
 
 namespace ov {
 namespace intel_cpu {
 
-intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x, const element::Type src_type, const Type type,
-                                    const size_t offset_in, const size_t offset_out0, const size_t offset_out1,
-                                    std::vector<size_t> layout_input, const size_t blk_size_k, const size_t blk_size_n)
-    : snippets::modifier::MemoryAccess(1, type == Type::WithCompensations ? 2 : 1), op::Op({x}),
-      m_type(type), m_src_type(src_type) {
+namespace {
+size_t compute_inner_block(const ov::element::Type& precision) {
+    switch (precision) {
+        case element::i8: return 64;
+        case element::bf16: return 32;
+        case element::f32: return 16;
+        default: OPENVINO_THROW("BrgemmCopyB doesn't support precision ", precision);
+    }
+}
+
+size_t compute_vnni_factor(const ov::element::Type& precision) {
+    switch (precision) {
+        case element::i8: return 4;
+        case element::bf16: return 2;
+        case element::f32: return 1;
+        default: OPENVINO_THROW("BrgemmCopyB doesn't support precision ", precision);
+    }
+}
+} // namespace
+
+intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
+                                    const element::Type src_type,
+                                    const Type type,
+                                    const size_t offset_in,
+                                    const size_t offset_out0,
+                                    const size_t offset_out1,
+                                    std::vector<size_t> layout_input,
+                                    const size_t blk_size_k,
+                                    const size_t blk_size_n)
+    : snippets::modifier::MemoryAccess(1, type == Type::WithCompensations ? 2 : 1),
+      op::Op({x}),
+      m_type(type),
+      m_src_type(src_type),
+      m_inner_n_block(compute_inner_block(x.get_element_type())),
+      m_brgemmVNNIFactor(compute_vnni_factor(x.get_element_type())),
+      m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
     set_input_port_descriptor({0, offset_in}, 0);
     set_output_port_descriptor({0, offset_out0}, 0);
@@ -25,15 +58,24 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x, const element::Type s
     }
     compute_block_size_values(blk_size_k, blk_size_n);
     custom_constructor_validate_and_infer_types(std::move(layout_input));
-    m_brgemmVNNIFactor = 4 / m_src_type.size();
-    m_inner_n_block = 16 * m_brgemmVNNIFactor;
 }
 
-intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x, const element::Type src_type, const Type type,
-                                    const PortDescriptor& desc_in0, const PortDescriptor& desc_out0, const PortDescriptor& desc_out1,
-                                    std::vector<size_t> layout_input, const size_t blk_size_k, const size_t blk_size_n)
-    : snippets::modifier::MemoryAccess(1, type == Type::WithCompensations ? 2 : 1), op::Op({x}),
-      m_type(type), m_src_type(src_type) {
+intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
+                                    const element::Type src_type,
+                                    const Type type,
+                                    const PortDescriptor& desc_in0,
+                                    const PortDescriptor& desc_out0,
+                                    const PortDescriptor& desc_out1,
+                                    std::vector<size_t> layout_input,
+                                    const size_t blk_size_k,
+                                    const size_t blk_size_n)
+    : snippets::modifier::MemoryAccess(1, type == Type::WithCompensations ? 2 : 1),
+      op::Op({x}),
+      m_type(type),
+      m_src_type(src_type),
+      m_inner_n_block(compute_inner_block(x.get_element_type())),
+      m_brgemmVNNIFactor(compute_vnni_factor(x.get_element_type())),
+      m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
     set_input_port_descriptor(desc_in0, 0);
     set_output_port_descriptor(desc_out0, 0);
@@ -42,8 +84,6 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x, const element::Type s
     }
     compute_block_size_values(blk_size_k, blk_size_n);
     custom_constructor_validate_and_infer_types(std::move(layout_input));
-    m_brgemmVNNIFactor = 4 / m_src_type.size();
-    m_inner_n_block = 16 * m_brgemmVNNIFactor;
 }
 
 bool BrgemmCopyB::visit_attributes(AttributeVisitor& visitor) {
@@ -88,7 +128,7 @@ void BrgemmCopyB::validate_and_infer_types() {
 }
 
 void BrgemmCopyB::validate_element_type(const ov::element::Type& element_type) {
-    OPENVINO_ASSERT(one_of(element_type, element::bf16, element::i8),
+    OPENVINO_ASSERT(one_of(element_type, element::f32, element::bf16, element::i8),
                     "BrgemmCopyB doesn't support element type" + element_type.get_type_name());
 }
 
@@ -98,18 +138,29 @@ void intel_cpu::BrgemmCopyB::compute_block_size_values(const size_t blk_size_k, 
     m_N_blk = blk_size_n != 0 ? blk_size_n : *input_shape.rbegin();
 }
 
-ov::Shape intel_cpu::BrgemmCopyB::get_repacking_buffer_shape() const {
-    // OneDNN implementation repacks data and always writes the result by m_brgemmVNNIFactor * m_inner_n_block blocks
-    // despite the actual size of the input data. Because of that we have to round-up the allocation shape to always have enough memory allocated.
-    // For the details, please see 'copy_4x64' and 'copy_2x32' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
-    return ov::Shape{rnd_up(m_K_blk, m_brgemmVNNIFactor), rnd_up(m_N_blk, m_inner_n_block)};
+size_t intel_cpu::BrgemmCopyB::get_repacking_buffer_size() const {
+    // Repacking buffer shape is set in accordance to OneDNN requirements
+    const size_t N_dim = std::max(m_N_blk, m_inner_n_block);
+    if (with_transpose()) {
+        // In case of transpose, K dimension must be rounded-up to number of elems in vector register
+        // For the details, please see 'transpose16x8' and 'fixup16x16' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
+        OPENVINO_ASSERT(dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core), "BrgemmCopyB doesn't support non avx512 platforms");
+        const auto vlen = dnnl::impl::cpu::x64::cpu_isa_traits<dnnl::impl::cpu::x64::avx512_core>::vlen;
+        const auto elems_in_vec = vlen / get_input_element_type(0).size();
+        return N_dim * rnd_up(m_K_blk, elems_in_vec);
+    } else {
+        // Low precision repacking writes the result by m_brgemmVNNIFactor * m_inner_n_block blocks
+        // despite the actual size of the input data. Because of that we have to round-up the allocation shape to always have enough memory allocated.
+        // For the details, please see 'copy_4x64' and 'copy_2x32' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
+        return N_dim * rnd_up(m_K_blk, m_brgemmVNNIFactor);
+    }
 }
 
-ov::Shape intel_cpu::BrgemmCopyB::get_compensations_buffer_shape() const {
+size_t intel_cpu::BrgemmCopyB::get_compensations_buffer_size() const {
     // Compensations are computed during repacking, so we need to round-up allocation shape according to m_inner_n_block
-    // because of OneDNN implementation nuances (as in get_repacking_buffer_shape).
+    // because of OneDNN implementation nuances (as in get_repacking_buffer_size).
     // However, the compensations are computed by N dimension, so K dimension doesn't affect the compensations buffer
-    return ov::Shape{rnd_up(m_N_blk, m_inner_n_block)};
+    return std::max(m_N_blk, m_inner_n_block);
 }
 
 std::shared_ptr<Node> intel_cpu::BrgemmCopyB::clone_with_new_inputs(const OutputVector& new_args) const {

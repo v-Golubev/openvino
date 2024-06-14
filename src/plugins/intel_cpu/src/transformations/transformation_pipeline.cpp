@@ -891,9 +891,14 @@ void Transformations::MainSnippets(void) {
     bool is_dynamic_mha_token_enabled = ignoreCallback;
     // [122706] Some 3D MHA Patterns have perf regressions when Transpose op is tokenized
     std::set<size_t> mha_supported_transpose_ranks = { 4 };
+#ifdef SNIPPETS_LIBXSMM_TPP
+    bool matmul_native_transpose_b_support = false;
+#else
+    bool matmul_native_transpose_b_support = true;
+#endif
     snippets::pass::SnippetsTokenization::Config tokenization_config(concurrency, data_ptr_gpr_count, split_m_dimension,
                                                                      mha_token_enable_transpose_on_output, is_dynamic_mha_token_enabled,
-                                                                     mha_supported_transpose_ranks);
+                                                                     mha_supported_transpose_ranks, matmul_native_transpose_b_support);
 
     ov::pass::Manager snippetsManager;
     snippetsManager.set_per_pass_validation(false);
@@ -938,9 +943,7 @@ void Transformations::MainSnippets(void) {
             return false;
         if (in_type0 == ov::element::f32 && in_type1 == ov::element::f32 && one_of(inferencePrecision, element::f32, element::undefined))
             return true;
-        // [114487] brgemm kernel in oneDNN requires brgemm_copy_b kernel if MatMul node has transposed_b=True
-        // The current solution with ExtractExplicitMatMulTranspose pass is slower for non-f32 cases than using of brgemm_copy_b kernel
-        if (matmul->get_transpose_a() || matmul->get_transpose_b())
+        if (matmul->get_transpose_a())
             return false;
         if (in_type0 == ov::element::i8)
             return dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core_vnni);

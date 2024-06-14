@@ -4,12 +4,12 @@
 
 #include "snippets/pass/explicit_transpose_matmul_inputs.hpp"
 
-#include "snippets/op/subgraph.hpp"
-#include "snippets/itt.hpp"
-
+#include "openvino/core/rt_info.hpp"
 #include "openvino/pass/pattern/matcher.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
-#include "openvino/core/rt_info.hpp"
+#include "snippets/itt.hpp"
+#include "snippets/op/subgraph.hpp"
+#include "snippets/pass/mha_tokenization.hpp"
 
 bool ov::snippets::pass::ExplicitTransposeMatMulInputs::are_weights_scalar(const std::shared_ptr<ov::Node>& node) {
     const auto inputs = node->inputs();
@@ -19,7 +19,7 @@ bool ov::snippets::pass::ExplicitTransposeMatMulInputs::are_weights_scalar(const
                        });
 }
 
-void ov::snippets::pass::ExplicitTransposeMatMulInputs::extract(const ov::Input<ov::Node>& input) {
+bool ov::snippets::pass::ExplicitTransposeMatMulInputs::extract_if_needed(const ov::Input<ov::Node>& input, bool native_transpose_support) {
     auto parent = input.get_source_output().get_node_shared_ptr();
     auto transpose = ov::as_type_ptr<ov::op::v1::Transpose>(parent);
     while (!transpose && !ov::is_type<ov::op::v0::Parameter>(parent)) {
@@ -41,13 +41,18 @@ void ov::snippets::pass::ExplicitTransposeMatMulInputs::extract(const ov::Input<
         OPENVINO_ASSERT(transposed_order.size() > 2, "Incorrect Transpose order for ExplicitTransposeMatMulInputs");
         std::swap(*transposed_order.rbegin(), *(transposed_order.rbegin() + 1));
 
+        // If matmul implementation supports transpose natively, extraction makes sense only if the extracted transpose
+        // will be fused with transpose after parameter, and the fused transpose will be executed via decomposition.
+        if (native_transpose_support && TokenizeMHASnippets::get_decomposed_transpose_order(transposed_order.size()) != transposed_order)
+            return false;
+
         auto new_transpose_order = std::make_shared<ov::op::v0::Constant>(transpose_pattern->get_element_type(),
                                                                           ov::Shape{transposed_order.size()},
                                                                           transposed_order);
         new_transpose_order->set_friendly_name(transpose_pattern->get_friendly_name());
         ov::copy_runtime_info(transpose_pattern, new_transpose_order);
         transpose->set_argument(1, new_transpose_order);
-        return;
+        return true;
     }
 
     // Create new Transpose before Parameter
@@ -58,6 +63,11 @@ void ov::snippets::pass::ExplicitTransposeMatMulInputs::extract(const ov::Input<
                     "ExplicitTransposeMatMulInputs expects Parameter with one consumer in cases when there isn't existing Transpose on input");
     // Extract Transpose from MatMul
     OPENVINO_ASSERT(input.get_partial_shape().rank().is_static(), "ExplicitTransposeMatMulInputs supports only static ranks of shapes");
+    // There is no meaning in transpose extraction if it can't be fused with another transpose,
+    // and matmul supports this transpose natively
+    if (native_transpose_support)
+        return false;
+
     const auto rank = input.get_partial_shape().size();
     std::vector<size_t> transpose_order(rank, 0);
     std::iota(transpose_order.begin(), transpose_order.end(), 0);
@@ -67,15 +77,17 @@ void ov::snippets::pass::ExplicitTransposeMatMulInputs::extract(const ov::Input<
     const auto new_transpose = std::make_shared<opset1::Transpose>(parent, constant_order); // parent is Parameter
     const auto consumer_input = *(consumers.begin());
     consumer_input.replace_source_output(new_transpose);
+    return true;
 }
 
-ov::snippets::pass::ExplicitTransposeMatMulInputs::ExplicitTransposeMatMulInputs() {
+ov::snippets::pass::ExplicitTransposeMatMulInputs::ExplicitTransposeMatMulInputs(bool native_transpose_b_support)
+    : m_native_transpose_b_support(native_transpose_b_support) {
     MATCHER_SCOPE(ExplicitTransposeMatMulInputs);
 
     auto m_matmul0 = std::make_shared<ov::op::v0::MatMul>(ov::pass::pattern::any_input(), ov::pass::pattern::any_input());
 
     register_matcher(std::make_shared<ov::pass::pattern::Matcher>(m_matmul0, matcher_name),
-        [=](ov::pass::pattern::Matcher &m) {
+        [OV_CAPTURE_CPY_AND_THIS](ov::pass::pattern::Matcher &m) {
             OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::op::ExplicitTransposeMatMulInputs")
             auto root = m.get_match_root();
             bool rewritten = false;
@@ -84,13 +96,12 @@ ov::snippets::pass::ExplicitTransposeMatMulInputs::ExplicitTransposeMatMulInputs
             if (!matmul)
                 return false;
 
-            if (matmul->get_transpose_a()) {
-                extract(matmul->input(0));
+            if (matmul->get_transpose_a() && extract_if_needed(matmul->input(0), false)) {
                 matmul->set_transpose_a(false);
                 rewritten |= true;
             }
-            if (matmul->get_transpose_b()) {
-                extract(matmul->input(1));
+
+            if (matmul->get_transpose_b() && extract_if_needed(matmul->input(1), m_native_transpose_b_support)) {
                 matmul->set_transpose_b(false);
                 rewritten |= true;
             }

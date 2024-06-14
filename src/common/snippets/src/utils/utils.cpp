@@ -131,6 +131,10 @@ ov::PartialShape vdims_to_pshape(const VectorDims& vdims) {
     return result;
 }
 
+size_t dimension_to_size_t(const ov::Dimension& dim) {
+    return dim.is_dynamic() ? snippets::utils::get_dynamic_value<size_t>() : static_cast<size_t>(dim.get_length());
+}
+
 size_t get_dim_idx(const lowered::ExpressionPort& port, size_t dim_idx) {
     const auto& layout = port.get_descriptor_ptr()->get_layout();
     if (port.get_type() == lowered::ExpressionPort::Type::Input)

@@ -97,8 +97,7 @@ void BrgemmCPU::validate_and_infer_types() {
     INTERNAL_OP_SCOPE(BrgemmCPU_validate_and_infer_types);
     validate_inputs();
 
-    const auto brgemm_copy = is_with_data_repacking() ? get_brgemm_copy() : nullptr;
-    const auto planar_input_shapes = get_planar_input_shapes({input(0), brgemm_copy ? brgemm_copy->input(0) : input(1)});
+    const auto planar_input_shapes = get_planar_input_shapes({input(0), input(1)});
     auto output_shape = infer_output_partial_shape(planar_input_shapes);
     set_output_type(0, get_output_type(), get_planar_output_shape(output_shape));
 
