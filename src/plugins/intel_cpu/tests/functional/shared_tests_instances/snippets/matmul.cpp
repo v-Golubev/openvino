@@ -92,14 +92,14 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_MatMulFQ, MatMulFQ,
                                  ::testing::Values(ov::test::utils::DEVICE_CPU)),
                          MatMul::getTestCaseName);
 
-std::vector<std::vector<ov::test::InputShape>> transpose_b_shapes {
-    {STATIC_SHAPE(3, 3, 64, 64), STATIC_SHAPE(3, 3, 64, 64)},
-    {STATIC_SHAPE(1, 1, 32, 128), STATIC_SHAPE(1, 1, 64, 128)},
-    {STATIC_SHAPE(1, 1, 32, 128), STATIC_SHAPE(1, 1, 384, 128)},
-    {STATIC_SHAPE(1, 1, 64, 1500), STATIC_SHAPE(1, 1, 420, 1500)},
-    {STATIC_SHAPE(1, 1, 64, 1024), STATIC_SHAPE(1, 1, 420, 1024)},
-    {STATIC_SHAPE(4, 8, 32, 1024), STATIC_SHAPE(4, 8, 420, 1024)},
-};
+const auto& transpose_b_shapes = STATIC_SHAPES(
+    {{3, 3, 64, 64}, {3, 3, 64, 64}},
+    {{1, 1, 32, 128}, {1, 1, 64, 128}},
+    {{1, 1, 32, 128}, {1, 1, 384, 128}},
+    {{1, 1, 64, 1500}, {1, 1, 420, 1500}},
+    {{1, 1, 64, 1024}, {1, 1, 420, 1024}},
+    {{4, 8, 32, 1024}, {4, 8, 420, 1024}},
+);
 
 INSTANTIATE_TEST_SUITE_P(smoke_Snippets_MatMulTransposeB, MatMulTransposeB,
                          ::testing::Combine(

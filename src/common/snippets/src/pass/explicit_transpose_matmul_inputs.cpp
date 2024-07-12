@@ -101,7 +101,8 @@ ov::snippets::pass::ExplicitTransposeMatMulInputs::ExplicitTransposeMatMulInputs
                 rewritten |= true;
             }
 
-            if (matmul->get_transpose_b() && extract_if_needed(matmul->input(1), m_native_transpose_b_support)) {
+            const bool support_transpose_b = m_native_transpose_b_support && matmul->get_input_partial_shape(1).is_static();
+            if (matmul->get_transpose_b() && extract_if_needed(matmul->input(1), support_transpose_b)) {
                 matmul->set_transpose_b(false);
                 rewritten |= true;
             }
