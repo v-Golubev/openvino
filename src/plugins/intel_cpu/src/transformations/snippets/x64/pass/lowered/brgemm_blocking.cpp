@@ -119,8 +119,8 @@ bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linea
         ov::snippets::lowered::ExpressionPtr copy_b_expr = nullptr;
         if (brgemm_cpu && brgemm_cpu->is_with_data_repacking()) {
             const auto copy_b = brgemm_cpu->get_brgemm_copy();
-            const auto copy_b_k_block = copy_b->get_k_block_size();
-            const auto copy_b_n_block = copy_b->get_n_block_size();
+            const auto copy_b_k_block = snippets::utils::is_dynamic_value(k) ? copy_b->get_k_block_size() : std::min(copy_b->get_k_block_size(), k);
+            const auto copy_b_n_block = snippets::utils::is_dynamic_value(n) ? copy_b->get_n_block_size() : std::min(copy_b->get_n_block_size(), n);
             OPENVINO_ASSERT(snippets::utils::one_of(copy_b_k_block, k, block_size_k),
                             "CopyB has unexpected K block size (", copy_b->get_k_block_size(),
                             "). It must be equal to K dim (", k, ")",

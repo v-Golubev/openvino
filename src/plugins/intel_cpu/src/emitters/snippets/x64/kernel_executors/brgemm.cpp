@@ -8,6 +8,7 @@
 #include "common/utils.hpp"
 #include "dnnl_extension_utils.h"
 #include "transformations/snippets/x64/op/brgemm_cpu.hpp"
+#include "emitters/snippets/x64/jit_brgemm_copy_b_emitter.hpp"
 
 #define DIM_CAST(X) static_cast<dnnl_dim_t>(X)
 #define DTYPE_CAST(X) static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(X))
@@ -170,7 +171,12 @@ void BrgemmKernelExecutor::update_config(const ov::snippets::lowered::Expression
     const auto K = DIM_CAST(*in0_subtensor.rbegin());
     const auto M = DIM_CAST(*++in0_subtensor.rbegin());
     // Matrix B (second input)
-    const auto LDB = DIM_CAST(snippets::utils::get_dim_stride(expr->get_input_port(1)));
+
+    auto LDB = DIM_CAST(snippets::utils::get_dim_stride(expr->get_input_port(1)));
+    const auto brgemm = ov::as_type_ptr<BrgemmCPU>(expr->get_node());
+    if (brgemm->is_with_data_repacking()) {
+        LDB = jit_brgemm_copy_b_emitter::get_ldb(brgemm->get_brgemm_copy());
+    }
     const auto N = DIM_CAST(*get_projected_input_subtensor(input_pds[1]).rbegin());
     // Matrix C (output)
     const auto LDC = DIM_CAST(snippets::utils::get_dim_stride(expr->get_output_port(0)));
