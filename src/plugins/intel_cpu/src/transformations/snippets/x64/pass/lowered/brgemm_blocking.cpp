@@ -130,7 +130,7 @@ bool BrgemmBlocking::run(LinearIR& linear_ir, LinearIR::constExprIt begin, Linea
                             "). It must be equal to n dim (", n, ")",
                             " or to brgemm's n block size (", block_size_n, ")");
 
-            const auto repacking_expr = linear_ir.get_expr_by_node(copy_b);
+            const auto& repacking_expr = linear_ir.get_expr_by_node(copy_b);
             auto data_repacking_subtensor = repacking_expr->get_input_port_descriptor(0)->get_subtensor();
             *data_repacking_subtensor.rbegin() = copy_b_n_block;
             *++data_repacking_subtensor.rbegin() = copy_b_k_block;

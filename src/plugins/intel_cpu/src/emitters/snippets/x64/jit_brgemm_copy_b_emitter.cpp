@@ -22,8 +22,21 @@ using namespace dnnl::impl::cpu::x64;
 namespace ov {
 namespace intel_cpu {
 
-size_t jit_brgemm_copy_b_emitter::get_ldb(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b) {
+size_t jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b) {
     return std::max(copy_b->get_n_block_size(), copy_b->get_n_inner_block_size());
+}
+
+size_t jit_brgemm_copy_b_emitter::compute_inner_n_block(const ov::element::Type& precision) {
+    switch (precision) {
+        case element::i8: return 64;
+        case element::bf16: return 32;
+        case element::f32: return 16;
+        default: OPENVINO_THROW("BrgemmCopyB doesn't support precision ", precision);
+    }
+}
+
+size_t jit_brgemm_copy_b_emitter::compute_vnni_factor(const ov::element::Type& precision) {
+    return data_type_vnni_granularity(static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(precision)));
 }
 
 jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t isa, const  ov::snippets::lowered::ExpressionPtr& expr)
@@ -73,16 +86,20 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     const auto src_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(brg_src_etype));
     const auto wei_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(m_brg_weight_etype));
 
+    const auto ldb = compute_repacking_out_leading_dim(brgemm_repack);
     const auto wei_stride = ov::snippets::utils::get_dim_stride(expr->get_input_port(0), m_transpose ? 0 : 1) * m_brg_weight_etype.size();
-    // Note: 4D format tags are used just to force the needed OneDNN primitive creation.
-    // However, the generated primitive can be also applied to tensors with other ranks
+    // Notes:
+    // 1. 4D format tags are used just to force the needed OneDNN primitive creation.
+    //    However, the generated primitive can be also applied to tensors with other ranks
+    // 2. Format with strided access is forced in order to unify list of parameters that are needed for kernel creation:
+    //    in case of strided access format, wei_stride is used for src strides computation
+    //    whereas if we chose formats honestly, we would have to ignore wei_stride in one case and set it in another
     const auto format = m_transpose ? dnnl_adbc : dnnl_acbd;
-    const auto ldb = get_ldb(brgemm_repack);
-    init_brgemm_copy(m_kernel, N, m_inner_N_block, m_inner_N_tail, ldb, m_K, m_K_blk, use_amx, src_dt, wei_dt, wei_stride, format);
+    init_brgemm_copy(m_kernel, N, m_inner_N_block, m_inner_N_tail, ldb, m_K_blk, use_amx, src_dt, wei_dt, wei_stride, format);
 }
 
 void jit_brgemm_copy_b_emitter::init_brgemm_copy(std::unique_ptr<matmul::jit_brgemm_matmul_copy_b_t>& kernel,
-                                                 size_t N, size_t N_blk, size_t N_tail, size_t out_leading_dim, size_t K, size_t K_blk, bool is_with_amx,
+                                                 size_t N, size_t N_blk, size_t N_tail, size_t out_leading_dim, size_t K_blk, bool is_with_amx,
                                                  dnnl_data_type_t src_dt, dnnl_data_type_t wei_dt, size_t wei_stride, dnnl_format_tag_t format) const {
     matmul::brgemm_matmul_conf_t brgCopyKernelConf;
     brgCopyKernelConf.src_dt = src_dt;

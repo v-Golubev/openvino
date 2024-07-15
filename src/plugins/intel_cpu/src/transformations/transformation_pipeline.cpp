@@ -953,8 +953,9 @@ void Transformations::MainSnippets(void) {
             // Vector madd BF16 instruction on SPR has reduced performance on HW level, which results in overall perf degradation
             size_t bf16Factor = 2;
             if (dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core_amx)) {
-                const auto K = *(matmul->get_input_partial_shape(0).rbegin());
-                const auto N = *(matmul->get_input_partial_shape(1).rbegin());
+                const auto& b_shape = matmul->get_input_partial_shape(1);
+                const auto K = matmul->get_transpose_b() ? *b_shape.rbegin() : *(b_shape.rbegin()++);
+                const auto N = matmul->get_transpose_b() ? *(b_shape.rbegin()++) : *b_shape.rbegin();
                 return K.is_static() && (K.get_length() % bf16Factor == 0) &&
                        N.is_static() && (N.get_length() % bf16Factor == 0);
             }

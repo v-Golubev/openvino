@@ -6,6 +6,7 @@
 
 #include <cpu/x64/cpu_isa_traits.hpp>
 
+#include "emitters/snippets/x64/jit_brgemm_copy_b_emitter.hpp"
 #include "snippets/itt.hpp"
 #include "snippets/op/buffer.hpp"
 #include "snippets/utils.hpp"
@@ -13,26 +14,6 @@
 
 namespace ov {
 namespace intel_cpu {
-
-namespace {
-size_t compute_inner_block(const ov::element::Type& precision) {
-    switch (precision) {
-        case element::i8: return 64;
-        case element::bf16: return 32;
-        case element::f32: return 16;
-        default: OPENVINO_THROW("BrgemmCopyB doesn't support precision ", precision);
-    }
-}
-
-size_t compute_vnni_factor(const ov::element::Type& precision) {
-    switch (precision) {
-        case element::i8: return 4;
-        case element::bf16: return 2;
-        case element::f32: return 1;
-        default: OPENVINO_THROW("BrgemmCopyB doesn't support precision ", precision);
-    }
-}
-} // namespace
 
 intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
                                     const element::Type src_type,
@@ -47,8 +28,8 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
       op::Op({x}),
       m_type(type),
       m_src_type(src_type),
-      m_inner_n_block(compute_inner_block(x.get_element_type())),
-      m_brgemmVNNIFactor(compute_vnni_factor(x.get_element_type())),
+      m_inner_n_block(intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(x.get_element_type())),
+      m_brgemmVNNIFactor(intel_cpu::jit_brgemm_copy_b_emitter::compute_vnni_factor(x.get_element_type())),
       m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
     set_input_port_descriptor({0, offset_in}, 0);
@@ -73,8 +54,8 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
       op::Op({x}),
       m_type(type),
       m_src_type(src_type),
-      m_inner_n_block(compute_inner_block(x.get_element_type())),
-      m_brgemmVNNIFactor(compute_vnni_factor(x.get_element_type())),
+      m_inner_n_block(intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(x.get_element_type())),
+      m_brgemmVNNIFactor(intel_cpu::jit_brgemm_copy_b_emitter::compute_vnni_factor(x.get_element_type())),
       m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
     set_input_port_descriptor(desc_in0, 0);
@@ -163,7 +144,7 @@ size_t intel_cpu::BrgemmCopyB::get_compensations_buffer_size() const {
     return std::max(m_N_blk, m_inner_n_block);
 }
 
-std::shared_ptr<Node> intel_cpu::BrgemmCopyB::clone_with_new_inputs(const OutputVector& new_args) const {
+std::shared_ptr<ov::Node> intel_cpu::BrgemmCopyB::clone_with_new_inputs(const OutputVector& new_args) const {
     INTERNAL_OP_SCOPE(BrgemmRepack_clone_with_new_inputs);
     check_new_args_count(this, new_args);
     return std::make_shared<BrgemmCopyB>(new_args.at(0), m_src_type, m_type,

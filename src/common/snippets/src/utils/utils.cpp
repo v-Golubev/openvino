@@ -117,7 +117,7 @@ VectorDims pshape_to_vdims(const PartialShape& pshape) {
     VectorDims result;
     result.reserve(pshape.size());
     for (const auto& d : pshape)
-        result.push_back(d.is_dynamic() ? get_dynamic_value<VectorDims::value_type>() : d.get_length());
+        result.push_back(dimension_to_size_t(d));
     // Note: PartialShape could be empty which designates scalar value. However, Scalars are represented as {1} in Snippets
     return result.empty() ? VectorDims {1} : result;
 }
@@ -129,10 +129,6 @@ ov::PartialShape vdims_to_pshape(const VectorDims& vdims) {
         result.push_back(!is_dynamic_value(v) ? Dimension(static_cast<Dimension::value_type>(v))
                                               : Dimension());
     return result;
-}
-
-size_t dimension_to_size_t(const ov::Dimension& dim) {
-    return dim.is_dynamic() ? snippets::utils::get_dynamic_value<size_t>() : static_cast<size_t>(dim.get_length());
 }
 
 size_t get_dim_idx(const lowered::ExpressionPort& port, size_t dim_idx) {

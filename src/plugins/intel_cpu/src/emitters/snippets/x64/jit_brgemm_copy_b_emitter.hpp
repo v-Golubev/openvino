@@ -7,7 +7,7 @@
 #include <cpu/x64/matmul/brgemm_matmul_copy_utils.hpp>
 
 #include "emitters/plugin/x64/jit_emitter.hpp"
-#include "transformations/snippets/x64/op/brgemm_cpu.hpp"
+#include "transformations/snippets/x64/op/brgemm_copy_b.hpp"
 
 namespace ov {
 namespace intel_cpu {
@@ -22,14 +22,16 @@ public:
         return {{element::i8}, {element::bf16}, {element::f32}};
     }
 
-    static size_t get_ldb(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b);
+    static size_t compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b);
+    static size_t compute_inner_n_block(const ov::element::Type& precision);
+    static size_t compute_vnni_factor(const ov::element::Type& precision);
 
 private:
     void validate_arguments(const std::vector<size_t> &in, const std::vector<size_t> &out) const override;
     void emit_impl(const std::vector<size_t>& in, const std::vector<size_t>& out) const override;
 
     void init_brgemm_copy(std::unique_ptr<dnnl::impl::cpu::x64::matmul::jit_brgemm_matmul_copy_b_t>& kernel,
-                          size_t N, size_t N_blk, size_t N_tail, size_t out_leading_dim, size_t K, size_t K_blk, bool is_with_amx,
+                          size_t N, size_t N_blk, size_t N_tail, size_t out_leading_dim, size_t K_blk, bool is_with_amx,
                           dnnl_data_type_t dt_in0, dnnl_data_type_t dt_in1, size_t wei_stride, dnnl_format_tag_t format) const;
     void emit_kernel_call(const dnnl::impl::cpu::x64::matmul::jit_brgemm_matmul_copy_b_t* kernel,
                           Xbyak::Reg64 src, Xbyak::Reg64 dst, Xbyak::Reg64 comp, size_t N, size_t K,

@@ -39,16 +39,14 @@ MatMulToBrgemm::MatMulToBrgemm() {
             return layout;
         };
 
-        const auto& pshape_a = matmul->get_input_partial_shape(0);
-        const auto& pshape_b = matmul->get_input_partial_shape(1);
-        const auto layout_a = generate_layout(pshape_a, matmul->get_transpose_a());
-        const auto layout_b = generate_layout(pshape_b, matmul->get_transpose_b());
+        const auto layout_a = generate_layout(matmul->get_input_partial_shape(0), matmul->get_transpose_a());
+        const auto layout_b = generate_layout(matmul->get_input_partial_shape(1), matmul->get_transpose_b());
         const auto brgemm = std::make_shared<op::Brgemm>(matmul->input_value(0), matmul->input_value(1), 0, 0, 0, layout_a, layout_b);
 
         static const std::vector<size_t> subtensor{PortDescriptor::ServiceDimensions::FULL_DIM, PortDescriptor::ServiceDimensions::FULL_DIM};
-        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->input(0), std::make_shared<PortDescriptor>(pshape_a, subtensor, layout_a));
-        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->input(1), std::make_shared<PortDescriptor>(pshape_b, subtensor, layout_b));
-        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->output(0), std::make_shared<PortDescriptor>(brgemm->get_output_partial_shape(0), subtensor));
+        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->input(0), std::make_shared<PortDescriptor>(brgemm->input(0), subtensor, layout_a));
+        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->input(1), std::make_shared<PortDescriptor>(brgemm->input(1), subtensor, layout_b));
+        PortDescriptorUtils::set_port_descriptor_ptr(brgemm->output(0), std::make_shared<PortDescriptor>(brgemm->output(0), subtensor));
 
         ov::NodeVector nodes = { brgemm };
         if (brgemm->get_output_element_type(0) != matmul->get_output_element_type(0)) {
