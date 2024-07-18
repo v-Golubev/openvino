@@ -39,6 +39,12 @@ size_t jit_brgemm_copy_b_emitter::compute_vnni_factor(const ov::element::Type& p
     return data_type_vnni_granularity(static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(precision)));
 }
 
+size_t jit_brgemm_copy_b_emitter::get_elems_in_vec(const ov::element::Type& precision) {
+    OV_CPU_JIT_EMITTER_ASSERT(dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core), "doesn't support non avx512 platforms");
+    const auto vlen = dnnl::impl::cpu::x64::cpu_isa_traits<dnnl::impl::cpu::x64::avx512_core>::vlen;
+    return vlen / precision.size();
+}
+
 jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t isa, const  ov::snippets::lowered::ExpressionPtr& expr)
     : jit_emitter(h, isa) {
     in_out_type_ = emitter_in_out_map::gpr_to_gpr;

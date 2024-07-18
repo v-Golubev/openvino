@@ -40,7 +40,6 @@ public:
                             std::vector<size_t> layout = {});
     PortDescriptor(VectorDims shape, VectorDims subtensor_shape, std::vector<size_t> layout = {}, Reg reg = {});
     PortDescriptor(VectorDimsPtr shape, VectorDims subtensor_shape, std::vector<size_t> layout = {}, Reg reg = {});
-    PortDescriptor(const ov::PartialShape& pshape, VectorDims subtensor_shape, std::vector<size_t> layout = {}, Reg reg = {});
     PortDescriptor();
 
     const VectorDims& get_shape() const;

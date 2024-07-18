@@ -118,7 +118,7 @@ VectorDims pshape_to_vdims(const PartialShape&);
 ov::PartialShape vdims_to_pshape(const VectorDims&);
 
 inline size_t dimension_to_size_t(const ov::Dimension& dim) {
-    return dim.is_dynamic() ? snippets::utils::get_dynamic_value<size_t>() : static_cast<size_t>(dim.get_length());
+    return dim.is_dynamic() ? snippets::utils::get_dynamic_value<VectorDims::value_type>() : static_cast<size_t>(dim.get_length());
 }
 
 // dim_idx starts from the layout end: dim_idx = 0 -> last element in layout (layout.back())

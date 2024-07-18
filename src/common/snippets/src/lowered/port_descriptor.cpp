@@ -15,13 +15,13 @@ PortDescriptor::PortDescriptor(const ov::Input<ov::Node>& in, VectorDims subtens
         : PortDescriptor(ov::Input<const Node>(in.get_node(), in.get_index()), std::move(subtensor_shape), std::move(layout)) {}
 
 PortDescriptor::PortDescriptor(const ov::Input<const ov::Node>& in, std::vector<size_t> subtensor_shape, std::vector<size_t> layout)
-        : PortDescriptor(in.get_partial_shape(), std::move(subtensor_shape), std::move(layout)) {}
+        : PortDescriptor(utils::pshape_to_vdims(in.get_partial_shape()), std::move(subtensor_shape), std::move(layout)) {}
 
 PortDescriptor::PortDescriptor(const ov::Output<ov::Node>& out, VectorDims subtensor_shape, std::vector<size_t> layout)
         : PortDescriptor(ov::Output<const Node>(out.get_node(), out.get_index()), std::move(subtensor_shape), std::move(layout)) {}
 
 PortDescriptor::PortDescriptor(const ov::Output<const ov::Node>& out, std::vector<size_t> subtensor_shape, std::vector<size_t> layout)
-        : PortDescriptor(out.get_partial_shape(), std::move(subtensor_shape), std::move(layout)) {}
+        : PortDescriptor(utils::pshape_to_vdims(out.get_partial_shape()), std::move(subtensor_shape), std::move(layout)) {}
 
 PortDescriptor::PortDescriptor(VectorDims shape, VectorDims subtensor_shape, std::vector<size_t> layout, Reg reg)
     : PortDescriptor(std::make_shared<VectorDims>(std::move(shape)), std::move(subtensor_shape), std::move(layout), std::move(reg)) {}
@@ -30,9 +30,6 @@ PortDescriptor::PortDescriptor(VectorDimsPtr shape, VectorDims subtensor_shape, 
     : m_tensor_shape(std::move(shape)), m_layout(std::move(layout)), m_subtensor_shape(std::move(subtensor_shape)), m_reg(std::move(reg)) {
     validate_arguments();
 }
-
-PortDescriptor::PortDescriptor(const ov::PartialShape& pshape, VectorDims subtensor_shape, std::vector<size_t> layout, Reg reg)
-    : PortDescriptor(utils::pshape_to_vdims(pshape), std::move(subtensor_shape), std::move(layout), std::move(reg)) {}
 
 PortDescriptor::PortDescriptor() : PortDescriptor(VectorDims(), {}, {}) {} // to avoid tensor_shape = nullptr
 

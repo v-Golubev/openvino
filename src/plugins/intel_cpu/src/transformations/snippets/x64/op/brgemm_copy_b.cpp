@@ -9,7 +9,7 @@
 #include "emitters/snippets/x64/jit_brgemm_copy_b_emitter.hpp"
 #include "snippets/itt.hpp"
 #include "snippets/op/buffer.hpp"
-#include "snippets/utils.hpp"
+#include "snippets/utils/utils.hpp"
 #include "utils/general_utils.h"
 
 namespace ov {
@@ -76,6 +76,7 @@ bool BrgemmCopyB::visit_attributes(AttributeVisitor& visitor) {
     visitor.on_attribute("N_blk", m_N_blk);
     visitor.on_attribute("inner_n_block", m_inner_n_block);
     visitor.on_attribute("brgemmVNNIFactor", m_brgemmVNNIFactor);
+    visitor.on_attribute("transpose", m_transpose);
     return true;
 }
 
@@ -125,9 +126,7 @@ size_t intel_cpu::BrgemmCopyB::get_repacking_buffer_size() const {
     if (with_transpose()) {
         // In case of transpose, K dimension must be rounded-up to number of elems in vector register
         // For the details, please see 'transpose16x8' and 'fixup16x16' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
-        OPENVINO_ASSERT(dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core), "BrgemmCopyB doesn't support non avx512 platforms");
-        const auto vlen = dnnl::impl::cpu::x64::cpu_isa_traits<dnnl::impl::cpu::x64::avx512_core>::vlen;
-        const auto elems_in_vec = vlen / get_input_element_type(0).size();
+        const auto elems_in_vec = intel_cpu::jit_brgemm_copy_b_emitter::get_elems_in_vec(get_input_element_type(0));
         return N_dim * rnd_up(m_K_blk, elems_in_vec);
     } else {
         // Low precision repacking writes the result by m_brgemmVNNIFactor * m_inner_n_block blocks

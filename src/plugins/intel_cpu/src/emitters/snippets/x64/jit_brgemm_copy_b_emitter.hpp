@@ -25,6 +25,7 @@ public:
     static size_t compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b);
     static size_t compute_inner_n_block(const ov::element::Type& precision);
     static size_t compute_vnni_factor(const ov::element::Type& precision);
+    static size_t get_elems_in_vec(const ov::element::Type& precision);
 
 private:
     void validate_arguments(const std::vector<size_t> &in, const std::vector<size_t> &out) const override;
