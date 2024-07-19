@@ -78,10 +78,6 @@ BrgemmToBrgemmTPP::BrgemmToBrgemmTPP() {
         const auto dimsMatMulIn0 = snippets::utils::get_planar_pshape(brgemm->input(0)).get_shape();
         const auto dimsMatMulIn1 = snippets::utils::get_planar_pshape(brgemm->input(1)).get_shape();
 
-        const auto M = *++dimsMatMulIn0.rbegin();
-        const auto K = *dimsMatMulIn0.rbegin();
-        const auto N = *dimsMatMulIn1.rbegin();
-
         const auto offset_a = brgemm->get_offset_a();
         const auto offset_b = brgemm->get_offset_b();
         const auto offset_c = brgemm->get_offset_c();
@@ -94,25 +90,6 @@ BrgemmToBrgemmTPP::BrgemmToBrgemmTPP() {
                                                               layout_a, layout_b, layout_c);
         }
         OPENVINO_ASSERT(brgemm_tpp, "Failed to create BrgemmTPP node in the BrgemmToBrgemmTPP pass");
-        // Set blocking params
-        // Ticket: 113745
-        // TODO: extend block size selection heuristics
-        auto get_block_size_m = [](const size_t M) {
-            return 32;
-        };
-        auto get_block_size_k = [=](const size_t K) {
-            if (precision_b != ov::element::f32)
-                return K;
-            return K > 1024 ? 1024 : K > 512 ? 512 : K;
-        };
-        auto get_block_size_n = [=](const size_t N) {
-            return precision_b != ov::element::f32 ? N : 64;
-        };
-
-        brgemm_tpp->set_m_block_size(get_block_size_m(M));
-        brgemm_tpp->set_k_block_size(get_block_size_k(K));
-        brgemm_tpp->set_n_block_size(get_block_size_n(N));
-
         brgemm_tpp->set_friendly_name(brgemm->get_friendly_name());
         ov::replace_node(brgemm, brgemm_tpp);
 

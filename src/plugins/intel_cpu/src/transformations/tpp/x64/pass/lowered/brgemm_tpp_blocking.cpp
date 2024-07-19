@@ -40,9 +40,9 @@ bool BrgemmTPPBlocking::mark_blocking_loops(LinearIR& linear_ir, const LinearIR:
     const auto& k = *in_0_planar_dims.rbegin();
     OPENVINO_ASSERT(k == *++in_1_planar_dims.rbegin(), "Brgemm input descriptors have different K dimension value.");
 
-    const auto block_size_m = snippets::utils::is_dynamic_value(m) ? brgemm->get_m_block_size() : std::min(brgemm->get_m_block_size(), m);
-    const auto block_size_n = snippets::utils::is_dynamic_value(n) ? brgemm->get_n_block_size() : std::min(brgemm->get_n_block_size(), n);
-    const auto block_size_k = snippets::utils::is_dynamic_value(k) ? brgemm->get_k_block_size() : std::min(brgemm->get_k_block_size(), k);
+    const auto block_size_m = std::min(32ul, m);
+    const auto block_size_n = std::min(64ul, n);
+    const auto block_size_k = k > 1024 ? 1024 : k > 512 ? 512 : k;
 
     brgemm_expr->get_input_port_descriptor(0)->set_subtensor(ov::snippets::VectorDims{block_size_m, block_size_k});
     brgemm_expr->get_input_port_descriptor(1)->set_subtensor(ov::snippets::VectorDims{block_size_k, block_size_n});

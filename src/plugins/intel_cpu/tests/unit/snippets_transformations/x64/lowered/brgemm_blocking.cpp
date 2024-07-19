@@ -332,10 +332,10 @@ public:
 
 TEST_F(BrgemmTPPBlockingTest, TPPFloating) {
     const size_t m_blk = 32;
-    const size_t k_blk = 16;
+    const size_t k_blk = 512;
     const size_t n_blk = 64;
-    const ov::PartialShape input_shape_a{1, 384, 16, 64};
-    const ov::PartialShape input_shape_b{1, 384, 16, 64};
+    const ov::PartialShape input_shape_a{1, 384, 16, 1024};
+    const ov::PartialShape input_shape_b{1, 384, 16, 1024};
     const auto precision = ov::element::f32;
     const VectorDims layout_a{0, 2, 1, 3};
     const VectorDims layout_b{0, 2, 3, 1};
@@ -356,7 +356,7 @@ TEST_F(BrgemmTPPBlockingTest, TPPFloating) {
                                                                    layout_a, layout_b, layout_c, m_blk, k_blk, n_blk);
         const auto& brgemm_expr = *brgemm.first;
         init_expr_descriptors(brgemm_expr, {{m_blk, k_blk}, {k_blk, n_blk}, {m_blk, n_blk}}, {layout_a, layout_b, layout_c});
-        create_brgemm_loop_infos(linear_ir_ref, brgemm_expr, 384, m_blk, 64, k_blk, 384, n_blk);
+        create_brgemm_loop_infos(linear_ir_ref, brgemm_expr, 384, m_blk, 1024, k_blk, 384, n_blk);
         brgemm_expr->set_loop_ids({2, 1, 0});
         auto result = linear_ir_ref->push_node<ov::opset10::Result>(brgemm.second);
     }
