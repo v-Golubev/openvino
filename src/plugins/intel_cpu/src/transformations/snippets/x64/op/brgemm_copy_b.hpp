@@ -42,7 +42,6 @@ public:
 
     size_t get_k_block_size() const { return m_K_blk; }
     size_t get_n_block_size() const { return m_N_blk; }
-    size_t get_n_inner_block_size() const { return m_inner_n_block; }
     void set_k_block_size(size_t block_size) { m_K_blk = block_size; }
     void set_n_block_size(size_t block_size) { m_N_blk = block_size; }
 
@@ -78,9 +77,6 @@ private:
 
     size_t m_K_blk = 0;
     size_t m_N_blk = 0;
-    // OneDNN implementation requirement: BrgemmCopyB oneDNN implementation repacks data by m_brgemmVNNIFactor * m_inner_n_block blocks.
-    // Consequently, in snippets emitter, we need to invoke the oneDNN kernel iterating accordingly to this block
-    size_t m_inner_n_block = 0;
     size_t m_brgemmVNNIFactor = 1;
     // Defines if OneDNN impl should use realization with transpose
     bool m_transpose = false;

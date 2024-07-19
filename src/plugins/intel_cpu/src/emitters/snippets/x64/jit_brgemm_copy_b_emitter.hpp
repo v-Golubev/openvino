@@ -22,6 +22,9 @@ public:
         return {{element::i8}, {element::bf16}, {element::f32}};
     }
 
+    static size_t get_repacking_buffer_size(const ov::snippets::lowered::ExpressionPtr& copy_b_expr);
+    static size_t get_compensations_buffer_size(const ov::snippets::lowered::ExpressionPtr& copy_b_expr);
+
     static size_t compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b);
     static size_t compute_inner_n_block(const ov::element::Type& precision);
     static size_t compute_vnni_factor(const ov::element::Type& precision);

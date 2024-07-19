@@ -28,7 +28,6 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
       op::Op({x}),
       m_type(type),
       m_src_type(src_type),
-      m_inner_n_block(intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(x.get_element_type())),
       m_brgemmVNNIFactor(intel_cpu::jit_brgemm_copy_b_emitter::compute_vnni_factor(x.get_element_type())),
       m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
@@ -54,7 +53,6 @@ intel_cpu::BrgemmCopyB::BrgemmCopyB(const Output<Node>& x,
       op::Op({x}),
       m_type(type),
       m_src_type(src_type),
-      m_inner_n_block(intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(x.get_element_type())),
       m_brgemmVNNIFactor(intel_cpu::jit_brgemm_copy_b_emitter::compute_vnni_factor(x.get_element_type())),
       m_transpose(!layout_input.empty() && layout_input.back() != layout_input.size() - 1) {
     set_output_size(type == Type::WithCompensations ? 2 : 1);
@@ -74,7 +72,6 @@ bool BrgemmCopyB::visit_attributes(AttributeVisitor& visitor) {
     visitor.on_attribute("type", m_type);
     visitor.on_attribute("K_blk", m_K_blk);
     visitor.on_attribute("N_blk", m_N_blk);
-    visitor.on_attribute("inner_n_block", m_inner_n_block);
     visitor.on_attribute("brgemmVNNIFactor", m_brgemmVNNIFactor);
     visitor.on_attribute("transpose", m_transpose);
     return true;
@@ -122,7 +119,7 @@ void intel_cpu::BrgemmCopyB::compute_block_size_values(const size_t blk_size_k, 
 
 size_t intel_cpu::BrgemmCopyB::get_repacking_buffer_size() const {
     // Repacking buffer shape is set in accordance to OneDNN requirements
-    const size_t N_dim = std::max(m_N_blk, m_inner_n_block);
+    const size_t N_dim = std::max(m_N_blk, intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(get_input_element_type(0)));
     if (with_transpose()) {
         // In case of transpose, K dimension must be rounded-up to number of elems in vector register
         // For the details, please see 'transpose16x8' and 'fixup16x16' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
@@ -140,7 +137,7 @@ size_t intel_cpu::BrgemmCopyB::get_compensations_buffer_size() const {
     // Compensations are computed during repacking, so we need to round-up allocation shape according to m_inner_n_block
     // because of OneDNN implementation nuances (as in get_repacking_buffer_size).
     // However, the compensations are computed by N dimension, so K dimension doesn't affect the compensations buffer
-    return std::max(m_N_blk, m_inner_n_block);
+    return std::max(m_N_blk, intel_cpu::jit_brgemm_copy_b_emitter::compute_inner_n_block(get_input_element_type(0)));
 }
 
 std::shared_ptr<ov::Node> intel_cpu::BrgemmCopyB::clone_with_new_inputs(const OutputVector& new_args) const {

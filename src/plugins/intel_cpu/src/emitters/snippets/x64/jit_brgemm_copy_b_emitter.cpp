@@ -22,8 +22,40 @@ using namespace dnnl::impl::cpu::x64;
 namespace ov {
 namespace intel_cpu {
 
+size_t jit_brgemm_copy_b_emitter::get_repacking_buffer_size(const ov::snippets::lowered::ExpressionPtr& copy_b_expr) {
+    const auto& in_desc = copy_b_expr->get_input_port_descriptor(0);
+    const size_t n_blk = *in_desc->get_subtensor().rbegin();
+    const size_t k_blk = *in_desc->get_subtensor().rbegin()++;
+
+    const auto& precision = copy_b_expr->get_node()->get_input_element_type(0);
+    // Repacking buffer shape is set in accordance to OneDNN requirements
+    const size_t N_dim = std::max(n_blk, compute_inner_n_block(precision));
+    const auto& in_layout = in_desc->get_layout();
+    if (!in_layout.empty() && in_layout.back() != in_layout.size() - 1) {
+        // In case of transpose, K dimension must be rounded-up to number of elems in vector register
+        // For the details, please see 'transpose16x8' and 'fixup16x16' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
+        const auto elems_in_vec = get_elems_in_vec(precision);
+        return N_dim * rnd_up(k_blk, elems_in_vec);
+    } else {
+        // Low precision repacking writes the result by m_brgemmVNNIFactor * m_inner_n_block blocks
+        // despite the actual size of the input data. Because of that we have to round-up the allocation shape to always have enough memory allocated.
+        // For the details, please see 'copy_4x64' and 'copy_2x32' implementations and usage in onednn/src/cpu/x64/matmul/brgemm_matmul_copy_utils.cpp
+        return N_dim * rnd_up(k_blk, compute_vnni_factor(precision));
+    }
+}
+
+size_t jit_brgemm_copy_b_emitter::get_compensations_buffer_size(const ov::snippets::lowered::ExpressionPtr& copy_b_expr) {
+    const auto& in_desc = copy_b_expr->get_input_port_descriptor(0);
+    const size_t n_blk = *in_desc->get_subtensor().rbegin();
+    const auto& precision = copy_b_expr->get_node()->get_input_element_type(0);
+    // Compensations are computed during repacking, so we need to round-up allocation shape according to m_inner_n_block
+    // because of OneDNN implementation nuances (as in get_repacking_buffer_size).
+    // However, the compensations are computed by N dimension, so K dimension doesn't affect the compensations buffer
+    return std::max(n_blk, compute_inner_n_block(precision));
+}
+
 size_t jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b) {
-    return std::max(copy_b->get_n_block_size(), copy_b->get_n_inner_block_size());
+    return std::max(copy_b->get_n_block_size(), compute_inner_n_block(copy_b->get_output_element_type(0)));
 }
 
 size_t jit_brgemm_copy_b_emitter::compute_inner_n_block(const ov::element::Type& precision) {
@@ -70,7 +102,8 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     m_N_blk = *in_subtensor.rbegin();
     m_K_blk = *++in_subtensor.rbegin();
     OV_CPU_JIT_EMITTER_ASSERT(m_N_blk <= N && m_K_blk <= m_K, "BrgemmCopyB has incompatible subtensor dimensions");
-    m_inner_N_block = brgemm_repack->get_n_inner_block_size();
+    m_brg_weight_etype = brgemm_repack->get_input_element_type(0);
+    m_inner_N_block = compute_inner_n_block(m_brg_weight_etype);
     m_inner_N_tail = m_N_blk % m_inner_N_block;
 
     OV_CPU_JIT_EMITTER_ASSERT(expr->get_output_port_descriptor(0)->get_subtensor() == in_subtensor, "output and input subtensors must be equal");
@@ -82,7 +115,6 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     }
 
     const auto& brg_src_etype = brgemm_repack->get_src_element_type();
-    m_brg_weight_etype = brgemm_repack->get_input_element_type(0);
     m_brgemmVNNIFactor = brgemm_repack->get_brgemm_vnni_factor();
     OV_CPU_JIT_EMITTER_ASSERT(one_of(m_brg_weight_etype, element::f32, element::bf16, element::i8), "doesn't support precision ", m_brg_weight_etype);
 
