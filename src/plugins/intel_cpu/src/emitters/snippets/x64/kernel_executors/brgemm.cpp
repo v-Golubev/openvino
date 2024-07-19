@@ -171,13 +171,13 @@ void BrgemmKernelExecutor::update_config(const ov::snippets::lowered::Expression
     const auto K = DIM_CAST(*in0_subtensor.rbegin());
     const auto M = DIM_CAST(*++in0_subtensor.rbegin());
     // Matrix B (second input)
+    const auto N = DIM_CAST(*get_projected_input_subtensor(input_pds[1]).rbegin());
     auto LDB = DIM_CAST(snippets::utils::get_dim_stride(expr->get_input_port(1)));
     const auto& brgemm_node = as_type_ptr<ov::intel_cpu::BrgemmCPU>(expr->get_node());
     OV_CPU_JIT_EMITTER_ASSERT(brgemm_node, "Got invalid node type in update_config");
     // In case of data repacking LDB is chosen in accordance with repacking buffer size
     if (brgemm_node->is_with_data_repacking())
-        LDB = jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(brgemm_node->get_brgemm_copy());
-    const auto N = DIM_CAST(*get_projected_input_subtensor(input_pds[1]).rbegin());
+        LDB = jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(N, brgemm_node->get_input_element_type(1));
     // Matrix C (output)
     const auto LDC = DIM_CAST(snippets::utils::get_dim_stride(expr->get_output_port(0)));
     config.update(M, N, K, LDA, LDB, LDC);

@@ -25,7 +25,7 @@ namespace intel_cpu {
 size_t jit_brgemm_copy_b_emitter::get_repacking_buffer_size(const ov::snippets::lowered::ExpressionPtr& copy_b_expr) {
     const auto& in_desc = copy_b_expr->get_input_port_descriptor(0);
     const size_t n_blk = *in_desc->get_subtensor().rbegin();
-    const size_t k_blk = *in_desc->get_subtensor().rbegin()++;
+    const size_t k_blk = *++in_desc->get_subtensor().rbegin();
 
     const auto& precision = copy_b_expr->get_node()->get_input_element_type(0);
     // Repacking buffer shape is set in accordance to OneDNN requirements
@@ -54,8 +54,8 @@ size_t jit_brgemm_copy_b_emitter::get_compensations_buffer_size(const ov::snippe
     return std::max(n_blk, compute_inner_n_block(precision));
 }
 
-size_t jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(const std::shared_ptr<ov::intel_cpu::BrgemmCopyB>& copy_b) {
-    return std::max(copy_b->get_n_block_size(), compute_inner_n_block(copy_b->get_output_element_type(0)));
+size_t jit_brgemm_copy_b_emitter::compute_repacking_out_leading_dim(const size_t n_block, const ov::element::Type& precision) {
+    return std::max(n_block, compute_inner_n_block(precision));
 }
 
 size_t jit_brgemm_copy_b_emitter::compute_inner_n_block(const ov::element::Type& precision) {
@@ -86,13 +86,13 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     m_with_comp = brgemm_repack->is_with_compensations();
     m_in_offset = brgemm_repack->get_offset_in();
     m_out_offset = brgemm_repack->get_offset_out();
-    m_transpose = brgemm_repack->with_transpose();
     if (m_with_comp)
         m_comp_offset = brgemm_repack->get_offset_compensations();
 
     const auto& in_desc = expr->get_input_port_descriptor(0);
     const auto& original_shape = in_desc->get_shape();
     const auto& layout = in_desc->get_layout();
+    m_transpose = !layout.empty() && layout.back() != layout.size() - 1;
 
     const auto planar_shape = snippets::utils::get_planar_vdims(original_shape, layout);
     const size_t N = *planar_shape.rbegin();
@@ -105,6 +105,12 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     m_brg_weight_etype = brgemm_repack->get_input_element_type(0);
     m_inner_N_block = compute_inner_n_block(m_brg_weight_etype);
     m_inner_N_tail = m_N_blk % m_inner_N_block;
+    m_brgemmVNNIFactor = compute_vnni_factor(m_brg_weight_etype);
+
+    OV_CPU_JIT_EMITTER_ASSERT(m_K_blk == m_K || m_K_blk % m_brgemmVNNIFactor == 0,
+                              "K Block size (", m_K_blk, "), which is not divisible by brgemmVNNIFactor (",
+                              m_brgemmVNNIFactor, ") and not equal to K dimension (", m_K,
+                              "), is not supported for brgemm data repacking.");
 
     OV_CPU_JIT_EMITTER_ASSERT(expr->get_output_port_descriptor(0)->get_subtensor() == in_subtensor, "output and input subtensors must be equal");
     if (m_with_comp) {
@@ -115,7 +121,6 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     }
 
     const auto& brg_src_etype = brgemm_repack->get_src_element_type();
-    m_brgemmVNNIFactor = brgemm_repack->get_brgemm_vnni_factor();
     OV_CPU_JIT_EMITTER_ASSERT(one_of(m_brg_weight_etype, element::f32, element::bf16, element::i8), "doesn't support precision ", m_brg_weight_etype);
 
     const auto use_amx = mayiuse(avx512_core_amx) && brg_src_etype != ov::element::f32 &&
@@ -124,7 +129,7 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     const auto src_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(brg_src_etype));
     const auto wei_dt = static_cast<dnnl_data_type_t>(DnnlExtensionUtils::ElementTypeToDataType(m_brg_weight_etype));
 
-    const auto ldb = compute_repacking_out_leading_dim(brgemm_repack);
+    const auto ldb = compute_repacking_out_leading_dim(m_N_blk, m_brg_weight_etype);
     const auto wei_stride = ov::snippets::utils::get_dim_stride(expr->get_input_port(0), m_transpose ? 0 : 1) * m_brg_weight_etype.size();
     // Notes:
     // 1. 4D format tags are used just to force the needed OneDNN primitive creation.

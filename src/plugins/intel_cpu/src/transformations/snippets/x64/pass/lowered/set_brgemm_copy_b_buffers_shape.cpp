@@ -9,6 +9,7 @@
 #include "snippets/utils/utils.hpp"
 
 #include "transformations/snippets/x64/op/brgemm_copy_b.hpp"
+#include "emitters/snippets/x64/jit_brgemm_copy_b_emitter.hpp"
 
 bool ov::intel_cpu::pass::SetBrgemmCopyBBuffersShape::run(snippets::lowered::LinearIR& linear_ir,
                                                           snippets::lowered::LinearIR::constExprIt begin,
@@ -28,10 +29,10 @@ bool ov::intel_cpu::pass::SetBrgemmCopyBBuffersShape::run(snippets::lowered::Lin
         const auto& expr = *expr_it;
         if (auto copy_b = ov::as_type_ptr<ov::intel_cpu::BrgemmCopyB>(expr->get_node())) {
             const auto buffer = get_buffer_from_output(expr, 0);
-            buffer->set_allocation_size(copy_b->get_repacking_buffer_size());
+            buffer->set_allocation_size(ov::intel_cpu::jit_brgemm_copy_b_emitter::get_repacking_buffer_size(expr));
             if (copy_b->is_with_compensations()) {
                 const auto compensations_buffer = get_buffer_from_output(expr, 1);
-                compensations_buffer->set_allocation_size(copy_b->get_compensations_buffer_size());
+                compensations_buffer->set_allocation_size(ov::intel_cpu::jit_brgemm_copy_b_emitter::get_compensations_buffer_size(expr));
             }
             modified = true;
         }

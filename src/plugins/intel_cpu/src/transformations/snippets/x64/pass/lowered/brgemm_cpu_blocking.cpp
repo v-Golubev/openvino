@@ -105,15 +105,15 @@ bool BrgemmCPUBlocking::mark_blocking_loops(LinearIR& linear_ir, const LinearIR:
     ov::snippets::lowered::ExpressionPtr copy_b_expr = nullptr;
     if (with_repacking) {
         const auto copy_b = brgemm->get_brgemm_copy();
-        const auto& repacking_expr = linear_ir.get_expr_by_node(copy_b);
+        copy_b_expr = linear_ir.get_expr_by_node(copy_b);
         const ov::snippets::VectorDims repacking_subtensor{block_size_k, block_size_n};
-        repacking_expr->get_input_port_descriptor(0)->set_subtensor(repacking_subtensor);
-        repacking_expr->get_output_port_descriptor(0)->set_subtensor(repacking_subtensor);
+        copy_b_expr->get_input_port_descriptor(0)->set_subtensor(repacking_subtensor);
+        copy_b_expr->get_output_port_descriptor(0)->set_subtensor(repacking_subtensor);
         if (copy_b->is_with_compensations()) {
             const ov::snippets::VectorDims compensations_subtensor{1, block_size_n};
             OPENVINO_ASSERT(brgemm_expr->get_input_count() == 3, "Brgemm must have 3 inputs in case of compensations.");
             brgemm_expr->get_input_port_descriptor(2)->set_subtensor(compensations_subtensor);
-            repacking_expr->get_output_port_descriptor(1)->set_subtensor(compensations_subtensor);
+            copy_b_expr->get_output_port_descriptor(1)->set_subtensor(compensations_subtensor);
         }
     }
 
