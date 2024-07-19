@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 
-#include "transformations/snippets/x64/pass/lowered/brgemm_blocking.hpp"
+#include "transformations/snippets/x64/pass/lowered/brgemm_cpu_blocking.hpp"
+#include "transformations/tpp/x64/pass/lowered/brgemm_tpp_blocking.hpp"
 
 #include "lir_test_utils.hpp"
 #include "openvino/opsets/opset10.hpp"
@@ -86,13 +87,17 @@ public:
         comparator.enable(LIRComparator::LIRCmpValues::PORT_CONNECTORS);
         comparator.enable(LIRComparator::LIRCmpValues::LOOP_MANAGER);
     }
+};
+class BrgemmCPUBlockingTest : public BrgemmBlockingTest {
+public:
+    BrgemmCPUBlockingTest() : BrgemmBlockingTest() {}
 
     void SetUp() override {
-        pipeline.register_pass<ov::intel_cpu::pass::BrgemmBlocking>();
+        pipeline.register_pass<ov::intel_cpu::pass::BrgemmCPUBlocking>();
     }
 };
 
-TEST_F(BrgemmBlockingTest, Floating) {
+TEST_F(BrgemmCPUBlockingTest, Floating) {
     const size_t m_blk = 32;
     const size_t k_blk = 16;
     const size_t n_blk = 64;
@@ -124,7 +129,7 @@ TEST_F(BrgemmBlockingTest, Floating) {
     }
 }
 
-TEST_F(BrgemmBlockingTest, BlockingIsNotNeeded) {
+TEST_F(BrgemmCPUBlockingTest, BlockingIsNotNeeded) {
     const size_t m = 32;
     const size_t k = 16;
     const size_t n = 64;
@@ -152,7 +157,7 @@ TEST_F(BrgemmBlockingTest, BlockingIsNotNeeded) {
     }
 }
 
-TEST_F(BrgemmBlockingTest, WithDataRepacking) {
+TEST_F(BrgemmCPUBlockingTest, WithDataRepacking) {
     const size_t m_blk = 32;
     const size_t k_blk = 16;
     const size_t n_blk = 64;
@@ -192,7 +197,7 @@ TEST_F(BrgemmBlockingTest, WithDataRepacking) {
     }
 }
 
-TEST_F(BrgemmBlockingTest, WithDataRepackingOnlyByM) {
+TEST_F(BrgemmCPUBlockingTest, WithDataRepackingOnlyByM) {
     const size_t m_blk = 32;
     const size_t k = 64;
     const size_t n = 384;
@@ -232,7 +237,7 @@ TEST_F(BrgemmBlockingTest, WithDataRepackingOnlyByM) {
     }
 }
 
-TEST_F(BrgemmBlockingTest, WithCompensations) {
+TEST_F(BrgemmCPUBlockingTest, WithCompensations) {
     const size_t m_blk = 32;
     const size_t k_blk = 16;
     const size_t n_blk = 64;
@@ -272,7 +277,7 @@ TEST_F(BrgemmBlockingTest, WithCompensations) {
     }
 }
 
-TEST_F(BrgemmBlockingTest, AMX) {
+TEST_F(BrgemmCPUBlockingTest, AMX) {
     const size_t m_blk = 32;
     const size_t k_blk = 16;
     const size_t n_blk = 64;
@@ -314,8 +319,18 @@ TEST_F(BrgemmBlockingTest, AMX) {
     }
 }
 
+
 #ifdef SNIPPETS_LIBXSMM_TPP
-TEST_F(BrgemmBlockingTest, TPPFloating) {
+class BrgemmTPPBlockingTest : public BrgemmBlockingTest {
+public:
+    BrgemmTPPBlockingTest() : BrgemmBlockingTest() {}
+
+    void SetUp() override {
+        pipeline.register_pass<ov::intel_cpu::tpp::pass::BrgemmTPPBlocking>();
+    }
+};
+
+TEST_F(BrgemmTPPBlockingTest, TPPFloating) {
     const size_t m_blk = 32;
     const size_t k_blk = 16;
     const size_t n_blk = 64;

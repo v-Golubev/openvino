@@ -1,30 +1,27 @@
-// Copyright (C) 2023 Intel Corporation
+// Copyright (C) 2024 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
 #pragma once
 
-#include "snippets/lowered/pass/pass.hpp"
+#include "snippets/lowered/pass/brgemm_blocking.hpp"
 
 namespace ov {
 namespace intel_cpu {
 namespace pass {
 
 /**
- * @interface BrgemmBlocking
+ * @interface BrgemmCPUBlocking
  * @brief Covers BrgemmCPU with blocking loops
  * @ingroup snippets
  */
-
-class BrgemmBlocking : public snippets::lowered::pass::RangedPass {
+class BrgemmCPUBlocking : public ov::snippets::lowered::pass::BrgemmBlockingBase {
 public:
-    OPENVINO_RTTI("BrgemmBlocking", "Pass")
-    BrgemmBlocking();
-    bool run(snippets::lowered::LinearIR& linear_ir,
-             snippets::lowered::LinearIR::constExprIt begin,
-             snippets::lowered::LinearIR::constExprIt end) override;
+    OPENVINO_RTTI("BrgemmCPUBlocking", "BrgemmBlockingBase")
 
 private:
+    bool mark_blocking_loops(snippets::lowered::LinearIR& linear_ir, const snippets::lowered::LinearIR::constExprIt& brgemm_it) override;
+
     static snippets::lowered::LinearIR::constExprIt move_new_memory_buffer(snippets::lowered::LinearIR& linear_ir,
                                                                            const snippets::lowered::LinearIR::constExprIt& brgemm_it);
 
