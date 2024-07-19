@@ -149,9 +149,6 @@ protected:
         const auto store = std::make_shared<ov::snippets::op::Store>(load_reshape);
         const auto relu0 = std::make_shared<ov::op::v0::Relu>(store);
         const auto brgemm_cpu0 = std::make_shared<ov::intel_cpu::BrgemmCPU>(parameter0, relu0, ov::intel_cpu::BrgemmCPU::Type::Floating);
-        brgemm_cpu0->set_m_block_size(m_blk);
-        brgemm_cpu0->set_k_block_size(k_blk);
-        brgemm_cpu0->set_n_block_size(n_blk);
 
         const auto relu1 = std::make_shared<ov::op::v0::Relu>(brgemm_cpu0);
 
@@ -167,9 +164,6 @@ protected:
         const auto multiply = std::make_shared<ov::op::v1::Multiply>(exp, power);
 
         const auto brgemm_cpu1 = std::make_shared<ov::intel_cpu::BrgemmCPU>(multiply, parameter2, ov::intel_cpu::BrgemmCPU::Type::Floating);
-        brgemm_cpu1->set_m_block_size(m_blk);
-        brgemm_cpu1->set_k_block_size(k_blk);
-        brgemm_cpu1->set_n_block_size(n_blk);
 
         const auto relu2 = std::make_shared<ov::op::v0::Relu>(brgemm_cpu1);
 
@@ -214,10 +208,7 @@ protected:
         const auto scratch0 = std::make_shared<ov::snippets::op::NewMemoryBuffer>(ov::Shape{ov::intel_cpu::BrgemmCPU::SCRATCH_BYTE_SIZE});
         const auto brgemm_cpu0 = std::make_shared<ov::intel_cpu::BrgemmCPU>(
             parameter0, brgemm_copyb0->output(0), scratch0, ov::intel_cpu::BrgemmCPU::Type::AMX);
-        brgemm_cpu0->set_m_block_size(m_blk);
-        brgemm_cpu0->set_k_block_size(k_blk);
         brgemm_copyb0->set_k_block_size(k_blk);
-        brgemm_cpu0->set_n_block_size(n_blk);
         brgemm_copyb0->set_n_block_size(n_blk);
 
         const auto relu1 = std::make_shared<ov::op::v0::Relu>(brgemm_cpu0);
@@ -240,10 +231,7 @@ protected:
         const auto scratch1 = std::make_shared<ov::snippets::op::NewMemoryBuffer>(ov::Shape{ov::intel_cpu::BrgemmCPU::SCRATCH_BYTE_SIZE});
         const auto brgemm_cpu1 = std::make_shared<ov::intel_cpu::BrgemmCPU>(
             convert2, brgemm_copyb1->output(0), scratch1, ov::intel_cpu::BrgemmCPU::Type::AMX);
-        brgemm_cpu1->set_m_block_size(m_blk);
-        brgemm_cpu1->set_k_block_size(k_blk);
         brgemm_copyb1->set_k_block_size(k_blk);
-        brgemm_cpu1->set_n_block_size(n_blk);
         brgemm_copyb1->set_n_block_size(n_blk);
 
         const auto relu2 = std::make_shared<ov::op::v0::Relu>(brgemm_cpu1);
@@ -326,7 +314,7 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_BufferAllocation_MHABF16AMXOptimizedWSpl
                          ::testing::Combine(
                                  ::testing::Values(true),
                                  ::testing::Values(true),
-                                 ::testing::Values(73728),
+                                 ::testing::Values(61440),
                                  ::testing::Values(3),
                                  ::testing::Values(8)),
                          BufferAllocationCPUTest::getTestCaseName);
@@ -344,7 +332,7 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_BufferAllocation_MHABF16AMXOptimizedWOSp
                          ::testing::Combine(
                                  ::testing::Values(true),
                                  ::testing::Values(false),
-                                 ::testing::Values(116736),
+                                 ::testing::Values(100352),
                                  ::testing::Values(3),
                                  ::testing::Values(8)),
                          BufferAllocationCPUTest::getTestCaseName);

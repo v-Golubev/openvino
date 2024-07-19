@@ -84,9 +84,9 @@ pass::SetBrgemmCPUBlockingParams::SetBrgemmCPUBlockingParams() {
             }
         }
 
-        brgemm->set_m_block_size(m_blk);
-        brgemm->set_k_block_size(k_blk);
-        brgemm->set_n_block_size(n_blk);
+        // brgemm->set_m_block_size(m_blk);
+        // brgemm->set_k_block_size(k_blk);
+        // brgemm->set_n_block_size(n_blk);
         return false;
     };
 

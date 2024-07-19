@@ -39,15 +39,12 @@ LinearIR::constExprIt BrgemmCPUBlocking::move_new_memory_buffer(LinearIR& linear
 LinearIR::constExprIt BrgemmCPUBlocking::get_loop_begin_pos(LinearIR& linear_ir, const LinearIR::constExprIt& brgemm_it, const ExpressionPtr& copy_b_expr) {
     auto loop_begin_it = brgemm_it;
     const auto& brgemm_expr = *brgemm_it;
-    const auto node = brgemm_expr->get_node();
-    const auto brgemm = ov::as_type_ptr<intel_cpu::BrgemmCPU>(node);
+    const auto brgemm = ov::as_type_ptr<intel_cpu::BrgemmCPU>(brgemm_expr->get_node());
     OPENVINO_ASSERT(brgemm, "get_loop_begin_pos must be called only for BrgemmCPU expression");
-    if (brgemm && brgemm->is_amx()) {
+    if (brgemm && brgemm->is_amx())
         loop_begin_it = move_new_memory_buffer(linear_ir, brgemm_it);
-    }
-    if (copy_b_expr) {
+    if (copy_b_expr)
         loop_begin_it = linear_ir.find(copy_b_expr);
-    }
     return loop_begin_it;
 }
 
@@ -73,43 +70,51 @@ bool BrgemmCPUBlocking::mark_blocking_loops(LinearIR& linear_ir, const LinearIR:
     const auto& n = *out_preordered_dims.rbegin();
     const auto& k = *in_0_planar_dims.rbegin();
     OPENVINO_ASSERT(k == *++in_1_planar_dims.rbegin(), "Brgemm input descriptors have different K dimension value.");
+    const bool with_repacking = brgemm->is_with_data_repacking();
 
-    const auto block_size_m = snippets::utils::is_dynamic_value(m) ? brgemm->get_m_block_size() : std::min(brgemm->get_m_block_size(), m);
-    const auto block_size_n = snippets::utils::is_dynamic_value(n) ? brgemm->get_n_block_size() : std::min(brgemm->get_n_block_size(), n);
-    const auto block_size_k = snippets::utils::is_dynamic_value(k) ? brgemm->get_k_block_size() : std::min(brgemm->get_k_block_size(), k);
+    // Ticket: 113745
+    // TODO: extend block size selection heuristics
+    auto get_block_size_m = [&](const size_t M) -> size_t {
+        return snippets::utils::is_dynamic_value(m) ? 32ul : std::min(32ul, M);
+    };
+    auto get_block_size_k = [&](const size_t K) -> size_t {
+        // K blocking is disabled in dynamism by default
+        if (ov::snippets::utils::is_dynamic_value(K))
+            return snippets::utils::get_dynamic_value<size_t>();
+        if (with_repacking)
+            return K;
+        return K > 1024 ? 1024 : K > 512 ? 512 : K;
+    };
+    auto get_block_size_n = [&](const size_t N) -> size_t {
+        // N blocking is disabled in dynamism by default
+        if (ov::snippets::utils::is_dynamic_value(N))
+            return snippets::utils::get_dynamic_value<size_t>();
+        if (with_repacking)
+            return N;
+        return std::min(64ul, N);
+    };
+
+    const auto block_size_m = get_block_size_m(m);
+    const auto block_size_k = get_block_size_k(k);
+    const auto block_size_n = get_block_size_n(n);
 
     brgemm_expr->get_input_port_descriptor(0)->set_subtensor(ov::snippets::VectorDims{block_size_m, block_size_k});
     brgemm_expr->get_input_port_descriptor(1)->set_subtensor(ov::snippets::VectorDims{block_size_k, block_size_n});
     brgemm_expr->get_output_port_descriptor(0)->set_subtensor(ov::snippets::VectorDims{block_size_m, block_size_n});
 
     ov::snippets::lowered::ExpressionPtr copy_b_expr = nullptr;
-    if (brgemm && brgemm->is_with_data_repacking()) {
+    if (with_repacking) {
         const auto copy_b = brgemm->get_brgemm_copy();
-        const auto copy_b_k_block = snippets::utils::is_dynamic_value(k) ? copy_b->get_k_block_size() : std::min(copy_b->get_k_block_size(), k);
-        const auto copy_b_n_block = snippets::utils::is_dynamic_value(n) ? copy_b->get_n_block_size() : std::min(copy_b->get_n_block_size(), n);
-        OPENVINO_ASSERT(snippets::utils::one_of(copy_b_k_block, k, block_size_k),
-                        "CopyB has unexpected K block size (", copy_b->get_k_block_size(),
-                        "). It must be equal to K dim (", k, ")",
-                        " or to brgemm's k block size (", block_size_k, ")");
-        OPENVINO_ASSERT(snippets::utils::one_of(copy_b_n_block, n, block_size_n),
-                        "CopyB has unexpected n block size (", copy_b->get_n_block_size(),
-                        "). It must be equal to n dim (", n, ")",
-                        " or to brgemm's n block size (", block_size_n, ")");
-
         const auto& repacking_expr = linear_ir.get_expr_by_node(copy_b);
-        const ov::snippets::VectorDims repacking_subtensor{copy_b_k_block, copy_b_n_block};
+        const ov::snippets::VectorDims repacking_subtensor{block_size_k, block_size_n};
         repacking_expr->get_input_port_descriptor(0)->set_subtensor(repacking_subtensor);
         repacking_expr->get_output_port_descriptor(0)->set_subtensor(repacking_subtensor);
         if (copy_b->is_with_compensations()) {
-            const ov::snippets::VectorDims compensations_subtensor{1, copy_b_n_block};
+            const ov::snippets::VectorDims compensations_subtensor{1, block_size_n};
             OPENVINO_ASSERT(brgemm_expr->get_input_count() == 3, "Brgemm must have 3 inputs in case of compensations.");
             brgemm_expr->get_input_port_descriptor(2)->set_subtensor(compensations_subtensor);
             repacking_expr->get_output_port_descriptor(1)->set_subtensor(compensations_subtensor);
         }
-
-        // If copyB block sizes are equal to brgemm ones, copy_b_expr is covered by blocking loops as well
-        if (copy_b_k_block == block_size_k && copy_b_n_block == block_size_n)
-            copy_b_expr = repacking_expr;
     }
 
     const auto& loop_manager = linear_ir.get_loop_manager();
