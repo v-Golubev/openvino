@@ -47,7 +47,7 @@ CommonOptimizations::CommonOptimizations(const SnippetsTokenization::Config& con
         // Then if Subgraph contains FakeQuantize we enable specific transformation for quantized subgraphs.
         ov::pass::Manager manager(get_pass_config());
         REGISTER_SNIPPETS_PASS(manager, ov::snippets::pass::TransformConvertToConvertTruncation, true);
-        REGISTER_SNIPPETS_PASS(manager, ov::snippets::pass::ExplicitTransposeMatMulInputs, is_domain_sensitive, config.get_matmul_native_transpose_b_support());
+        REGISTER_SNIPPETS_PASS(manager, ov::snippets::pass::ExplicitTransposeMatMulInputs, is_domain_sensitive);
         REGISTER_SNIPPETS_PASS(manager, ov::snippets::pass::CommonFakeQuantizeDecomposition, is_quantized);
         REGISTER_SNIPPETS_PASS(manager, ov::snippets::pass::SoftmaxReshapeElimination, is_domain_sensitive);
         manager.run_passes(body);

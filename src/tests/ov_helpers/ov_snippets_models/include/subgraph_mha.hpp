@@ -376,7 +376,7 @@ public:
     explicit MHATransposedInputFunction(const std::vector<PartialShape>& inputShapes,
                                         bool transposed_b = false,
                                         std::vector<int64_t> order = {},
-                                        bool transpose_b_native_support = true)
+                                        bool transpose_b_native_support = false)
         : SnippetsFunctionBase(inputShapes),
           m_transposed_b(transposed_b),
           m_order(order),

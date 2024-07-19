@@ -142,6 +142,10 @@
 #include "snippets/pass/common_optimizations.hpp"
 #include "snippets/pass/split_dimension_m.hpp"
 #include "snippets/pass/extract_reshapes_from_mha.hpp"
+#include "snippets/pass/explicit_transpose_matmul_inputs.hpp"
+#ifdef SNIPPETS_LIBXSMM_TPP
+#include "transformations/tpp/x64/pass/brgemm_to_brgemm_tpp.hpp"
+#endif
 
 // Misc
 #include "nodes/mvn.h"
@@ -891,14 +895,9 @@ void Transformations::MainSnippets(void) {
     bool is_dynamic_mha_token_enabled = ignoreCallback;
     // [122706] Some 3D MHA Patterns have perf regressions when Transpose op is tokenized
     std::set<size_t> mha_supported_transpose_ranks = { 4 };
-#ifdef SNIPPETS_LIBXSMM_TPP
-    bool matmul_native_transpose_b_support = false;
-#else
-    bool matmul_native_transpose_b_support = true;
-#endif
     snippets::pass::SnippetsTokenization::Config tokenization_config(concurrency, data_ptr_gpr_count, split_m_dimension,
                                                                      mha_token_enable_transpose_on_output, is_dynamic_mha_token_enabled,
-                                                                     mha_supported_transpose_ranks, matmul_native_transpose_b_support);
+                                                                     mha_supported_transpose_ranks);
 
     ov::pass::Manager snippetsManager;
     snippetsManager.set_per_pass_validation(false);
@@ -1093,6 +1092,40 @@ void Transformations::MainSnippets(void) {
         return false;
     },
     snippets::pass::TokenizeSnippets);
+
+    CPU_SET_CALLBACK_COMMON(snippetsManager,
+    [this](const std::shared_ptr<const ov::Node>& n) -> bool {
+        const auto& b_shape = n->get_input_partial_shape(1);
+        if (b_shape.is_dynamic())
+            return false;
+        // Note: BrgemmTPP doesn't support transposed KN natively
+        // so we should extract transposes for the corresponding matmul nodes
+#ifdef SNIPPETS_LIBXSMM_TPP
+        std::vector<std::vector<size_t>> layouts(3);
+        const auto matmul = ov::as_type_ptr<const ov::op::v0::MatMul>(n);
+        OPENVINO_ASSERT(matmul, "ExplicitTransposeMatMulInputs callback must be called for matmul node");
+        if (matmul->get_transpose_b()) {
+            std::vector<size_t> transposed_layout(b_shape.size());
+            std::iota(transposed_layout.begin(), transposed_layout.end(), 0);
+            std::swap(*transposed_layout.rbegin(), *(transposed_layout.rbegin() + 1));
+            layouts[1] = std::move(transposed_layout);
+        }
+        ov::element::TypeVector precisions;
+        auto push_precision = [&](const ov::element::Type& precision) {
+            if (inferencePrecision == ov::element::bf16 && precision == ov::element::f32)
+                precisions.push_back(ov::element::bf16);
+            else
+                precisions.push_back(precision);
+        };
+        push_precision(n->get_input_element_type(0));
+        push_precision(n->get_input_element_type(1));
+        push_precision(n->get_output_element_type(0));
+        if (ov::intel_cpu::tpp::pass::BrgemmToBrgemmTPP::is_supported_brgemm_configuration(layouts, precisions))
+            return false;
+#endif
+        return true;
+    },
+    snippets::pass::ExplicitTransposeMatMulInputs);
 
     snippetsManager.run_passes(model);
 }

@@ -24,14 +24,13 @@ namespace pass {
 class ExplicitTransposeMatMulInputs: public ov::pass::MatcherPass {
 public:
     OPENVINO_RTTI("ExplicitTransposeMatMulInputs", "0");
-    ExplicitTransposeMatMulInputs(bool native_transpose_b_support);
+    ExplicitTransposeMatMulInputs();
 
     // Return `True` if all inputs (except 0-th input) have scalar shape. Otherwise returns `False`
     static bool are_weights_scalar(const std::shared_ptr<ov::Node>& node);
 
 private:
-    static bool extract_if_needed(const ov::Input<ov::Node>& input, bool native_transpose_support);
-    bool m_native_transpose_b_support = false;
+    static bool extract(const ov::Input<ov::Node>& input);
 };
 
 }  // namespace pass
