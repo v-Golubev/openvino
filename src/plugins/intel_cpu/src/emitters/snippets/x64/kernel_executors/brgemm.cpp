@@ -272,7 +272,7 @@ void BrgemmKernelExecutor::update_config(const ov::snippets::lowered::Expression
         //       this `is_incremented = true` can be changed by `CleanRepeatedDataPointerShifts` optimization
         OPENVINO_ASSERT(in_ports.size() == 2 && in_ports.front().dim_idx == 0 && in_ports.back().dim_idx == 1 &&
                         out_ports.size() == 1 && !out_ports.front().is_incremented,
-                        "Incorrect Loop by Brgemm dimension K");
+                        "Incorrect Loop by Brgemm dimension K", in_ports.size());
         K = current_expanded_loop_info->get_work_amount() > 0 ? current_expanded_loop_info->get_increment() : 0;
         input_pds[0]->set_subtensor_dim(0, K);
         input_pds[1]->set_subtensor_dim(1, K);
@@ -292,7 +292,7 @@ void BrgemmKernelExecutor::update_config(const ov::snippets::lowered::Expression
         LDA = brgemm_utils::repacking::compute_LDA(K, src_type);
     }
     if (brgemm_node->get_config().need_copy_b())
-        LDB = brgemm_utils::repacking::compute_LDB(N, brgemm_node->get_input_element_type(1));
+        LDB = brgemm_utils::repacking::compute_LDB(LDB, brgemm_node->get_input_element_type(1));
 
     config.update(DIM_CAST(M), DIM_CAST(N), DIM_CAST(K), LDA, LDB, LDC, beta);
 }
@@ -309,6 +309,7 @@ void BrgemmKernelExecutor::execute(const BrgemmKernelExecutor* executor, call_ar
     }
 
     cpu::x64::brgemm_kernel_params_t brgemm_p;
+    size_t is_with_comp = config.get_beta() == 0 && config.is_with_comp();
 
     brgemm_p.batch = nullptr;  // default value
     brgemm_p.ptr_A = args->A;
@@ -317,8 +318,8 @@ void BrgemmKernelExecutor::execute(const BrgemmKernelExecutor* executor, call_ar
     brgemm_p.ptr_D = args->C;
     brgemm_p.ptr_buf = args->scratch;
     brgemm_p.ptr_bias = nullptr;
-    brgemm_p.do_post_ops = static_cast<size_t>(config.is_with_comp());
-    brgemm_p.do_apply_comp = static_cast<size_t>(config.is_with_comp());
+    brgemm_p.do_post_ops = is_with_comp;
+    brgemm_p.do_apply_comp = is_with_comp;
     brgemm_p.skip_accm = 0;
     brgemm_p.BS = 1;  // default value
     OV_CPU_JIT_EMITTER_ASSERT(kernel->compiled_kernel, "has nullptr kernel");

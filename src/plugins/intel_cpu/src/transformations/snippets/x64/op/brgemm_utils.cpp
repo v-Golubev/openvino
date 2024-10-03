@@ -7,6 +7,7 @@
 #include "dnnl_extension_utils.h"
 #include "emitters/utils.hpp"
 #include "snippets/utils/utils.hpp"
+#include "transformations/snippets/x64/op/brgemm_copy_b.hpp"
 #include "utils/general_utils.h"
 
 using namespace Xbyak;

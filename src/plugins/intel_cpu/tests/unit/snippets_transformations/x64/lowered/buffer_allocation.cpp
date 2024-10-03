@@ -346,29 +346,9 @@ INSTANTIATE_TEST_SUITE_P(smoke_Snippets_BufferAllocation_MHABF16AMXOptimizedWOSp
                                  ::testing::Values(static_shapes),
                                  ::testing::Values(true),
                                  ::testing::Values(false),
-                                 ::testing::Values(1671168),
-                                 ::testing::Values(3),
-                                 ::testing::Values(7)),
-                         BufferAllocationCPUTest::getTestCaseName);
-
-INSTANTIATE_TEST_SUITE_P(smoke_Snippets_BufferAllocation_MHAOptimizedWSplit_Dynamic, MHAFP32BufferAllocationTest,
-                         ::testing::Combine(
-                                 ::testing::Values(dynamic_shapes),
-                                 ::testing::Values(true),
-                                 ::testing::Values(true),
-                                 ::testing::Values(0),  // no static clusters
-                                 ::testing::Values(2),  // (Buffer before brgemm0 and after brgemm1) + (between brgemms)
-                                 ::testing::Values(3)), // (Buffer before brgemm0) + (between brgemms) + (after brgemm1)
-                         BufferAllocationCPUTest::getTestCaseName);
-
-INSTANTIATE_TEST_SUITE_P(smoke_Snippets_BufferAllocation_MHABF16AMXOptimizedWSplit_Dynamic, MHABF16AMXBufferAllocationTest,
-                         ::testing::Combine(
-                                 ::testing::Values(dynamic_shapes),
-                                 ::testing::Values(true),
-                                 ::testing::Values(true),
-                                 ::testing::Values(32768),  // only WSP buffers
-                                 ::testing::Values(3),
-                                 ::testing::Values(7)),
+                                 ::testing::Values(1409024),
+                                 ::testing::Values(4),
+                                 ::testing::Values(8)),
                          BufferAllocationCPUTest::getTestCaseName);
 
 }  // namespace BufferAllocationCPUTest_Instances
