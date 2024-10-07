@@ -65,10 +65,11 @@ pass::BrgemmToBrgemmCPU::BrgemmToBrgemmCPU() {
         const auto& layout_a = brgemm_in0_desc->get_layout();
         const auto& layout_b = brgemm_in1_desc->get_layout();
         const auto& layout_c = brgemm_out_desc->get_layout();
+        const auto LDB = snippets::utils::get_stride(snippets::utils::get_input_dim_idx(layout_b, 1), brgemm_in1_desc->get_shape());
 
         const auto element_type_a = brgemm->get_input_element_type(0);
         const bool transpose_b = !layout_b.empty() && layout_b.back() != layout_b.size() - 1;
-        const auto brgemm_type = brgemm_utils::get_brgemm_type(element_type_a, K, transpose_b);
+        const auto brgemm_type = brgemm_utils::get_brgemm_type(element_type_a, K, transpose_b, LDB);
         const auto offset_a = brgemm->get_offset_a();
         const auto offset_b = brgemm->get_offset_b();
         const auto offset_c = brgemm->get_offset_c();

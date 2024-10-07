@@ -42,9 +42,17 @@ cpu_isa_t get_primitive_isa(const ov::element::Type& dt_in0, bool is_with_amx) {
 #undef SUPPORT
 }
 
-BRGEMM_TYPE get_brgemm_type(const ov::element::Type& element_type_a, const Dimension& K_dim, bool transpose_b) {
-    if (element_type_a == element::f32)
-        return transpose_b ? BRGEMM_TYPE::REPACKING_ONLY : BRGEMM_TYPE::STAND_ALONE;
+BRGEMM_TYPE get_brgemm_type(const ov::element::Type& element_type_a, const Dimension& K_dim, bool transpose_b, const int64_t LDB) {
+    if (element_type_a == element::f32) {
+        // This is not fully clear how to handle this case in dynamism
+        // Heuristic values were taken from OneDNN code (see brgemm_matmul_conf_utils_t::use_buffer_b for the details)
+        bool big_LDB = ov::snippets::utils::is_dynamic_value(LDB)                  ? false
+                       : dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx2) ? LDB >= 128
+                                                                                   : LDB > 256;
+        // TODO: do we need to transfer this condition from OneDNN heuristic?
+        // bool is_pow2 = math::is_pow2(bgmmc.N);
+        return (transpose_b || big_LDB) ? BRGEMM_TYPE::REPACKING_ONLY : BRGEMM_TYPE::STAND_ALONE;
+    }
 
     OPENVINO_ASSERT(element_type_a != element::bf16 || mayiuse(dnnl::impl::cpu::x64::avx512_core_bf16),
                     "BF16 precision is not supported on this hardware");

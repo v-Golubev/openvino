@@ -55,7 +55,7 @@ jit_brgemm_copy_b_emitter::jit_brgemm_copy_b_emitter(jit_generator* h, cpu_isa_t
     const auto& wei_prc = brgemm_repack->get_input_element_type(0);
     const auto wei_N_blk = brgemm_utils::repacking::compute_inner_n_block(wei_prc);
     const auto is_transposed = get_is_transposed(expr);
-    const auto brgemm_type = get_brgemm_type(src_prc, K_blk, is_transposed);
+    const auto brgemm_type = get_brgemm_type(src_prc, K_blk, is_transposed, snippets::utils::get_dim_stride(expr->get_input_port(0)));
     const auto primitive_isa = brgemm_utils::get_primitive_isa(src_prc, with_amx(brgemm_type));
     m_with_comp = with_compensations(brgemm_type);
 
