@@ -379,6 +379,8 @@ static UNUSED void printPerformanceCounts(std::vector<ov::ProfilingInfo> perform
     stream << std::fixed << std::setprecision(precision);
 
     for (const auto& it : performanceData) {
+        if (it.status != ov::ProfilingInfo::Status::EXECUTED)
+            continue;
         if (it.real_time.count() > 0) {
             totalTime += it.real_time;
         }
