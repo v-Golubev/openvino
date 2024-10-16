@@ -419,6 +419,16 @@ def test_properties_ro(ov_property_ro, expected_value):
             "AVAILABLE_DEVICE_MEM_SIZE",
             ((128, 128),),
         ),
+        (
+            hints.enable_static_scaling,
+            "ENABLE_STATIC_SCALING",
+            (
+                (True, True),
+                (False, False),
+                (1, True),
+                (0, False),
+            ),
+        ),
     ],
 )
 def test_properties_rw(ov_property_rw, expected_value, test_values):

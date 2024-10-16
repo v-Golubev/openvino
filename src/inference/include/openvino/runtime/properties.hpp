@@ -1359,4 +1359,10 @@ static constexpr Property<std::vector<std::string>, PropertyMutability::RO> exec
  * @note This property is used for weightless caching. Only used when ov::CacheMode Property is set to "OPTIMIZE_SIZE".
  */
 static constexpr Property<std::string, PropertyMutability::RW> weights_path{"WEIGHTS_PATH"};
+
+/**
+ * @brief This property allows static scaling that scales down some layers' input tensors and changes their runtime precisions to lower ones.
+ * @ingroup ov_runtime_cpp_prop_api
+ */
+static constexpr Property<bool, PropertyMutability::RW> enable_static_scaling{"ENABLE_STATIC_SCALING"};
 }  // namespace ov
