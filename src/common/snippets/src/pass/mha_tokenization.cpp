@@ -30,6 +30,8 @@ bool is_supported_intermediate_op(const std::shared_ptr<ov::Node>& node) {
 }
 
 bool is_valid_transpose(const std::shared_ptr<ov::opset1::Transpose>& node, const std::set<size_t>& supported_ranks, std::vector<int32_t> expected_order) {
+    // Skip transpose tokenization for experiments
+    return false;
     auto is_valid_transpose_order = [expected_order, supported_ranks](const std::shared_ptr<ov::Node>& node) -> bool {
         const auto transpose_pattern = ov::as_type_ptr<ov::opset1::Constant>(node);
         if (!transpose_pattern)
