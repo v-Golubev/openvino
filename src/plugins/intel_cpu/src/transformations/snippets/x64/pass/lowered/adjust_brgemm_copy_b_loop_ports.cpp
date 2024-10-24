@@ -70,31 +70,10 @@ bool pass::AdjustBrgemmCopyBLoopPorts::run(const snippets::lowered::LinearIR& li
 
     bool modified = false;
 
-    for (const auto& expr : linear_ir) {
-        const auto& node = expr->get_node();
-        if (!is_type<BrgemmCopyB>(node))
-            continue;
-        const auto& loop_ids = expr->get_loop_ids();
-        const auto& child_ports = expr->get_output_port(0).get_connected_ports();
-        // Note: this pass should be executed before Loop insertion, so there is no LooEnd fake dependency
-        OPENVINO_ASSERT(child_ports.size() == 1 &&
-                        is_type<snippets::lowered::BufferExpression>(child_ports.begin()->get_expr()),
-                        "BrgemmCopyB should have one BufferExpression child");
-        auto grandchild_ports = child_ports.begin()->get_expr()->get_output_port(0).get_connected_ports();
-        auto it = grandchild_ports.begin();
-        while (it != grandchild_ports.end()) {
-            const auto& port_node = it->get_expr()->get_node();
-            if (is_type<intel_cpu::BrgemmCPU>(port_node)) {
-                it++;
-            } else {
-                OPENVINO_ASSERT(is_type<snippets::op::LoopEnd>(port_node),
-                                "Invalid grandchild of BrgemmCopyB");
-                it = grandchild_ports.erase(it);
-            }
-        }
-        for (const auto& target_port : grandchild_ports) {
+    auto iterate_through_ports = [&](const std::vector<size_t>& loop_ids,
+                                     std::set<ov::snippets::lowered::ExpressionPort>& ports) {
+        for (const auto& target_port : ports) {
             const auto &target_loop_ids = target_port.get_expr()->get_loop_ids();
-
             // If loop ids match, it means there is no blocking loop
             if (target_loop_ids == loop_ids)
                 continue;
@@ -111,6 +90,16 @@ bool pass::AdjustBrgemmCopyBLoopPorts::run(const snippets::lowered::LinearIR& li
                 }
             }
         }
+    };
+
+    for (const auto& expr : linear_ir) {
+        const auto brgemm = ov::as_type_ptr<BrgemmCPU>(expr->get_node());
+        if (!brgemm || !brgemm->get_config().need_copy_b())
+            continue;
+        const auto& input_connector = expr->get_input_port_connector(1);
+        auto parent_out_ports = input_connector->get_consumers();
+        const auto& parent_loop_ids = input_connector->get_source().get_expr()->get_loop_ids();
+        iterate_through_ports(parent_loop_ids, parent_out_ports);
     }
 
     return modified;

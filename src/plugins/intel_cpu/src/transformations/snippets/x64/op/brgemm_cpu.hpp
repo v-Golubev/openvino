@@ -45,8 +45,6 @@ public:
     const BrgemmConfig& get_config() const { return m_config; }
 
     size_t get_offset_scratch() const;
-    std::shared_ptr<BrgemmCopyA> get_brgemm_copy_a() const;
-    std::shared_ptr<BrgemmCopyB> get_brgemm_copy_b() const;
 
     bool visit_attributes(AttributeVisitor& visitor) override;
 
