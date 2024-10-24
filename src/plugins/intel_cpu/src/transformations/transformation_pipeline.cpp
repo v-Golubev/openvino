@@ -987,7 +987,6 @@ void Transformations::MainSnippets(void) {
         if (dnnl::impl::cpu::x64::mayiuse(dnnl::impl::cpu::x64::avx512_core_amx)) {
             const auto& b_shape = matmul->get_input_partial_shape(1);
             const auto K = matmul->get_transpose_b() ? *b_shape.rbegin() : *++b_shape.rbegin();
-            if (is_bf16) return K.is_static() && (K.get_length() % 2 == 0);
             if (is_int8) return K.is_static();
         }
         if (is_int8)
