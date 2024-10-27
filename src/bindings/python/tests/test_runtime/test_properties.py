@@ -420,13 +420,11 @@ def test_properties_ro(ov_property_ro, expected_value):
             ((128, 128),),
         ),
         (
-            hints.enable_static_scaling,
-            "ENABLE_STATIC_SCALING",
+            hints.activations_scale_factor,
+            "ACTIVATIONS_SCALE_FACTOR",
             (
-                (True, True),
-                (False, False),
-                (1, True),
-                (0, False),
+                (16.0, np.float32(16.0)),
+                (256.0, 256.0),
             ),
         ),
     ],
