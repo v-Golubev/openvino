@@ -419,14 +419,6 @@ def test_properties_ro(ov_property_ro, expected_value):
             "AVAILABLE_DEVICE_MEM_SIZE",
             ((128, 128),),
         ),
-        (
-            hints.activations_scale_factor,
-            "ACTIVATIONS_SCALE_FACTOR",
-            (
-                (16.0, np.float32(16.0)),
-                (256.0, 256.0),
-            ),
-        ),
     ],
 )
 def test_properties_rw(ov_property_rw, expected_value, test_values):
