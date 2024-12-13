@@ -5,6 +5,7 @@
 #pragma once
 
 #include "emitters/snippets/jit_snippets_call_args.hpp"
+#include "external_repacking_config.hpp"
 #include "memory_desc/cpu_blocked_memory_desc.h"
 #include "snippets/lowered/port_descriptor.hpp"
 #include "snippets/runtime_configurator.hpp"
@@ -21,8 +22,8 @@ public:
     std::string to_string() const override;
 #endif
 
+    ExternalRepackingConfigPtr m_external_repacking_config = {};
     std::vector<jit_snippets_call_args::loop_args_t> loop_args = {};
-    std::unordered_map<size_t, CpuBlockedMemoryDescPtr> m_in_requested_descs = {};
 };
 
 class CPURuntimeConfigurator : public ov::snippets::RuntimeConfigurator {

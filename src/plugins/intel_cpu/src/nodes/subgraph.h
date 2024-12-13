@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2022 Intel Corporation
+// Copyright (C) 2020-2024 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -7,6 +7,7 @@
 #include "node.h"
 
 #include "emitters/snippets/cpu_runtime_configurator.hpp"
+#include "emitters/snippets/external_repacking_config.hpp"
 #include "emitters/snippets/jit_snippets_call_args.hpp"
 #include "snippets/op/subgraph.hpp"
 
@@ -87,6 +88,7 @@ private:
 #endif
 
     std::shared_ptr<SubgraphAttrs> subgraph_attrs;
+    ExternalRepackingConfigPtr external_repacking_config;
 
     // Index of Paramater -> Index of broadcastable dimension from end
     std::map<size_t, size_t> broadcastable_inputs = {};

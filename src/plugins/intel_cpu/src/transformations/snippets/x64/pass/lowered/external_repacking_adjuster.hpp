@@ -22,10 +22,7 @@ public:
     BrgemmExternalRepackingAdjuster(const ov::snippets::lowered::LinearIRCPtr& linear_ir, const CPURuntimeConfigurator* configurator);
 
     bool run(const snippets::lowered::LinearIR& linear_ir) override;
-    bool applicable() const override { return !m_param_idces_with_external_repacking.empty(); }
-
-private:
-    std::set<size_t> m_param_idces_with_external_repacking;
+    bool applicable() const override;
 };
 
 }   // namespace intel_cpu

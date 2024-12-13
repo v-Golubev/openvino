@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "emitters/snippets/external_repacking_config.hpp"
 #include "openvino/pass/graph_rewrite.hpp"
 
 namespace ov {
@@ -17,10 +18,15 @@ namespace pass {
  * 
  * @ingroup snippets
  */
-class EliminateBrgemmCopyB: public ov::pass::MatcherPass {
+class EliminateBrgemmCopyB: public ov::pass::ModelPass {
 public:
     OPENVINO_RTTI("EliminateBrgemmCopyB", "0");
-    EliminateBrgemmCopyB();
+    EliminateBrgemmCopyB(const ov::intel_cpu::ExternalRepackingConfigPtr& external_repacking_config)
+        : m_external_repacking_config(external_repacking_config) {}
+    bool run_on_model(const std::shared_ptr<ov::Model>& model) override;
+
+private:
+    ov::intel_cpu::ExternalRepackingConfigPtr m_external_repacking_config = nullptr;
 };
 
 

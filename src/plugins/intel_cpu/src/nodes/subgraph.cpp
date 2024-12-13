@@ -332,7 +332,9 @@ struct SubgraphShapeInferResult {
 } // namespace
 
 Subgraph::Subgraph(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr& context)
-        : Node(op, context, SnippetShapeInferFactory(op)), subgraph_attrs(std::make_shared<SubgraphAttrs>()) {
+    : Node(op, context, SnippetShapeInferFactory(op)),
+      subgraph_attrs(std::make_shared<SubgraphAttrs>()),
+      external_repacking_config(std::make_shared<ExternalRepackingConfig>()) {
 #if defined(OPENVINO_ARCH_ARM64)
     host_isa = dnnl::impl::cpu::aarch64::asimd;
 #else
@@ -348,6 +350,8 @@ Subgraph::Subgraph(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr
     subgraph_attrs->snippet->set_generator(std::make_shared<aarch64::CPUGenerator>(host_isa));
 #elif defined(OPENVINO_ARCH_X86_64)
     subgraph_attrs->snippet->set_generator(std::make_shared<CPUGenerator>(host_isa, context->getParamsCache()));
+    const auto cpu_config = ov::as_type_ptr<CPURuntimeConfig>(subgraph_attrs->snippet->get_runtime_configurator()->get_config());
+    cpu_config->m_external_repacking_config = external_repacking_config;
 #else
     OPENVINO_THROW("CPU plugin: Subgraphs code-generator is not supported on non-x64 platforms");
 #endif
@@ -650,7 +654,7 @@ Subgraph::DataFlowPasses Subgraph::getDataFlowPasses() {
     SNIPPETS_REGISTER_PASS_RELATIVE_X86_64(Place::Before, ov::snippets::pass::PropagatePrecision,
                                            ov::intel_cpu::pass::BrgemmToBrgemmCPU);
     SNIPPETS_REGISTER_PASS_RELATIVE_X86_64(Place::After, ov::intel_cpu::pass::BrgemmToBrgemmCPU,
-                                           ov::intel_cpu::pass::EliminateBrgemmCopyB);
+                                           ov::intel_cpu::pass::EliminateBrgemmCopyB, external_repacking_config);
     SNIPPETS_REGISTER_PASS_ABSOLUTE_X86_64(Place::PipelineEnd, ov::intel_cpu::pass::RemoveConverts);
     SNIPPETS_REGISTER_PASS_ABSOLUTE_COMMON(Place::PipelineEnd, ov::intel_cpu::pass::MulAddToFMA);
 
@@ -907,14 +911,15 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
     m_buffer_scratchpad_size = snippet_config->buffer_scratchpad_size;
     OPENVINO_ASSERT(!ov::snippets::utils::is_dynamic_value(m_buffer_scratchpad_size), "Undefined buffer scratchpad size!");
     m_internal_buffer_size = static_cast<size_t>(m_nthreads) * m_buffer_scratchpad_size;
-    m_in_requested_descs = snippet_config->m_in_requested_descs;
     const auto external_repacking_buffer_size =
-        std::accumulate(m_in_requested_descs.begin(),
-                        m_in_requested_descs.end(),
+        std::accumulate(snippet_config->m_external_repacking_config->begin(),
+                        snippet_config->m_external_repacking_config->end(),
                         size_t(0),
-                        [](size_t sum, const std::pair<size_t, ov::intel_cpu::MemoryDescPtr>& requested_desc_elem) {
-                            return sum + requested_desc_elem.second->getCurrentMemSize();
+                        [](size_t sum, const std::pair<size_t, ExternalRepacking>& requested_repacking_elem) {
+                            return sum + requested_repacking_elem.second.desc->getCurrentMemSize();
                         });
+    for (const auto& elem : *snippet_config->m_external_repacking_config)
+        m_in_requested_descs[elem.first] = elem.second.desc;
     m_buffer_scratchpad = allocator(m_internal_buffer_size + external_repacking_buffer_size);
 
 #if defined(__linux__) && defined(OPENVINO_ARCH_X86_64) && defined(SNIPPETS_DEBUG_CAPS)
