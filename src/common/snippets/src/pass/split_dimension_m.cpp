@@ -4,8 +4,19 @@
 
 #include "snippets/pass/split_dimension_m.hpp"
 
+#include <iostream>
+#include <mutex>
+
 #include "snippets/itt.hpp"
 #include "snippets/utils/utils.hpp"
+
+std::mutex log_mutex;
+
+#define LOG(msg) \
+    { \
+        std::lock_guard<std::mutex> guard(log_mutex); \
+        std::cout << msg << std::endl; \
+    }
 
 namespace {
 size_t get_dim_M(const ov::Shape& shape) {
@@ -67,12 +78,15 @@ std::pair<size_t, size_t> SplitDimensionM::compute_aggressive_heuristic(size_t b
     for (size_t divisor = 2; divisor < std::sqrt(m_dim); ++divisor) {
         if (m_dim % divisor != 0)
             continue;
-        if (divisor >= min_kernel_m)
+        if (divisor >= min_kernel_m) {
+            LOG("Aggressive heuristic: Found divisor " << divisor << " with m_dim " << m_dim);
             return std::make_pair(m_dim / divisor, divisor);
+        }
         const size_t m_kernel = m_dim / divisor;
         if (m_kernel >= min_kernel_m) {
             best_result.first = divisor;
             best_result.second = m_kernel;
+            LOG("Aggressive heuristic: Updated best result with divisor " << divisor << " and m_kernel " << m_kernel);
         }
     }
     if (best_result.first * batch_dim >= optimal_parallelism_work_amount)
@@ -146,8 +160,12 @@ bool SplitDimensionM::split(const ov::Shape& shape, size_t optimal_parallelism_w
         return false;
 
     std::tie(batch_m_dim, new_m_dim) = compute_ideal_cases_heuristic(batch_dim, m_dim, optimal_parallelism_work_amount);
-    if (batch_m_dim != 1)
+    if (batch_m_dim != 1) {
+        LOG("Optimization result: true"
+            << "; IDEAL CASE. Batch dimension before splitting: " << batch_dim << ", M dimension: " << m_dim
+            << "; Batch dimension after splitting: " << batch_m_dim << ", new M dimension: " << new_m_dim);
         return true;
+    }
 
     // If M dim is big enough, aggressive heuristic is used for kernel_m minimization.
     // For smaller M dim, conservative heuristic is used to preserve old behavour.
@@ -157,7 +175,11 @@ bool SplitDimensionM::split(const ov::Shape& shape, size_t optimal_parallelism_w
     } else if (batch_dim < optimal_parallelism_work_amount) {
         std::tie(batch_m_dim, new_m_dim) = compute_conservative_heuristic(batch_dim, m_dim, optimal_parallelism_work_amount);
     }
-    return batch_m_dim != 1;
+    const bool optimized = batch_m_dim != 1;
+    LOG("Optimization result: " << (optimized ? "true" : "false")
+        << "; Batch dimension before splitting: " << batch_dim << ", M dimension: " << m_dim
+        << "; Batch dimension after splitting: " << batch_m_dim << ", new M dimension: " << new_m_dim);
+    return optimized;
 }
 
 void SplitDimensionM::reshape_subgraph(const std::shared_ptr<op::Subgraph>& subgraph, const ov::Shape& shape, size_t batch_m_dim, size_t new_m_dim) {
