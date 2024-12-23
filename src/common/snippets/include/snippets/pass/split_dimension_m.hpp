@@ -67,7 +67,18 @@ public:
 
 private:
     static std::shared_ptr<ov::op::v0::MatMul> get_matmul(const std::shared_ptr<op::Subgraph>& subgraph);
-    static std::pair<size_t, size_t> get_splited_dimensions(size_t batch_dim, size_t m_dim, size_t optimal_parallelism_work_amount);
+    /**
+     * @brief Contains splitM approaches allowing to get the batch ideally divisible by optimal_parallelism_work_amount
+     */
+    static std::pair<size_t, size_t> compute_ideal_cases_heuristic(size_t batch_dim, size_t m_dim, size_t optimal_parallelism_work_amount);
+    /**
+     * @brief Aggressively splits m_dim to minimize kernel_m in order to reduce waiting time for idle threads at the last parallel loop iteration.
+     */
+    static std::pair<size_t, size_t> compute_aggressive_heuristic(size_t batch_dim, size_t m_dim, size_t optimal_parallelism_work_amount);
+    /**
+     * @brief Conservatively splits m_dim to get the batch in (optimal_parallelism_work_amount, 2 * optimal_parallelism_work_amount) interval
+     */
+    static std::pair<size_t, size_t> compute_conservative_heuristic(size_t batch_dim, size_t m_dim, size_t optimal_parallelism_work_amount);
 
     void reshape_subgraph(const std::shared_ptr<op::Subgraph>& subgraph, const ov::Shape& shape, size_t batch_m_dim, size_t new_m_dim);
 
