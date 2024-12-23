@@ -6,7 +6,7 @@
 
 #include "emitters/snippets/jit_snippets_call_args.hpp"
 
-#ifdef OPENVINO_ARCH_X86_64
+#ifndef OPENVINO_ARCH_ARM64
 #    include "emitters/snippets/x64/kernel_executors/brgemm_copy_b.hpp"
 #endif
 
@@ -27,7 +27,7 @@ public:
     std::string to_string() const override;
 #endif
 
-#ifdef OPENVINO_ARCH_X86_64
+#ifndef OPENVINO_ARCH_ARM64
     struct RepackedInput {
         RepackedInput() = default;
         RepackedInput(CpuBlockedMemoryDescPtr desc_,
@@ -52,7 +52,7 @@ public:
         SEPARATE,     // should be separathy from kernel executed
     };
     RepackingImplType repacking_impl_type = RepackingImplType::NONE;
-#endif  // OPENVINO_ARCH_X86_64
+#endif  // OPENVINO_ARCH_ARM64
 
     std::vector<jit_snippets_call_args::loop_args_t> loop_args = {};
 };

@@ -982,7 +982,7 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
                     "Undefined buffer scratchpad size!");
     m_internal_buffer_size = static_cast<size_t>(m_nthreads) * m_buffer_scratchpad_size;
 
-#if defined(OPENVINO_ARCH_X86_64)
+#ifdef OPENVINO_ARCH_X86_64
     m_repacking_impl_type = snippet_config->repacking_impl_type;
     m_repacked_inputs = snippet_config->repacked_inputs;
 
