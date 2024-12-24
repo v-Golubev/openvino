@@ -38,9 +38,8 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
 bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::BrgemmExternalRepackingAdjuster")
     const auto& cpu_config = ov::as_type_ptr<CPURuntimeConfig>(m_configurator->get_config());
-    const float L2_cache_size = dnnl::utils::get_cache_size(2, true);
 
-    bool fit_into_L2 = true;
+    size_t data_size = 0;
     for (const auto& i : m_param_idces_with_external_repacking) {
         const auto& shape = cpu_config->io_shapes[i];
         if (shape == cpu_config->latest_shapes[i])
@@ -95,12 +94,13 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
 
         cpu_config->repacked_inputs[i] = CPURuntimeConfig::RepackedInput(desc, executor, in_offsets, out_offsets);
 
-        const auto src_size = N * K * precision.size();
-        const auto dst_size = new_N * new_K * precision.size();
-        fit_into_L2 &= ((src_size + dst_size) < L2_cache_size);
+        // src data + dst data per kernel call
+        data_size += N * K * precision.size() + new_N * new_K * vnni_factor * precision.size();
     }
 
     if (!cpu_config->repacked_inputs.empty()) {
+        const auto L2_cache_size = dnnl::utils::get_cache_size(2, true);
+        const auto fit_into_L2 = data_size < L2_cache_size;
         // Heuristic: If external repacking data doesn't fit in the cache L2,
         //            external repacking should be executed in seperate parallel section before kernel execution.
         cpu_config->repacking_impl_type = fit_into_L2 ? CPURuntimeConfig::RepackingImplType::IN_PARALLEL
