@@ -245,5 +245,16 @@ Result ReshapeShapeInfer::infer(const std::vector<VectorDimsRef>& input_shapes) 
     return {{target_shape}, ShapeInferStatus::success};
 }
 
+ReshapeWithOrderShapeInfer::ReshapeWithOrderShapeInfer(const std::shared_ptr<Node>& n) {
+    const auto& reshape = as_type_ptr<ov::snippets::op::ReshapeWithOrder>(n);
+    OPENVINO_ASSERT(reshape, "Invalid node passed to ReshapeWithOrderShapeInfer.");
+    m_target_order = lowered::PortDescriptorUtils::get_port_descriptor_ptr(reshape->input(0))->get_layout();
+}
+
+Result ReshapeWithOrderShapeInfer::infer(const std::vector<VectorDimsRef>& input_shapes) {
+    OPENVINO_ASSERT(input_shapes.size() == 1, "Invalid number of shapes is passed in ReshapeWithOrderShapeInfer");
+    return {{ov::snippets::utils::get_planar_vdims(input_shapes[0].get(), m_target_order)}, ShapeInferStatus::success};
+}
+
 } // namespace snippets
 } // namespace ov

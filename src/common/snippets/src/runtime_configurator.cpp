@@ -118,7 +118,23 @@ void RuntimeConfigurator::init_data_info(const lowered::LinearIRCPtr& linear_ir)
         // input->shape changing ops->load
         PortDescriptorPtr desc = nullptr;
         const auto& shape_infer_seq = utils::get_first_child_shape_infer_expr_seq(param);
-        const auto& mem_desc_expr = shape_infer_seq.empty() ? param : shape_infer_seq.back();
+        ExpressionPtr mem_desc_expr = param;
+        if (!shape_infer_seq.empty()) {
+            // If there is ReshapeWithOrder, we should take its desc because it affects on shape by target order
+            const auto& reordered_reshape_it = std::find_if(shape_infer_seq.cbegin(), shape_infer_seq.cend(),
+                                                            [](const ExpressionPtr& expr) {
+                                                               return ov::is_type<op::ReshapeWithOrder>(expr->get_node());
+                                                            });
+            if (reordered_reshape_it != shape_infer_seq.cend()) {
+                const auto& reshape = *reordered_reshape_it;
+                const auto& etype = reshape->get_node()->get_output_element_type(0);
+                update_io_parameters(reshape->get_input_port_descriptor(0), etype);
+                continue;
+            }
+
+            mem_desc_expr = shape_infer_seq.back();
+        }
+
         auto consumer_inputs = mem_desc_expr->get_output_port_connector(0)->get_consumers();
         for (const auto& child_input : consumer_inputs) {
             const auto ma = std::dynamic_pointer_cast<snippets::modifier::MemoryAccess>(child_input.get_expr()->get_node());
@@ -127,6 +143,7 @@ void RuntimeConfigurator::init_data_info(const lowered::LinearIRCPtr& linear_ir)
                 break;
             }
         }
+        OPENVINO_ASSERT(desc, "Descriptor is missed!");
         const auto& etype = mem_desc_expr->get_node()->get_output_element_type(0);
         update_io_parameters(desc, etype);
     }
