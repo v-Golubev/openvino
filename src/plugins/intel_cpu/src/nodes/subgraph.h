@@ -196,9 +196,8 @@ protected:
         OPENVINO_THROW("External buffer pointer has not been found");
     }
 
-    // [ Input index - > set of src offsets which are already repacked ]
-    using RepackedSrcOffsets = std::unordered_map<size_t, std::set<size_t>>;
-    std::unordered_map<int, RepackedSrcOffsets> m_repacked_offsets_by_threads = {};
+    // [ Thread Index -> Index of input with repacking data - > last repacked src_offset ]
+    std::vector<std::vector<size_t>> m_repacked_offsets_by_threads = {};
     std::unordered_map<size_t, CPURuntimeConfig::RepackedInput> m_repacked_inputs = {};
 
     inline bool should_repacking_be_separately() const {
@@ -209,7 +208,7 @@ protected:
     }
     inline void clean_repacked_offsets(size_t ithr) {
         if (should_repacking_be_in_parallel())
-            m_repacked_offsets_by_threads.at(ithr).clear();
+            m_repacked_offsets_by_threads[ithr].assign(m_repacked_inputs.size(), std::numeric_limits<size_t>::max());
     }
 
 private:

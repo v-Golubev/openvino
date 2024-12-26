@@ -1000,8 +1000,9 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
 
         // To avoid extra overheads in runtime on unordered_map creation,
         // we initialize `repacked_offsets_by_threads` by default here
-        for (int i = 0; i < m_nthreads; ++i)
-            m_repacked_offsets_by_threads[i] = {};
+        m_repacked_offsets_by_threads.resize(m_nthreads);
+        for (size_t i = 0; i < m_repacked_offsets_by_threads.size(); ++i)
+            clean_repacked_offsets(i);
     }
 
 #else
@@ -1062,6 +1063,7 @@ void Subgraph::SubgraphExecutor::in_parallel_repack_inputs(const std::vector<Mem
                                                            const std::vector<size_t>& indexes,
                                                            int ithr,
                                                            jit_snippets_call_args& call_args) {
+    size_t repacked_offset_idx = 0;
     for (const auto& p : m_repacked_inputs) {
         const auto& in_idx = p.first;
         const auto& repacked_in = p.second;
@@ -1077,17 +1079,18 @@ void Subgraph::SubgraphExecutor::in_parallel_repack_inputs(const std::vector<Mem
 
         uint8_t* repacked_ptr = get_external_scratchpad_ptr(ithr, in_idx) + dst_offset;
 
-        auto& offsets = m_repacked_offsets_by_threads.at(ithr)[in_idx];
-        if (offsets.count(src_offset) == 0) {
+        auto& last_processed_src_offset = m_repacked_offsets_by_threads[ithr][repacked_offset_idx];
+        if (src_offset != last_processed_src_offset) {
             BrgemmCopyBKernel::call_args args;
             args.src = inMemPtrs[in_idx]->getDataAs<const uint8_t>() + src_offset;
             args.tr_src = repacked_ptr;
             BrgemmCopyBKernelExecutor::execute(repacked_in.executor.get(), &args);
 
-            offsets.insert(src_offset);
+            last_processed_src_offset = src_offset;
         }
 
         call_args.src_ptrs[in_idx] = repacked_ptr;
+        ++repacked_offset_idx;
     }
 }
 #endif  // OPENVINO_ARCH_X86_64
