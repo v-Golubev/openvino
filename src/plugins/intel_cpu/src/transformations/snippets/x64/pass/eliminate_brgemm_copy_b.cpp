@@ -37,14 +37,15 @@ pass::EliminateBrgemmCopyB::EliminateBrgemmCopyB() {
         };
 
         // TODO [157340]: support external repacking for copyB with compensations
-        if (!is_supported_layout(layout) ||
-            brgemm_utils::with_compensations(copy_b_node->get_type()) || transformation_callback(copy_b_node))
+        if (!is_supported_layout(layout) || brgemm_utils::with_compensations(copy_b_node->get_type()) ||
+            transformation_callback(copy_b_node))
             return false;
 
         // If there is non-empty and non-planar layout, we should insert reshape to support shape inference
         if (!layout.empty() && !ov::snippets::utils::is_planar_layout(layout)) {
             const auto& subtensor = in_desc->get_subtensor();
-            const auto& reshape = std::make_shared<ov::snippets::op::ReshapeWithOrder>(copy_b_node->input_value(0), layout);
+            const auto& reshape =
+                std::make_shared<ov::snippets::op::ReshapeWithOrder>(copy_b_node->input_value(0), layout);
             ov::snippets::lowered::PortDescriptorUtils::set_port_descriptor(reshape->input(0), subtensor, layout);
             ov::snippets::lowered::PortDescriptorUtils::set_port_descriptor(reshape->output(0), subtensor);
             ov::replace_node(copy_b_node, reshape);

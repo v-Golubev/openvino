@@ -932,7 +932,10 @@ void Subgraph::executeDynamicImpl(dnnl::stream strm) {
 }
 
 namespace {
-inline void init_parallel_domain(const std::vector<size_t>& master_shape, size_t tensor_rank, size_t tile_rank, std::vector<size_t>& domain) {
+inline void init_parallel_domain(const std::vector<size_t>& master_shape,
+                                 size_t tensor_rank,
+                                 size_t tile_rank,
+                                 std::vector<size_t>& domain) {
     domain.resize(tensor_rank, 1);
     std::fill(domain.begin(), domain.end(), 1);
     std::copy(master_shape.cbegin(),
@@ -1032,7 +1035,7 @@ std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(cons
         const auto& src_mem = srcMemPtrs[in_idx];
         const auto& dst_mem = std::make_shared<Memory>(strm.get_engine(), desc, data_ptr, false);
 
-        const auto* src = src_mem->getDataAs<const uint8_t>();
+        const auto* src = src_mem->getDataAs<const uint8_t>() + m_start_offset_in[in_idx];
         auto* dst = dst_mem->getDataAs<uint8_t>();
 
         VectorDims dom;
@@ -1048,7 +1051,7 @@ std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(cons
         const auto& executor = repacked_input.executor;
         parallel_for4d(dom[0], dom[1], dom[2], dom[3], [&](size_t d0, size_t d1, size_t d2, size_t d3) {
             BrgemmCopyBKernel::call_args args;
-            args.src = src + d0 * in_strides[0] + d1 * in_strides[1] + d2 * in_strides[2] + d3 * in_strides[3] + m_start_offset_in[in_idx];
+            args.src = src + d0 * in_strides[0] + d1 * in_strides[1] + d2 * in_strides[2] + d3 * in_strides[3];
             args.tr_src = dst + d0 * out_strides[0] + d1 * out_strides[1] + d2 * out_strides[2] + d3 * out_strides[3];
             BrgemmCopyBKernelExecutor::execute(executor.get(), &args);
         });

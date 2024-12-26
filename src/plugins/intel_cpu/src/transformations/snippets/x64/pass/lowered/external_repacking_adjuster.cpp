@@ -21,7 +21,8 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
     for (size_t i = 0; i < params.size(); ++i) {
         const auto& param = params[i];
         const auto& shape_infer_consumers = ov::snippets::utils::get_first_child_shape_infer_expr_seq(param);
-        const auto& out = shape_infer_consumers.empty() ? param->get_output_port(0) : shape_infer_consumers.back()->get_output_port(0);
+        const auto& out = shape_infer_consumers.empty() ? param->get_output_port(0)
+                                                        : shape_infer_consumers.back()->get_output_port(0);
         const auto consumers = out.get_connected_ports();
         const bool brgemm_with_extracted_repacking =
             std::any_of(consumers.begin(), consumers.end(), [](const ov::snippets::lowered::ExpressionPort& port) {
@@ -63,8 +64,10 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         const auto last_idx = planar_shape.size() - 1;
         requested_order.insert(requested_order.end(), {last_idx - 1, last_idx, last_idx - 1});
 
-        const auto desc =
-            std::make_shared<CpuBlockedMemoryDesc>(precision, Shape(planar_shape), requested_blocked_shape, requested_order);
+        const auto desc = std::make_shared<CpuBlockedMemoryDesc>(precision,
+                                                                 Shape(planar_shape),
+                                                                 requested_blocked_shape,
+                                                                 requested_order);
 
         auto config = BrgemmCopyBKernelConfig(precision,
                                               precision,
@@ -75,7 +78,8 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         const auto executor = std::make_shared<BrgemmCopyBKernelExecutor>(
             static_cast<const CPURuntimeConfigurator*>(m_configurator)->get_cache(),
             config);
-        const auto copy_wei_stride =  ov::snippets::utils::get_dim_in_stride(shape, cpu_config->io_layouts[i], 1) * precision.size();
+        const auto copy_wei_stride =
+            ov::snippets::utils::get_dim_in_stride(shape, cpu_config->io_layouts[i], 1) * precision.size();
         config.update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, precision));
         executor->update_by_config(config);
 
