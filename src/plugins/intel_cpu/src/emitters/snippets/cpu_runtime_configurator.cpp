@@ -39,6 +39,38 @@ std::string CPURuntimeConfig::to_string() const {
 }
 #endif
 
+#ifndef OPENVINO_ARCH_ARM64
+
+CPURuntimeConfig::RepackedInput::RepackedInput(std::shared_ptr<const BrgemmCopyBKernel> kernel,
+                                               CpuBlockedMemoryDescPtr desc,
+                                               VectorDims in_offsets,
+                                               VectorDims out_offsets)
+    : m_kernel(std::move(kernel)),
+      m_desc(std::move(desc)),
+      m_in_offsets(std::move(in_offsets)),
+      m_out_offsets(std::move(out_offsets)) {
+    OPENVINO_ASSERT(m_in_offsets.size() == m_out_offsets.size(), "Incorrect size of offsets");
+    OPENVINO_ASSERT(m_desc, "Descriptor is empty");
+}
+
+const CpuBlockedMemoryDescPtr& CPURuntimeConfig::RepackedInput::desc() const {
+    return m_desc;
+}
+
+const std::shared_ptr<const BrgemmCopyBKernel>& CPURuntimeConfig::RepackedInput::kernel() const {
+    return m_kernel;
+}
+
+const VectorDims& CPURuntimeConfig::RepackedInput::in_offsets() const {
+    return m_in_offsets;
+}
+
+const VectorDims& CPURuntimeConfig::RepackedInput::out_offsets() const {
+    return m_out_offsets;
+}
+
+#endif  // OPENVINO_ARCH_ARM64
+
 CPURuntimeConfigurator::CPURuntimeConfigurator(ov::intel_cpu::MultiCacheWeakPtr cache)
     : ov::snippets::RuntimeConfigurator(std::make_shared<CPURuntimeConfig>()),
       compiled_kernel_cache(std::move(cache)) {}

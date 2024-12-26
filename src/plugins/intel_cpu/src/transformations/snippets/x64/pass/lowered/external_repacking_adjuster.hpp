@@ -24,11 +24,11 @@ public:
 
     bool run(const snippets::lowered::LinearIR& linear_ir) override;
     bool applicable() const override {
-        return !m_param_idces_with_external_repacking.empty();
+        return !m_executors.empty();
     }
 
 private:
-    std::set<size_t> m_param_idces_with_external_repacking;
+    std::unordered_map<size_t, std::shared_ptr<BrgemmCopyBKernelExecutor>> m_executors;
 };
 
 }  // namespace intel_cpu

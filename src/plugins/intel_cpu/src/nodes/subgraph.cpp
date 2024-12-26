@@ -993,7 +993,7 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
                         m_repacked_inputs.end(),
                         size_t(0),
                         [](size_t sum, const std::pair<size_t, CPURuntimeConfig::RepackedInput>& p) {
-                            return sum + p.second.desc->getCurrentMemSize();
+                            return sum + p.second.desc()->getCurrentMemSize();
                         });
 
     if (should_repacking_be_in_parallel()) {
@@ -1028,7 +1028,7 @@ std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(cons
     for (const auto& p : m_repacked_inputs) {
         const auto in_idx = p.first;
         const auto& repacked_input = p.second;
-        const auto& desc = repacked_input.desc;
+        const auto& desc = repacked_input.desc();
         const void* data_ptr = m_buffer_scratchpad->getDataAs<uint8_t>() + offset;
 
         OPENVINO_ASSERT(in_idx < srcMemPtrs.size(), "Incorrect index of input repacked mem ptr");
@@ -1043,17 +1043,17 @@ std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(cons
         OPENVINO_ASSERT(shape.size() <= rank6D, "Unsupported shape rank of repacking data");
         init_parallel_domain(shape, rank6D, 2lu, dom);
 
-        const auto in_strides = repacked_input.in_offsets;
-        const auto out_strides = repacked_input.out_offsets;
+        const auto& in_strides = repacked_input.in_offsets();
+        const auto& out_strides = repacked_input.out_offsets();
         OPENVINO_ASSERT(in_strides.size() == rank6D && out_strides.size() == rank6D && dom.size() == rank6D,
                         "Unsupported shape rank of repacking data");
 
-        const auto& executor = repacked_input.executor;
+        const auto& kernel = repacked_input.kernel();
         parallel_for4d(dom[0], dom[1], dom[2], dom[3], [&](size_t d0, size_t d1, size_t d2, size_t d3) {
             BrgemmCopyBKernel::call_args args;
             args.src = src + d0 * in_strides[0] + d1 * in_strides[1] + d2 * in_strides[2] + d3 * in_strides[3];
             args.tr_src = dst + d0 * out_strides[0] + d1 * out_strides[1] + d2 * out_strides[2] + d3 * out_strides[3];
-            BrgemmCopyBKernelExecutor::execute(executor.get(), &args);
+            (*kernel)(&args);
         });
 
         reordered_in_ptrs[in_idx] = dst_mem;
@@ -1071,8 +1071,8 @@ void Subgraph::SubgraphExecutor::in_parallel_repack_inputs(const std::vector<Mem
         const auto& in_idx = p.first;
         const auto& repacked_in = p.second;
 
-        const auto& src_offsets = repacked_in.in_offsets;
-        const auto& dst_offsets = repacked_in.out_offsets;
+        const auto& src_offsets = repacked_in.in_offsets();
+        const auto& dst_offsets = repacked_in.out_offsets();
 
         size_t src_offset = m_start_offset_in[in_idx], dst_offset = 0;
         for (size_t j = 0; j < indexes.size(); j++) {
@@ -1087,7 +1087,7 @@ void Subgraph::SubgraphExecutor::in_parallel_repack_inputs(const std::vector<Mem
             BrgemmCopyBKernel::call_args args;
             args.src = inMemPtrs[in_idx]->getDataAs<const uint8_t>() + src_offset;
             args.tr_src = repacked_ptr;
-            BrgemmCopyBKernelExecutor::execute(repacked_in.executor.get(), &args);
+            (*repacked_in.kernel())(&args);
 
             last_processed_src_offset = src_offset;
         }

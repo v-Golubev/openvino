@@ -186,7 +186,7 @@ protected:
 
         uint8_t* data_ptr = m_buffer_scratchpad->getDataAs<uint8_t>() + m_internal_buffer_size;
         for (const auto& p : m_repacked_inputs) {
-            const auto& desc = p.second.desc;
+            const auto& desc = p.second.desc();
             const auto size = desc->getCurrentMemSize();
             if (p.first == idx) {
                 return data_ptr + ithr * size;

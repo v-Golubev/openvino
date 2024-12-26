@@ -24,13 +24,20 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
         const auto& out = shape_infer_consumers.empty() ? param->get_output_port(0)
                                                         : shape_infer_consumers.back()->get_output_port(0);
         const auto consumers = out.get_connected_ports();
-        const bool brgemm_with_extracted_repacking =
-            std::any_of(consumers.begin(), consumers.end(), [](const ov::snippets::lowered::ExpressionPort& port) {
-                auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(port.get_expr()->get_node());
-                return brgemm && brgemm_utils::with_repacking(brgemm->get_type()) && port.get_index() == 1;
-            });
-        if (brgemm_with_extracted_repacking)
-            m_param_idces_with_external_repacking.insert(i);
+
+        for (const auto& consumer : consumers) {
+            auto brgemm = ov::as_type_ptr<ov::intel_cpu::BrgemmCPU>(consumer.get_expr()->get_node());
+            if (brgemm && brgemm_utils::with_repacking(brgemm->get_type()) && consumer.get_index() == 1) {
+                const auto src_prc = brgemm->get_input_element_type(0);
+                const auto wei_prc = brgemm->get_input_element_type(1);
+                const auto isa = brgemm_utils::get_primitive_isa(src_prc, brgemm_utils::with_amx(brgemm->get_type()));
+                const auto inner_n_block = brgemm_utils::repacking::compute_inner_n_block(wei_prc);
+                auto config = BrgemmCopyBKernelConfig(src_prc, wei_prc, isa, false, false, inner_n_block);
+                m_executors[i] = std::make_shared<BrgemmCopyBKernelExecutor>(
+                    static_cast<const CPURuntimeConfigurator*>(m_configurator)->get_cache(),
+                    config);
+            }
+        }
     }
 }
 
@@ -39,7 +46,8 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
     const auto& cpu_config = ov::as_type_ptr<CPURuntimeConfig>(m_configurator->get_config());
 
     size_t data_size = 0;
-    for (const auto& i : m_param_idces_with_external_repacking) {
+    for (const auto& p : m_executors) {
+        const auto& i = p.first;
         const auto& shape = cpu_config->io_shapes[i];
         if (shape == cpu_config->latest_shapes[i])
             continue;
@@ -49,6 +57,7 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         const auto& K = *++planar_shape.rbegin();
         const auto& N = *planar_shape.rbegin();
 
+        // Create CPU Memory descriptor
         const auto& precision = linear_ir.get_parameters()[i]->get_node()->get_output_element_type(0);
         const auto vnni_factor = brgemm_utils::compute_vnni_factor(precision);
         const size_t brgemm_kernel_rank = 2;
@@ -69,19 +78,14 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
                                                                  requested_blocked_shape,
                                                                  requested_order);
 
-        auto config = BrgemmCopyBKernelConfig(precision,
-                                              precision,
-                                              dnnl::impl::cpu::x64::cpu_isa_t::avx512_core_amx,
-                                              false,
-                                              false,
-                                              brgemm_utils::repacking::compute_inner_n_block(precision));
-        const auto executor = std::make_shared<BrgemmCopyBKernelExecutor>(
-            static_cast<const CPURuntimeConfigurator*>(m_configurator)->get_cache(),
-            config);
+        // Create Kernel using BrgemmCopyBExecutor
+        const auto& executor = p.second;
         const auto copy_wei_stride =
             ov::snippets::utils::get_dim_in_stride(shape, cpu_config->io_layouts[i], 1) * precision.size();
-        config.update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, precision));
-        executor->update_by_config(config);
+        const auto generic_config = executor->get_config().get_clone_ptr();
+        auto config = static_cast<BrgemmCopyBKernelConfig*>(generic_config.get());
+        config->update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, precision));
+        executor->update_by_config(*config);
 
         // Save original input offsets for input before repacking.
         const auto in_offsets = cpu_config->io_data_offsets[i];
@@ -92,7 +96,8 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         // Save new input offsets for input after repacking.
         const auto out_offsets = cpu_config->io_data_offsets[i];
 
-        cpu_config->repacked_inputs[i] = CPURuntimeConfig::RepackedInput(desc, executor, in_offsets, out_offsets);
+        cpu_config->repacked_inputs[i] =
+            CPURuntimeConfig::RepackedInput(executor->get_kernel(), desc, in_offsets, out_offsets);
 
         // src data + dst data per kernel call
         data_size += N * K * precision.size() + new_N * new_K * vnni_factor * precision.size();

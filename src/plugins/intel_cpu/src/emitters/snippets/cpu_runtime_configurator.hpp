@@ -30,19 +30,21 @@ public:
 #ifndef OPENVINO_ARCH_ARM64
     struct RepackedInput {
         RepackedInput() = default;
-        RepackedInput(CpuBlockedMemoryDescPtr desc_,
-                      std::shared_ptr<BrgemmCopyBKernelExecutor> executor_,
-                      VectorDims in_offsets_,
-                      VectorDims out_offsets_)
-            : desc(std::move(desc_)),
-              executor(std::move(executor_)),
-              in_offsets(std::move(in_offsets_)),
-              out_offsets(std::move(out_offsets_)) {}
+        RepackedInput(std::shared_ptr<const BrgemmCopyBKernel> kernel,
+                      CpuBlockedMemoryDescPtr desc,
+                      VectorDims in_offsets,
+                      VectorDims out_offsets);
 
-        CpuBlockedMemoryDescPtr desc{nullptr};
-        std::shared_ptr<BrgemmCopyBKernelExecutor> executor{nullptr};
-        VectorDims in_offsets{};
-        VectorDims out_offsets{};
+        const std::shared_ptr<const BrgemmCopyBKernel>& kernel() const;
+        const CpuBlockedMemoryDescPtr& desc() const;
+        const VectorDims& in_offsets() const;
+        const VectorDims& out_offsets() const;
+
+    private:
+        std::shared_ptr<const BrgemmCopyBKernel> m_kernel{nullptr};
+        CpuBlockedMemoryDescPtr m_desc{nullptr};
+        VectorDims m_in_offsets{};
+        VectorDims m_out_offsets{};
     };
     std::unordered_map<size_t, RepackedInput> repacked_inputs = {};
 
