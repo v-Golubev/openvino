@@ -159,6 +159,7 @@ protected:
     MemoryPtr m_buffer_scratchpad = nullptr;
     size_t m_buffer_scratchpad_size = 0;
     size_t m_internal_buffer_size = 0;
+    size_t m_tensor_rank = 0;
 
     const size_t rank6D = 6;
 
@@ -180,7 +181,7 @@ protected:
                                    int ithr,
                                    jit_snippets_call_args& call_args);
 
-    inline uint8_t* get_external_scratchpad_ptr(size_t ithr, size_t idx) const {
+    inline void* get_external_scratchpad_ptr(size_t ithr, size_t idx) const {
         if (m_repacked_inputs.empty())
             return nullptr;
 

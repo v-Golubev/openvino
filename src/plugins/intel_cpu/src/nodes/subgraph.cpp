@@ -95,13 +95,19 @@ public:
             init_call_args(call_args, inMemPtrs, outMemPtrs, ithr);
         };
 
-        auto caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
-#ifdef OPENVINO_ARCH_X86_64
-            if (should_repacking_be_in_parallel())
-                in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
-#endif  // OPENVINO_ARCH_X86_64
+        using call_functor = std::function<void(jit_snippets_call_args&, const std::vector<size_t>&, size_t)>;
+        call_functor caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
             callable(&call_args, indexes.data());
         };
+
+#ifdef OPENVINO_ARCH_X86_64
+        if (should_repacking_be_in_parallel()) {
+            caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
+                in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
+                callable(&call_args, indexes.data());
+            };
+        }
+#endif  // OPENVINO_ARCH_X86_64
 
         if (m_parallel_exec_domain.size() == rank6D) {
             parallel_for6d(initializer, caller);
@@ -169,14 +175,21 @@ public:
             init_call_args(call_args, ithr);
         };
 
-        auto caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
+        using call_functor = std::function<void(jit_snippets_call_args&, const std::vector<size_t>&, size_t)>;
+        call_functor caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
             update_ptrs(call_args, src_ptrs, dst_ptrs, indexes);
-#ifdef OPENVINO_ARCH_X86_64
-            if (should_repacking_be_in_parallel())
-                in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
-#endif  // OPENVINO_ARCH_X86_64
             callable(&call_args);
         };
+
+#ifdef OPENVINO_ARCH_X86_64
+        if (should_repacking_be_in_parallel()) {
+            caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
+                update_ptrs(call_args, src_ptrs, dst_ptrs, indexes);
+                in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
+                callable(&call_args);
+            };
+        }
+#endif  // OPENVINO_ARCH_X86_64
 
         if (m_parallel_exec_domain.size() == rank6D) {
             parallel_for6d(initializer, caller);
@@ -973,6 +986,7 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
     OPENVINO_ASSERT(snippet_config, "Runtime Config is empty!");
     init_parallel_domain(snippet_config, m_parallel_exec_domain);
 
+    m_tensor_rank = snippet_config->tensor_rank;
     m_harness_work_amount = std::accumulate(m_parallel_exec_domain.cbegin(),
                                             m_parallel_exec_domain.cend(),
                                             size_t(1),
@@ -1021,6 +1035,49 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
 }
 
 #ifdef OPENVINO_ARCH_X86_64
+namespace {
+inline void parallel4d_repacking(const BrgemmCopyBKernel* ker,
+                                 const VectorDims& dom,
+                                 const VectorDims& in_str,
+                                 const VectorDims& out_str,
+                                 const uint8_t* src,
+                                 uint8_t* dst) {
+    parallel_for4d(dom[0], dom[1], dom[2], dom[3], [&](size_t d0, size_t d1, size_t d2, size_t d3) {
+        BrgemmCopyBKernel::call_args args;
+        args.src = src + d0 * in_str[0] + d1 * in_str[1] + d2 * in_str[2] + d3 * in_str[3];
+        args.tr_src = dst + d0 * out_str[0] + d1 * out_str[1] + d2 * out_str[2] + d3 * out_str[3];
+        (*ker)(&args);
+    });
+};
+inline void parallelNd_repacking(const BrgemmCopyBKernel* ker,
+                                 const VectorDims& dom,
+                                 const VectorDims& in_str,
+                                 const VectorDims& out_str,
+                                 const uint8_t* src,
+                                 uint8_t* dst) {
+    const auto batch = std::accumulate(dom.rbegin() + 2, dom.rend(), 1lu, std::multiplies<size_t>());
+    parallel_nt_static(0, [&](const int ithr, const int nthr) {
+        BrgemmCopyBKernel::call_args args;
+        size_t start = 0, end = 0;
+        splitter(batch, nthr, ithr, start, end);
+        for (size_t iwork = start; iwork < end; ++iwork) {
+            const uint8_t* src_u8 = src;
+            uint8_t* dst_u8 = dst;
+            size_t tmp = iwork;
+            for (ptrdiff_t j = static_cast<ptrdiff_t>(dom.size()) - 3; j >= 0; j--) {
+                auto idx = tmp % dom[j];
+                tmp /= dom[j];
+
+                src_u8 += idx * in_str[j];
+                dst_u8 += idx * out_str[j];
+            }
+            args.src = src_u8;
+            args.tr_src = dst_u8;
+            (*ker)(&args);
+        }
+    });
+};
+}  // namespace
 std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(const dnnl::stream& strm,
                                                                             const std::vector<MemoryPtr>& srcMemPtrs) {
     auto reordered_in_ptrs = srcMemPtrs;
@@ -1040,21 +1097,19 @@ std::vector<MemoryPtr> Subgraph::SubgraphExecutor::separately_repack_inputs(cons
 
         VectorDims dom;
         const auto& shape = dst_mem->getShape().getDims();
-        OPENVINO_ASSERT(shape.size() <= rank6D, "Unsupported shape rank of repacking data");
-        init_parallel_domain(shape, rank6D, 2lu, dom);
+        OPENVINO_ASSERT(shape.size() <= m_tensor_rank, "Unsupported shape rank of repacking data");
+        init_parallel_domain(shape, m_tensor_rank, 2lu, dom);
 
         const auto& in_strides = repacked_input.in_offsets();
         const auto& out_strides = repacked_input.out_offsets();
-        OPENVINO_ASSERT(in_strides.size() == rank6D && out_strides.size() == rank6D && dom.size() == rank6D,
+        OPENVINO_ASSERT(everyone_is(m_tensor_rank, in_strides.size(), out_strides.size(), dom.size()),
                         "Unsupported shape rank of repacking data");
 
         const auto& kernel = repacked_input.kernel();
-        parallel_for4d(dom[0], dom[1], dom[2], dom[3], [&](size_t d0, size_t d1, size_t d2, size_t d3) {
-            BrgemmCopyBKernel::call_args args;
-            args.src = src + d0 * in_strides[0] + d1 * in_strides[1] + d2 * in_strides[2] + d3 * in_strides[3];
-            args.tr_src = dst + d0 * out_strides[0] + d1 * out_strides[1] + d2 * out_strides[2] + d3 * out_strides[3];
-            (*kernel)(&args);
-        });
+        if (m_tensor_rank == rank6D)
+            parallel4d_repacking(kernel.get(), dom, in_strides, out_strides, src, dst);
+        else
+            parallelNd_repacking(kernel.get(), dom, in_strides, out_strides, src, dst);
 
         reordered_in_ptrs[in_idx] = dst_mem;
         offset += desc->getCurrentMemSize();
@@ -1072,15 +1127,11 @@ void Subgraph::SubgraphExecutor::in_parallel_repack_inputs(const std::vector<Mem
         const auto& repacked_in = p.second;
 
         const auto& src_offsets = repacked_in.in_offsets();
-        const auto& dst_offsets = repacked_in.out_offsets();
-
-        size_t src_offset = m_start_offset_in[in_idx], dst_offset = 0;
-        for (size_t j = 0; j < indexes.size(); j++) {
+        size_t src_offset = m_start_offset_in[in_idx];
+        for (size_t j = 0; j < indexes.size(); j++)
             src_offset += src_offsets[j] * indexes[j];
-            dst_offset += dst_offsets[j] * indexes[j];
-        }
 
-        uint8_t* repacked_ptr = get_external_scratchpad_ptr(ithr, in_idx) + dst_offset;
+        auto* repacked_ptr = get_external_scratchpad_ptr(ithr, in_idx);
 
         auto& last_processed_src_offset = m_repacked_offsets_by_threads[ithr][repacked_offset_idx];
         if (src_offset != last_processed_src_offset) {

@@ -28,7 +28,19 @@ public:
     }
 
 private:
-    std::unordered_map<size_t, std::shared_ptr<BrgemmCopyBKernelExecutor>> m_executors;
+    using RepackExecutorPtr = std::shared_ptr<BrgemmCopyBKernelExecutor>;
+    static VectorDims get_blk_order(size_t shape_rank);
+    static VectorDims get_blk_shape(const VectorDims& shape, ov::element::Type prc);
+
+    void update_kernel(const RepackExecutorPtr& executor,
+                       const VectorDims& shape,
+                       const VectorDims& layout,
+                       size_t N,
+                       size_t K,
+                       ov::element::Type prc);
+
+    const static size_t brgemm_kernel_rank = 2;
+    std::unordered_map<size_t, RepackExecutorPtr> m_executors;
 };
 
 }  // namespace intel_cpu

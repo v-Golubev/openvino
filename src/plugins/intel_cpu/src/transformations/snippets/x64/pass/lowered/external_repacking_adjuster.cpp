@@ -41,6 +41,38 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
     }
 }
 
+VectorDims BrgemmExternalRepackingAdjuster::get_blk_order(size_t shape_rank) {
+    VectorDims order(shape_rank - brgemm_kernel_rank);
+    std::iota(order.begin(), order.end(), 0);
+    const auto last_idx = shape_rank - 1;
+    order.insert(order.end(), {last_idx - 1, last_idx, last_idx - 1});
+    return order;
+}
+
+VectorDims BrgemmExternalRepackingAdjuster::get_blk_shape(const VectorDims& shape, ov::element::Type prc) {
+    const auto vnni_factor = brgemm_utils::compute_vnni_factor(prc);
+    const auto K = *++shape.rbegin();
+    const auto N = *shape.rbegin();
+    const auto new_K = snippets::utils::div_up(K, vnni_factor);
+    const auto new_N = std::max(N, brgemm_utils::repacking::compute_inner_n_block(prc));
+    VectorDims blk_shape(shape.begin(), shape.end() - brgemm_kernel_rank);
+    blk_shape.insert(blk_shape.end(), {new_K, new_N, vnni_factor});
+    return blk_shape;
+}
+
+void BrgemmExternalRepackingAdjuster::update_kernel(const RepackExecutorPtr& executor,
+                                                    const VectorDims& shape,
+                                                    const VectorDims& layout,
+                                                    size_t N,
+                                                    size_t K,
+                                                    ov::element::Type prc) {
+    const auto copy_wei_stride = ov::snippets::utils::get_dim_in_stride(shape, layout, 1) * prc.size();
+    const auto generic_config = executor->get_config().get_clone_ptr();
+    auto config = static_cast<BrgemmCopyBKernelConfig*>(generic_config.get());
+    config->update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, prc));
+    executor->update_by_config(*config);
+}
+
 bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& linear_ir) {
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::BrgemmExternalRepackingAdjuster")
     const auto& cpu_config = ov::as_type_ptr<CPURuntimeConfig>(m_configurator->get_config());
@@ -49,76 +81,66 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
     for (const auto& p : m_executors) {
         const auto& i = p.first;
         const auto& shape = cpu_config->io_shapes[i];
-        if (shape == cpu_config->latest_shapes[i])
-            continue;
 
         const auto& layout = cpu_config->io_layouts[i];
         const auto planar_shape = ov::snippets::utils::get_planar_vdims(shape, layout);
         const auto& K = *++planar_shape.rbegin();
         const auto& N = *planar_shape.rbegin();
 
-        // Create CPU Memory descriptor
-        const auto& precision = linear_ir.get_parameters()[i]->get_node()->get_output_element_type(0);
-        const auto vnni_factor = brgemm_utils::compute_vnni_factor(precision);
-        const size_t brgemm_kernel_rank = 2;
-        // Firstly, batch dims are set
-        VectorDims requested_blocked_shape(planar_shape.begin(), planar_shape.end() - brgemm_kernel_rank);
-        // Then, the blocked dims are formed
-        const auto new_K = snippets::utils::div_up(K, vnni_factor);
-        const auto new_N = std::max(N, brgemm_utils::repacking::compute_inner_n_block(precision));
-        requested_blocked_shape.insert(requested_blocked_shape.end(), {new_K, new_N, vnni_factor});
-
-        VectorDims requested_order(planar_shape.size() - brgemm_kernel_rank);
-        std::iota(requested_order.begin(), requested_order.end(), 0);
-        const auto last_idx = planar_shape.size() - 1;
-        requested_order.insert(requested_order.end(), {last_idx - 1, last_idx, last_idx - 1});
-
-        const auto desc = std::make_shared<CpuBlockedMemoryDesc>(precision,
-                                                                 Shape(planar_shape),
-                                                                 requested_blocked_shape,
-                                                                 requested_order);
-
-        // Create Kernel using BrgemmCopyBExecutor
-        const auto& executor = p.second;
-        const auto copy_wei_stride =
-            ov::snippets::utils::get_dim_in_stride(shape, cpu_config->io_layouts[i], 1) * precision.size();
-        const auto generic_config = executor->get_config().get_clone_ptr();
-        auto config = static_cast<BrgemmCopyBKernelConfig*>(generic_config.get());
-        config->update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, precision));
-        executor->update_by_config(*config);
-
-        // Save original input offsets for input before repacking.
-        const auto in_offsets = cpu_config->io_data_offsets[i];
-
-        ov::snippets::VectorDims shape_for_offset(cpu_config->tensor_rank - shape.size(), 1);
-        shape_for_offset.insert(shape_for_offset.end(), requested_blocked_shape.begin(), requested_blocked_shape.end());
-        m_configurator->compute_offsets(shape_for_offset, i, 0);
-        // Save new input offsets for input after repacking.
-        const auto out_offsets = cpu_config->io_data_offsets[i];
-
-        cpu_config->repacked_inputs[i] =
-            CPURuntimeConfig::RepackedInput(executor->get_kernel(), desc, in_offsets, out_offsets);
+        const auto& prc = linear_ir.get_parameters()[i]->get_node()->get_output_element_type(0);
+        const auto blk_shape = get_blk_shape(planar_shape, prc);
 
         // src data + dst data per kernel call
-        data_size += N * K * precision.size() + new_N * new_K * vnni_factor * precision.size();
+        const auto src_data = N * K * prc.size();
+        const auto dst_data =
+            std::accumulate(blk_shape.rbegin(), blk_shape.rbegin() + 3, prc.size(), std::multiplies<size_t>());
+        data_size += src_data + dst_data;
+
+        update_kernel(p.second, shape, layout, N, K, prc);
     }
 
-    if (!cpu_config->repacked_inputs.empty()) {
-        const auto L2_cache_size = dnnl::utils::get_cache_size(2, true);
-        const auto fit_into_L2 = data_size < L2_cache_size;
-        // Heuristic: If external repacking data doesn't fit in the cache L2,
-        //            external repacking should be executed in seperate parallel section before kernel execution.
-        cpu_config->repacking_impl_type = fit_into_L2 ? CPURuntimeConfig::RepackingImplType::IN_PARALLEL
-                                                      : CPURuntimeConfig::RepackingImplType::SEPARATE;
+    const auto L2_cache_size = dnnl::utils::get_cache_size(2, true);
+    const auto fit_into_L2 = data_size < L2_cache_size;
+    // Heuristic: If external repacking data doesn't fit in the cache L2,
+    //            external repacking should be executed in seperate parallel section before kernel execution.
+    cpu_config->repacking_impl_type =
+        fit_into_L2 ? CPURuntimeConfig::RepackingImplType::IN_PARALLEL : CPURuntimeConfig::RepackingImplType::SEPARATE;
+
+    const auto is_impl_parallel = cpu_config->repacking_impl_type == CPURuntimeConfig::RepackingImplType::IN_PARALLEL;
+
+    for (const auto& p : m_executors) {
+        const auto& i = p.first;
+        const auto& shape = cpu_config->io_shapes[i];
+        auto& repacked_in = cpu_config->repacked_inputs[i];
+
+        const auto& prc = linear_ir.get_parameters()[i]->get_node()->get_output_element_type(0);
+        auto planar_shape = ov::snippets::utils::get_planar_vdims(shape, cpu_config->io_layouts[i]);
+        auto blk_shape = get_blk_shape(planar_shape, prc);
+        // In parallel impl, each thread needs buffer with only shape [K_blk, N_blk, VNNI] to store repacking data
+        if (is_impl_parallel) {
+            std::fill(planar_shape.rbegin() + brgemm_kernel_rank, planar_shape.rend(), 1);
+            std::fill(blk_shape.rbegin() + brgemm_kernel_rank + 1, blk_shape.rend(), 1);
+        }
+        const auto order = get_blk_order(planar_shape.size());
+        const auto desc = std::make_shared<CpuBlockedMemoryDesc>(prc, Shape(planar_shape), blk_shape, order);
+
+        // Save original input offsets for input before repacking.
+        const auto in_offsets =
+            shape == cpu_config->latest_shapes[i] ? repacked_in.in_offsets() : cpu_config->io_data_offsets[i];
 
         // In parallel case Kernel should not add offsets to repacked inputs because
         // they will be applied during repacking in execution stage
-        if (cpu_config->repacking_impl_type == CPURuntimeConfig::RepackingImplType::IN_PARALLEL) {
-            for (const auto& in : cpu_config->repacked_inputs) {
-                auto& offsets = cpu_config->io_data_offsets[in.first];
-                std::fill(offsets.begin(), offsets.end(), 0);
-            }
+        if (is_impl_parallel) {
+            auto& offsets = cpu_config->io_data_offsets[i];
+            std::fill(offsets.begin(), offsets.end(), 0);
+        } else {
+            ov::snippets::VectorDims shape_for_offset(cpu_config->tensor_rank - shape.size(), 1);
+            shape_for_offset.insert(shape_for_offset.end(), blk_shape.begin(), blk_shape.end());
+            m_configurator->compute_offsets(shape_for_offset, i, 0);
         }
+        const auto out_offsets = cpu_config->io_data_offsets[i];
+
+        repacked_in = CPURuntimeConfig::RepackedInput(p.second->get_kernel(), desc, in_offsets, out_offsets);
     }
 
     return true;
