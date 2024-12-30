@@ -355,29 +355,6 @@ ov::snippets::pass::TokenizeMHASnippets::TokenizeMHASnippets(const SnippetsToken
         // We can allow to call this pass only if ops have scalar shapes to avoid shape mismatching
         const auto is_transposed_b_0 = matmul0->get_transpose_b();
         bool has_matmul0_has_ops_on_input = false;
-        while (is_supported_intermediate_op(parent)) {
-            // All supported ops have only one output port
-            if (parent->get_output_target_inputs(0).size() != 1)
-                break;
-
-            // Only if MatMul0 has transposed_b, we have to tokenize scalar ops
-            // to move explicit Transpose from MatMul0 input_1 to Parameter of Subgraph body
-            if (is_transposed_b_0 && !ov::snippets::pass::ExplicitTransposeMatMulInputs::are_weights_scalar(parent)) {
-                break;
-            }
-
-            // To avoid unsupported number of non-scalar Constants in the future after FakeQuantize decomposition (plugin specific limitation)
-            // we should calculate potential number of non-scalar Constants for FakeQuantize that will be moved up from body.
-            if (const auto fq_node = ov::as_type_ptr<ov::op::v0::FakeQuantize>(parent)) {
-                hidden_virtual_ports_count += ov::snippets::utils::get_non_scalar_constant_count_for_fq(fq_node);
-            }
-
-            potential_body_params_count += get_potential_body_params(parent);
-            ordered_ops.insert(ordered_ops.begin(), parent);
-            // [107731] To go always through 0-th port - is it safe?
-            parent = parent->get_input_node_shared_ptr(0);
-            has_matmul0_has_ops_on_input = true;
-        }
         // If there are ops on second input of MatMul0 and only one unique Buffer between MatMuls - there must be one more unique Buffer
         if (has_matmul0_has_ops_on_input && uniqie_buffer_reg_group_count < 2) {
             uniqie_buffer_reg_group_count++;
@@ -407,9 +384,10 @@ ov::snippets::pass::TokenizeMHASnippets::TokenizeMHASnippets(const SnippetsToken
         const auto transpose1 = ov::as_type_ptr<ov::opset1::Transpose>(parent);
         const auto transpose0 = ov::as_type_ptr<ov::opset1::Transpose>(matmul0->get_input_node_shared_ptr(0));
         const auto transpose2 = ov::as_type_ptr<ov::opset1::Transpose>(matmul1->get_input_node_shared_ptr(1));
-        tokenize_transpose(transpose1, is_transposed_b_0, get_decomposed_transpose_order(pattern_rank), ordered_ops.begin());
+        tokenize_transpose(transpose1, is_transposed_b_0, get_fusion_transpose_order(pattern_rank), ordered_ops.begin());
         tokenize_transpose(transpose0, matmul0->get_transpose_a(), get_fusion_transpose_order(pattern_rank), ordered_ops.begin());
-        tokenize_transpose(transpose2, matmul1->get_transpose_b(), get_fusion_transpose_order(pattern_rank), ordered_ops.end());
+        if (!matmul1->get_transpose_b())
+            tokenize_transpose(transpose2, matmul1->get_transpose_b(), get_fusion_transpose_order(pattern_rank), ordered_ops.end());
         ordered_ops.push_back(matmul1);
 
         bool are_ops_after_matmul1 = false;

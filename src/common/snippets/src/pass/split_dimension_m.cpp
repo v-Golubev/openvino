@@ -73,8 +73,14 @@ std::pair<size_t, size_t> SplitDimensionM::get_splited_dimensions(size_t batch_d
 bool SplitDimensionM::can_be_optimized(const std::shared_ptr<const ov::Node>& node, size_t concurrency) {
     if (!is_supported_matmul(node))
         return false;
-    size_t batch_m_dim, new_m_dim;
-    return split(node->get_shape(), concurrency, batch_m_dim, new_m_dim);
+    const auto& shape = node->get_shape();
+    const auto m_dim = get_dim_M(shape);
+    size_t batch_m_dim = 1, new_m_dim = m_dim;
+    auto res = split(shape, concurrency, batch_m_dim, new_m_dim);
+    std::cout << "SplitDimensionM::can_be_optimized::split=" << res << "_m_dim=" << m_dim
+              << "_shape=" << ov::PartialShape(shape) << "_concurrency=" << concurrency << "_m_batch=" << batch_m_dim
+              << "_m_kernel=" << new_m_dim << std::endl;
+    return res;
 }
 
 std::vector<size_t> SplitDimensionM::get_updated_order(const std::vector<size_t>& order, size_t m_index) {
@@ -287,8 +293,14 @@ bool SplitDimensionM::run_on_subgraph(const std::shared_ptr<op::Subgraph>& subgr
 
     if (const auto matmul0 = get_matmul(subgraph)) {
         const auto mm_shape = matmul0->get_shape();
-        size_t batch_m_dim, new_m_dim;
-        if (!split(mm_shape, m_concurrency, batch_m_dim, new_m_dim))
+        const auto m_dim = get_dim_M(mm_shape);
+        size_t batch_m_dim = 1, new_m_dim = m_dim;
+
+        auto res = split(mm_shape, m_concurrency, batch_m_dim, new_m_dim);
+        std::cout << "SplitDimensionM::run_on_subgraph::split=" << res << "_m_dim=" << m_dim
+                  << "_shape=" << ov::PartialShape(mm_shape) << "_concurrency=" << m_concurrency
+                  << "_m_batch=" << batch_m_dim << "_m_kernel=" << new_m_dim << std::endl;
+        if (!res)
             return false;
 
         reshape_subgraph(subgraph, mm_shape, batch_m_dim, new_m_dim);
