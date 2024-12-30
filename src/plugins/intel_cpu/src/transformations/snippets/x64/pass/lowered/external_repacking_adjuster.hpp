@@ -30,7 +30,7 @@ public:
 private:
     using RepackExecutorPtr = std::shared_ptr<BrgemmCopyBKernelExecutor>;
     static VectorDims get_blk_order(size_t shape_rank);
-    static VectorDims get_blk_shape(const VectorDims& shape, ov::element::Type prc);
+    static VectorDims get_blk_shape(const VectorDims& planar_shape, ov::element::Type prc);
 
     void update_kernel(const RepackExecutorPtr& executor,
                        const VectorDims& shape,
@@ -39,7 +39,7 @@ private:
                        size_t K,
                        ov::element::Type prc);
 
-    const static size_t brgemm_kernel_rank = 2;
+    static const size_t brgemm_kernel_rank;
     std::unordered_map<size_t, RepackExecutorPtr> m_executors;
 };
 

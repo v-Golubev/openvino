@@ -14,6 +14,8 @@
 namespace ov {
 namespace intel_cpu {
 
+const size_t BrgemmExternalRepackingAdjuster::brgemm_kernel_rank = 2;
+
 BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snippets::lowered::LinearIRCPtr& linear_ir,
                                                                  const CPURuntimeConfigurator* configurator)
     : snippets::lowered::pass::RuntimeOptimizer(configurator) {
@@ -32,7 +34,9 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
                 const auto wei_prc = brgemm->get_input_element_type(1);
                 const auto isa = brgemm_utils::get_primitive_isa(src_prc, brgemm_utils::with_amx(brgemm->get_type()));
                 const auto inner_n_block = brgemm_utils::repacking::compute_inner_n_block(wei_prc);
-                auto config = BrgemmCopyBKernelConfig(src_prc, wei_prc, isa, false, false, inner_n_block);
+                const auto is_transposed_b =
+                    BrgemmCopyB::is_transposed(m_configurator->get_io_descs()[i]->get_layout());
+                auto config = BrgemmCopyBKernelConfig(src_prc, wei_prc, isa, false, is_transposed_b, inner_n_block);
                 m_executors[i] = std::make_shared<BrgemmCopyBKernelExecutor>(
                     static_cast<const CPURuntimeConfigurator*>(m_configurator)->get_cache(),
                     config);
@@ -49,13 +53,13 @@ VectorDims BrgemmExternalRepackingAdjuster::get_blk_order(size_t shape_rank) {
     return order;
 }
 
-VectorDims BrgemmExternalRepackingAdjuster::get_blk_shape(const VectorDims& shape, ov::element::Type prc) {
+VectorDims BrgemmExternalRepackingAdjuster::get_blk_shape(const VectorDims& planar_shape, ov::element::Type prc) {
     const auto vnni_factor = brgemm_utils::compute_vnni_factor(prc);
-    const auto K = *++shape.rbegin();
-    const auto N = *shape.rbegin();
+    const auto K = *++planar_shape.rbegin();
+    const auto N = *planar_shape.rbegin();
     const auto new_K = snippets::utils::div_up(K, vnni_factor);
     const auto new_N = std::max(N, brgemm_utils::repacking::compute_inner_n_block(prc));
-    VectorDims blk_shape(shape.begin(), shape.end() - brgemm_kernel_rank);
+    VectorDims blk_shape(planar_shape.begin(), planar_shape.end() - brgemm_kernel_rank);
     blk_shape.insert(blk_shape.end(), {new_K, new_N, vnni_factor});
     return blk_shape;
 }
@@ -66,9 +70,10 @@ void BrgemmExternalRepackingAdjuster::update_kernel(const RepackExecutorPtr& exe
                                                     size_t N,
                                                     size_t K,
                                                     ov::element::Type prc) {
-    const auto copy_wei_stride = ov::snippets::utils::get_dim_in_stride(shape, layout, 1) * prc.size();
     const auto generic_config = executor->get_config().get_clone_ptr();
     auto config = static_cast<BrgemmCopyBKernelConfig*>(generic_config.get());
+    const auto idx = config->is_transposed_B() ? 0 : 1;
+    const auto copy_wei_stride = ov::snippets::utils::get_dim_in_stride(shape, layout, idx) * prc.size();
     config->update(N, N, K, K, copy_wei_stride, brgemm_utils::repacking::compute_LDB(N, prc));
     executor->update_by_config(*config);
 }
@@ -125,6 +130,10 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         const auto desc = std::make_shared<CpuBlockedMemoryDesc>(prc, Shape(planar_shape), blk_shape, order);
 
         // Save original input offsets for input before repacking.
+        // If the shape has not been changed, it means that we already created `RepackedInput` for this input
+        // on previous pass call and now `cpu_config->io_data_offsets[i]` contains offsets not for original input -
+        // they were updated for blocked shapes/zeroed for previous initialization and we canonot use them as original
+        // offsets.
         const auto in_offsets =
             shape == cpu_config->latest_shapes[i] ? repacked_in.in_offsets() : cpu_config->io_data_offsets[i];
 

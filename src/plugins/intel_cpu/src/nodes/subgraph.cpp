@@ -1015,7 +1015,7 @@ Subgraph::SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<Subgraph::Sub
         // each thread should have own buffer to store repacked data
         external_buffer_size *= m_nthreads;
 
-        // To avoid extra overheads in runtime on unordered_map creation,
+        // To avoid extra overheads in runtime on vector creation,
         // we initialize `repacked_offsets_by_threads` by default here
         m_repacked_offsets_by_threads.resize(m_nthreads);
         for (size_t i = 0; i < m_repacked_offsets_by_threads.size(); ++i)
