@@ -5,6 +5,7 @@
 #pragma once
 
 #include "emitters/snippets/cpu_runtime_configurator.hpp"
+#include "emitters/snippets/x64/kernel_executors/brgemm_copy_b.hpp"
 #include "snippets/lowered/pass/runtime_optimizer.hpp"
 #include "snippets/runtime_configurator.hpp"
 

@@ -4,14 +4,9 @@
 
 #pragma once
 
-#include "emitters/snippets/jit_snippets_call_args.hpp"
-
-#ifndef OPENVINO_ARCH_ARM64
-#    include "emitters/snippets/x64/kernel_executors/brgemm_copy_b.hpp"
-#endif
-
 #include "cache/multi_cache.h"
-#include "memory_desc/cpu_blocked_memory_desc.h"
+#include "emitters/snippets/jit_snippets_call_args.hpp"
+#include "emitters/snippets/repacked_input.hpp"
 #include "snippets/lowered/port_descriptor.hpp"
 #include "snippets/runtime_configurator.hpp"
 
@@ -27,35 +22,14 @@ public:
     std::string to_string() const override;
 #endif
 
-#ifndef OPENVINO_ARCH_ARM64
-    struct RepackedInput {
-        RepackedInput() = default;
-        RepackedInput(std::shared_ptr<const BrgemmCopyBKernel> kernel,
-                      CpuBlockedMemoryDescPtr desc,
-                      VectorDims in_offsets,
-                      VectorDims out_offsets);
-
-        const std::shared_ptr<const BrgemmCopyBKernel>& kernel() const;
-        const CpuBlockedMemoryDescPtr& desc() const;
-        const VectorDims& in_offsets() const;
-        const VectorDims& out_offsets() const;
-
-    private:
-        std::shared_ptr<const BrgemmCopyBKernel> m_kernel{nullptr};
-        CpuBlockedMemoryDescPtr m_desc{nullptr};
-        VectorDims m_in_offsets{};
-        VectorDims m_out_offsets{};
-    };
-    std::unordered_map<size_t, RepackedInput> repacked_inputs = {};
-
     enum class RepackingImplType {
         NONE,         // no kernel-outside repacking
         IN_PARALLEL,  // should be executed in parallel_nt by each thread
         SEPARATE,     // should be separathy from kernel executed
     };
     RepackingImplType repacking_impl_type = RepackingImplType::NONE;
-#endif  // OPENVINO_ARCH_ARM64
 
+    std::unordered_map<size_t, RepackedInput> repacked_inputs = {};
     std::vector<jit_snippets_call_args::loop_args_t> loop_args = {};
 };
 
@@ -69,6 +43,8 @@ public:
      */
     void update_loop_args(const ov::snippets::lowered::LinearIRCPtr& linear_ir) const;
 
+    // Note: This method is temporarily used only by `BrgemmExternalRepackingAdjuster` to create kernels for repacking.
+    //       Please, remove this method when the adjuster is deprecated
     const ov::intel_cpu::MultiCacheWeakPtr& get_cache() const {
         return compiled_kernel_cache;
     }

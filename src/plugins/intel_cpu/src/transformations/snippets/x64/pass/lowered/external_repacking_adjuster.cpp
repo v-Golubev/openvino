@@ -5,6 +5,7 @@
 #include "external_repacking_adjuster.hpp"
 
 #include "emitters/snippets/cpu_runtime_configurator.hpp"
+#include "emitters/snippets/x64/kernel_executors/brgemm_copy_b.hpp"
 #include "memory_desc/cpu_blocked_memory_desc.h"
 #include "snippets/itt.hpp"
 #include "snippets/utils/utils.hpp"
@@ -37,9 +38,7 @@ BrgemmExternalRepackingAdjuster::BrgemmExternalRepackingAdjuster(const ov::snipp
                 const auto is_transposed_b =
                     BrgemmCopyB::is_transposed(m_configurator->get_io_descs()[i]->get_layout());
                 auto config = BrgemmCopyBKernelConfig(src_prc, wei_prc, isa, false, is_transposed_b, inner_n_block);
-                m_executors[i] = std::make_shared<BrgemmCopyBKernelExecutor>(
-                    static_cast<const CPURuntimeConfigurator*>(m_configurator)->get_cache(),
-                    config);
+                m_executors[i] = std::make_shared<BrgemmCopyBKernelExecutor>(configurator->get_cache(), config);
             }
         }
     }
@@ -149,7 +148,7 @@ bool BrgemmExternalRepackingAdjuster::run(const snippets::lowered::LinearIR& lin
         }
         const auto out_offsets = cpu_config->io_data_offsets[i];
 
-        repacked_in = CPURuntimeConfig::RepackedInput(p.second->get_kernel(), desc, in_offsets, out_offsets);
+        repacked_in = RepackedInput(p.second->get_kernel(), desc, in_offsets, out_offsets);
     }
 
     return true;

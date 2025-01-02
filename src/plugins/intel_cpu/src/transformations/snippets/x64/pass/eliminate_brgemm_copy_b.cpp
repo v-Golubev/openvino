@@ -10,7 +10,7 @@
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "snippets/itt.hpp"
 #include "snippets/op/rank_normalization.hpp"
-#include "snippets/op/reshape.hpp"
+#include "snippets/op/reorder.hpp"
 #include "transformations/snippets/x64/op/brgemm_copy_b.hpp"
 
 namespace ov {
@@ -44,8 +44,7 @@ pass::EliminateBrgemmCopyB::EliminateBrgemmCopyB() {
         // If there is non-empty and non-planar layout, we should insert reshape to support shape inference
         if (!ov::snippets::utils::is_planar_layout(layout)) {
             const auto& subtensor = in_desc->get_subtensor();
-            const auto& reshape =
-                std::make_shared<ov::snippets::op::ReshapeWithOrder>(copy_b_node->input_value(0), layout);
+            const auto& reshape = std::make_shared<ov::snippets::op::Reorder>(copy_b_node->input_value(0), layout);
             ov::snippets::lowered::PortDescriptorUtils::set_port_descriptor(reshape->input(0), subtensor, layout);
             ov::snippets::lowered::PortDescriptorUtils::set_port_descriptor(reshape->output(0), subtensor);
             ov::replace_node_update_name(copy_b_node, reshape);

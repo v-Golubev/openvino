@@ -22,9 +22,9 @@ public:
 
 class SubgraphStaticExecutor : public SubgraphExecutor, public SubgraphStaticBaseExecutor {
 public:
-    template <typename... Args>
-    SubgraphStaticExecutor(const std::shared_ptr<CPURuntimeConfig>& snippet_config, Args... args)
-        : SubgraphExecutor(snippet_config, args...),
+    template <typename T, typename... Args>
+    SubgraphStaticExecutor(T&& first, Args&&... rest)
+        : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
           SubgraphStaticBaseExecutor() {}
 
     void exec_impl(const std::vector<MemoryPtr>& inMemPtrs, const std::vector<MemoryPtr>& outMemPtrs) override;
@@ -32,10 +32,10 @@ public:
 
 class SubgraphDynamicSpecializedExecutor : public SubgraphExecutor, public SubgraphDynamicSpecializedBaseExecutor {
 public:
-    template <typename... Args>
-    SubgraphDynamicSpecializedExecutor(const std::shared_ptr<CPURuntimeConfig>& snippet_config, Args... args)
-        : SubgraphExecutor(snippet_config, args...),
-          SubgraphDynamicSpecializedBaseExecutor(snippet_config) {}
+    template <typename T, typename... Args>
+    SubgraphDynamicSpecializedExecutor(T&& first, Args&&... rest)
+        : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
+          SubgraphDynamicSpecializedBaseExecutor(std::forward<T>(first)) {}
 
     void exec_impl(const std::vector<MemoryPtr>& inMemPtrs, const std::vector<MemoryPtr>& outMemPtrs) override;
 };

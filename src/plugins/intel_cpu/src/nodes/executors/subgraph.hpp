@@ -22,6 +22,8 @@ struct SubgraphAttrs {
     std::vector<ov::element::Type> inMemPrecs;
     std::vector<ov::element::Type> outMemPrecs;
 };
+bool operator==(const SubgraphAttrs& lhs, const SubgraphAttrs& rhs);
+size_t get_attr_hash(size_t seed, const std::shared_ptr<SubgraphAttrs>& attrs);
 
 class SubgraphCodeGenerator {
 public:

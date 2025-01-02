@@ -17,7 +17,7 @@ OV_OP(LoopEnd, ov::snippets::op)
 OV_OP(Brgemm, ov::snippets::op)
 OV_OP(BroadcastLoad, ov::snippets::op)
 OV_OP(Reshape, ov::snippets::op)
-OV_OP(ReshapeWithOrder, ov::snippets::op)
+OV_OP(Reorder, ov::snippets::op)
 
 OV_OP(Store, ov::snippets::op)
 

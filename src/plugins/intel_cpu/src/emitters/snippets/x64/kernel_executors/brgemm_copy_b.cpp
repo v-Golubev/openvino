@@ -145,10 +145,11 @@ std::string BrgemmCopyBKernelConfig::StaticParams::to_string() const {
 #    undef PRINT
 #endif
 
-BrgemmCopyBKernel::BrgemmCopyBKernel() : jit_generator(jit_name()), ker_(nullptr) {}
+BrgemmCopyBKernel::BrgemmCopyBKernel() : RepackedInputKernel(), jit_generator(jit_name()), ker_(nullptr) {}
 
 BrgemmCopyBKernel::BrgemmCopyBKernel(const BrgemmCopyBKernelConfig& conf)
-    : jit_generator(jit_name()),
+    : RepackedInputKernel(),
+      jit_generator(jit_name()),
       is_with_comp(conf.is_with_comp()),
       is_transpose(conf.is_transposed_B()),
       wei_data_size(dnnl_data_type_size(conf.get_wei_dt())),

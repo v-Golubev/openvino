@@ -6,7 +6,6 @@
 
 #include "snippets/op/subgraph.hpp"
 
-
 namespace ov {
 namespace intel_cpu {
 

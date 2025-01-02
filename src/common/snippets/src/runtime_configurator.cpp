@@ -120,10 +120,10 @@ void RuntimeConfigurator::init_data_info(const lowered::LinearIRCPtr& linear_ir)
         const auto& shape_infer_seq = utils::get_first_child_shape_infer_expr_seq(param);
         ExpressionPtr mem_desc_expr = param;
         if (!shape_infer_seq.empty()) {
-            // If there is ReshapeWithOrder, we should take its desc because it affects on shape by target order
+            // If there is Reorder, we should take its desc because it affects on shape by target order
             const auto& reordered_reshape_it = std::find_if(shape_infer_seq.cbegin(), shape_infer_seq.cend(),
                                                             [](const ExpressionPtr& expr) {
-                                                               return ov::is_type<op::ReshapeWithOrder>(expr->get_node());
+                                                               return ov::is_type<op::Reorder>(expr->get_node());
                                                             });
             if (reordered_reshape_it != shape_infer_seq.cend()) {
                 const auto& reshape = *reordered_reshape_it;

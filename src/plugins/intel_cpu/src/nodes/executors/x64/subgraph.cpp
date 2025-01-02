@@ -5,6 +5,7 @@
 #include "nodes/executors/x64/subgraph.hpp"
 
 #include "emitters/snippets/x64/cpu_generator.hpp"
+#include "emitters/snippets/x64/kernel_executors/brgemm_copy_b.hpp"
 #include "openvino/core/parallel.hpp"
 #include "snippets/op/subgraph.hpp"
 
@@ -79,15 +80,14 @@ SubgraphExecutor::SubgraphExecutor(const std::shared_ptr<CPURuntimeConfig>& snip
     m_repacking_impl_type = snippet_config->repacking_impl_type;
     m_repacked_inputs = snippet_config->repacked_inputs;
 
-    auto external_buffer_size =
-        std::accumulate(m_repacked_inputs.begin(),
-                        m_repacked_inputs.end(),
-                        size_t(0),
-                        [](size_t sum, const std::pair<size_t, CPURuntimeConfig::RepackedInput>& p) {
-                            return sum + p.second.desc()->getCurrentMemSize();
-                        });
+    auto external_buffer_size = std::accumulate(m_repacked_inputs.begin(),
+                                                m_repacked_inputs.end(),
+                                                size_t(0),
+                                                [](size_t sum, const std::pair<size_t, RepackedInput>& p) {
+                                                    return sum + p.second.desc()->getCurrentMemSize();
+                                                });
 
-    if (should_repacking_be_in_parallel()) {
+    if (get_repacking_impl_type() == RepackingImplType::IN_PARALLEL) {
         // When external repacking is applied in parallel section,
         // each thread should have own buffer to store repacked data
         external_buffer_size *= m_nthreads;
@@ -165,7 +165,7 @@ std::vector<MemoryPtr> SubgraphExecutor::separately_repack_inputs(const dnnl::st
         OPENVINO_ASSERT(everyone_is(m_tensor_rank, in_strides.size(), out_strides.size(), dom.size()),
                         "Unsupported shape rank of repacking data");
 
-        const auto& kernel = repacked_input.kernel();
+        const auto& kernel = repacked_input.kernel<BrgemmCopyBKernel>();
         if (m_tensor_rank == rank6D)
             parallel4d_repacking(kernel.get(), dom, in_strides, out_strides, src, dst);
         else
@@ -196,7 +196,7 @@ void SubgraphExecutor::in_parallel_repack_inputs(const std::vector<MemoryPtr>& i
             BrgemmCopyBKernel::call_args args;
             args.src = inMemPtrs[in_idx]->getDataAs<const uint8_t>() + src_offset;
             args.tr_src = repacked_ptr;
-            (*repacked_in.kernel())(&args);
+            (*repacked_in.kernel<BrgemmCopyBKernel>())(&args);
 
             last_processed_src_offset = src_offset;
         }
@@ -209,12 +209,17 @@ void SubgraphExecutor::in_parallel_repack_inputs(const std::vector<MemoryPtr>& i
 void SubgraphExecutor::execute(const dnnl::stream& strm,
                                const std::vector<MemoryPtr>& inMemPtrs,
                                const std::vector<MemoryPtr>& outMemPtrs) {
-    if (should_repacking_be_separately()) {
+    switch (get_repacking_impl_type()) {
+    case RepackingImplType::SEPARATE:
         exec_impl(separately_repack_inputs(strm, inMemPtrs), outMemPtrs);
         return;
+    case RepackingImplType::IN_PARALLEL:
+    case RepackingImplType::NONE:
+        exec_impl(inMemPtrs, outMemPtrs);
+        return;
+    default:
+        OPENVINO_THROW("Uknown RepackingImplType");
     }
-
-    exec_impl(inMemPtrs, outMemPtrs);
 }
 
 void SubgraphStaticExecutor::exec_impl(const std::vector<MemoryPtr>& inMemPtrs,
@@ -223,7 +228,9 @@ void SubgraphStaticExecutor::exec_impl(const std::vector<MemoryPtr>& inMemPtrs,
 
     initializer_functor initializer;
     call_functor caller;
-    if (should_repacking_be_in_parallel()) {
+
+    switch (get_repacking_impl_type()) {
+    case RepackingImplType::IN_PARALLEL:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
             init_call_args(call_args, inMemPtrs, outMemPtrs, m_start_offset_in, m_start_offset_out, ithr);
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
@@ -233,7 +240,9 @@ void SubgraphStaticExecutor::exec_impl(const std::vector<MemoryPtr>& inMemPtrs,
             in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
             callable(&call_args, indexes.data());
         };
-    } else {
+        break;
+    case RepackingImplType::SEPARATE:
+    case RepackingImplType::NONE:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
             init_call_args(call_args, inMemPtrs, outMemPtrs, m_start_offset_in, m_start_offset_out, ithr);
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
@@ -241,6 +250,9 @@ void SubgraphStaticExecutor::exec_impl(const std::vector<MemoryPtr>& inMemPtrs,
         caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {
             callable(&call_args, indexes.data());
         };
+        break;
+    default:
+        OPENVINO_THROW("Uknown RepackingImplType");
     }
 
 #if defined(__linux__) && defined(SNIPPETS_DEBUG_CAPS)
@@ -272,7 +284,9 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
 
     initializer_functor initializer;
     call_functor caller;
-    if (should_repacking_be_in_parallel()) {
+
+    switch (get_repacking_impl_type()) {
+    case RepackingImplType::IN_PARALLEL:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
             init_call_args(call_args, ithr);
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
@@ -283,7 +297,9 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
             in_parallel_repack_inputs(inMemPtrs, indexes, ithr, call_args);
             callable(&call_args);
         };
-    } else {
+        break;
+    case RepackingImplType::SEPARATE:
+    case RepackingImplType::NONE:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
             init_call_args(call_args, ithr);
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
@@ -292,6 +308,9 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
             update_ptrs(call_args, src_ptrs, dst_ptrs, indexes);
             callable(&call_args);
         };
+        break;
+    default:
+        OPENVINO_THROW("Uknown RepackingImplType");
     }
 
 #if defined(__linux__) && defined(SNIPPETS_DEBUG_CAPS)

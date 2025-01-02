@@ -48,16 +48,15 @@ protected:
 
     // [ Thread Index -> Index of input with repacking data - > last repacked src_offset ]
     std::vector<std::vector<size_t>> m_repacked_offsets_by_threads = {};
-    std::unordered_map<size_t, CPURuntimeConfig::RepackedInput> m_repacked_inputs = {};
+    std::unordered_map<size_t, RepackedInput> m_repacked_inputs = {};
 
     std::function<void(const std::vector<size_t>&, const std::vector<size_t>&, size_t&)> init_offset = {};
 
-    inline bool should_repacking_be_separately() const {
-        return m_repacking_impl_type == CPURuntimeConfig::RepackingImplType::SEPARATE;
+    using RepackingImplType = CPURuntimeConfig::RepackingImplType;
+    const RepackingImplType& get_repacking_impl_type() const {
+        return m_repacking_impl_type;
     }
-    inline bool should_repacking_be_in_parallel() const {
-        return m_repacking_impl_type == CPURuntimeConfig::RepackingImplType::IN_PARALLEL;
-    }
+
     inline void clean_repacked_offsets(size_t ithr) {
         m_repacked_offsets_by_threads[ithr].assign(m_repacked_inputs.size(), std::numeric_limits<size_t>::max());
     }
@@ -68,14 +67,14 @@ protected:
 #endif
 
 private:
-    CPURuntimeConfig::RepackingImplType m_repacking_impl_type = CPURuntimeConfig::RepackingImplType::NONE;
+    RepackingImplType m_repacking_impl_type = RepackingImplType::NONE;
 };
 
 class SubgraphStaticExecutor : public SubgraphExecutor, public SubgraphStaticBaseExecutor {
 public:
-    template <typename... Args>
-    SubgraphStaticExecutor(const std::shared_ptr<CPURuntimeConfig>& snippet_config, Args... args)
-        : SubgraphExecutor(snippet_config, args...),
+    template <typename T, typename... Args>
+    SubgraphStaticExecutor(T&& first, Args&&... rest)
+        : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
           SubgraphStaticBaseExecutor() {}
 
     void exec_impl(const std::vector<MemoryPtr>& inMemPtrs, const std::vector<MemoryPtr>& outMemPtrs) override;
@@ -83,10 +82,10 @@ public:
 
 class SubgraphDynamicSpecializedExecutor : public SubgraphExecutor, public SubgraphDynamicSpecializedBaseExecutor {
 public:
-    template <typename... Args>
-    SubgraphDynamicSpecializedExecutor(const std::shared_ptr<CPURuntimeConfig>& snippet_config, Args... args)
-        : SubgraphExecutor(snippet_config, args...),
-          SubgraphDynamicSpecializedBaseExecutor(snippet_config) {}
+    template <typename T, typename... Args>
+    SubgraphDynamicSpecializedExecutor(T&& first, Args&&... rest)
+        : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
+          SubgraphDynamicSpecializedBaseExecutor(std::forward<T>(first)) {}
 
     void exec_impl(const std::vector<MemoryPtr>& inMemPtrs, const std::vector<MemoryPtr>& outMemPtrs) override;
 };

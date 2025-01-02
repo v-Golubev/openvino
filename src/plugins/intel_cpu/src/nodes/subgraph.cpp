@@ -64,6 +64,7 @@ namespace intel_cpu {
 namespace node {
 namespace {
 
+#if defined(OPENVINO_ARCH_X86_64) || defined(OPENVINO_ARCH_ARM64)
 struct SubgraphKey {
     SubgraphKey() = default;
     SubgraphKey(const std::shared_ptr<SubgraphAttrs>& attrs_, const std::vector<VectorDims>& in_shapes_)
@@ -71,8 +72,19 @@ struct SubgraphKey {
           in_shapes(in_shapes_) {}
     virtual ~SubgraphKey() = default;
 
-    size_t hash() const;
-    bool operator==(const SubgraphKey& rhs) const;
+    size_t hash() const {
+        using namespace dnnl::impl;
+        using namespace dnnl::impl::primitive_hashing;
+
+        size_t seed = get_attr_hash(0, attrs);
+        for (const auto& shape : in_shapes)
+            seed = get_vector_hash(seed, shape);
+
+        return seed;
+    }
+    bool operator==(const SubgraphKey& rhs) const {
+        return *attrs == *rhs.attrs && in_shapes == rhs.in_shapes;
+    }
 
     std::shared_ptr<SubgraphAttrs> attrs = nullptr;
     std::vector<VectorDims> in_shapes = {};
@@ -83,102 +95,44 @@ struct SubgraphCodeGeneratorKey {
         : attrs(attrs_),
           broadcasting_mask(mask_) {}
 
-    size_t hash() const;
-    bool operator==(const SubgraphCodeGeneratorKey& rhs) const;
+    size_t hash() const {
+        using namespace dnnl::impl;
+        using namespace dnnl::impl::primitive_hashing;
+
+        size_t seed = get_attr_hash(0, attrs);
+        return hash_combine(seed, broadcasting_mask);
+    }
+    bool operator==(const SubgraphCodeGeneratorKey& rhs) const {
+        return *attrs == *rhs.attrs && broadcasting_mask == rhs.broadcasting_mask;
+    }
 
     std::shared_ptr<SubgraphAttrs> attrs = nullptr;
     uint8_t broadcasting_mask = 0;
 };
+#endif
 
 struct SubgraphShapeInferResultKey {
     SubgraphShapeInferResultKey(std::vector<VectorDims> in_shapes_, uint64_t body_hash_)
         : in_shapes(std::move(in_shapes_)),
           body_hash(body_hash_) {}
 
-    size_t hash() const;
-    bool operator==(const SubgraphShapeInferResultKey& rhs) const;
+    size_t hash() const {
+        using namespace dnnl::impl;
+        using namespace dnnl::impl::primitive_hashing;
+
+        size_t seed = hash_combine(0, body_hash);
+        for (const auto& shape : in_shapes)
+            seed = get_vector_hash(seed, shape);
+
+        return seed;
+    }
+    bool operator==(const SubgraphShapeInferResultKey& rhs) const {
+        return body_hash == rhs.body_hash && in_shapes == rhs.in_shapes;
+    }
 
     std::vector<VectorDims> in_shapes = {};
     uint64_t body_hash = 0;
 };
-
-size_t get_attr_hash(size_t seed, const std::shared_ptr<SubgraphAttrs>& attrs) {
-    using namespace dnnl::impl;
-    using namespace dnnl::impl::primitive_hashing;
-
-    for (const auto& order : attrs->inMemOrders)
-        seed = get_vector_hash(seed, order);
-    for (const auto& prec : attrs->inMemPrecs)
-        seed = hash_combine(seed, prec.hash());
-
-    for (const auto& order : attrs->outMemOrders)
-        seed = get_vector_hash(seed, order);
-    for (const auto& prec : attrs->outMemPrecs)
-        seed = hash_combine(seed, prec.hash());
-
-    seed = hash_combine(seed, attrs->bodyHash);
-    return seed;
-}
-
-size_t SubgraphKey::hash() const {
-    using namespace dnnl::impl;
-    using namespace dnnl::impl::primitive_hashing;
-
-    size_t seed = get_attr_hash(0, attrs);
-    for (const auto& shape : in_shapes)
-        seed = get_vector_hash(seed, shape);
-
-    return seed;
-}
-
-size_t SubgraphCodeGeneratorKey::hash() const {
-    using namespace dnnl::impl;
-    using namespace dnnl::impl::primitive_hashing;
-
-    size_t seed = get_attr_hash(0, attrs);
-    seed = hash_combine(seed, broadcasting_mask);
-
-    return seed;
-}
-
-size_t SubgraphShapeInferResultKey::hash() const {
-    using namespace dnnl::impl;
-    using namespace dnnl::impl::primitive_hashing;
-
-    size_t seed = hash_combine(0, body_hash);
-    for (const auto& shape : in_shapes)
-        seed = get_vector_hash(seed, shape);
-
-    return seed;
-}
-
-bool operator==(const SubgraphAttrs& lhs, const SubgraphAttrs& rhs) {
-    if (&lhs == &rhs)
-        return true;
-    if (lhs.bodyHash != rhs.bodyHash)
-        return false;
-    if (lhs.inMemOrders.size() != rhs.inMemOrders.size() || lhs.inMemPrecs.size() != rhs.inMemPrecs.size())
-        return false;
-    if (lhs.outMemOrders.size() != rhs.outMemOrders.size() || lhs.outMemPrecs.size() != rhs.outMemPrecs.size())
-        return false;
-    if (lhs.inMemOrders != rhs.inMemOrders || lhs.inMemPrecs != rhs.inMemPrecs)
-        return false;
-    if (lhs.outMemOrders != rhs.outMemOrders || lhs.outMemPrecs != rhs.outMemPrecs)
-        return false;
-    return true;
-}
-
-bool SubgraphKey::operator==(const SubgraphKey& rhs) const {
-    return *attrs == *rhs.attrs && in_shapes == rhs.in_shapes;
-}
-
-bool SubgraphCodeGeneratorKey::operator==(const SubgraphCodeGeneratorKey& rhs) const {
-    return *attrs == *rhs.attrs && broadcasting_mask == rhs.broadcasting_mask;
-}
-
-bool SubgraphShapeInferResultKey::operator==(const SubgraphShapeInferResultKey& rhs) const {
-    return body_hash == rhs.body_hash && in_shapes == rhs.in_shapes;
-}
 
 struct SubgraphShapeInferResult {
     SubgraphShapeInferResult(IShapeInfer::Result res) : result(std::move(res)) {}
@@ -203,7 +157,8 @@ Subgraph::Subgraph(const std::shared_ptr<ov::Node>& op, const GraphContext::CPtr
     subgraph_attrs->bodyHash = getBodyHash(tmp_snippet);
 
 #if defined(OPENVINO_ARCH_ARM64)
-    subgraph_attrs->snippet->set_generator(std::make_shared<aarch64::CPUGenerator>(host_isa));
+    subgraph_attrs->snippet->set_generator(
+        std::make_shared<aarch64::CPUGenerator>(host_isa, context->getParamsCache()));
 #elif defined(OPENVINO_ARCH_X86_64)
     subgraph_attrs->snippet->set_generator(std::make_shared<CPUGenerator>(host_isa, context->getParamsCache()));
 #else
@@ -645,6 +600,7 @@ void Subgraph::optimizeIR() {
 }
 
 void Subgraph::prepareParams() {
+#if defined(OPENVINO_ARCH_X86_64) || defined(OPENVINO_ARCH_ARM64)
     const auto& cache = context->getParamsCache();
 
     auto builder = [this, &cache](const SubgraphKey& key) -> std::shared_ptr<SubgraphBaseExecutor> {
@@ -704,6 +660,8 @@ void Subgraph::prepareParams() {
 
     const auto result = cache->getOrCreate(SubgraphKey(subgraph_attrs, in_shapes), builder);
     execPtr = result.first;
+#endif
+
     OPENVINO_ASSERT(execPtr != nullptr, "Executor is not created for node ", getName(), ".");
 }
 

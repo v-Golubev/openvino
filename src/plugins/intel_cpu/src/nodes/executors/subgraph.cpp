@@ -8,10 +8,45 @@
 #else
 #    include "emitters/snippets/x64/cpu_generator.hpp"
 #endif
+#include "common/primitive_hashing_utils.hpp"
 #include "openvino/core/parallel.hpp"
 
 namespace ov {
 namespace intel_cpu {
+
+bool operator==(const SubgraphAttrs& lhs, const SubgraphAttrs& rhs) {
+    if (&lhs == &rhs)
+        return true;
+    if (lhs.bodyHash != rhs.bodyHash)
+        return false;
+    if (lhs.inMemOrders.size() != rhs.inMemOrders.size() || lhs.inMemPrecs.size() != rhs.inMemPrecs.size())
+        return false;
+    if (lhs.outMemOrders.size() != rhs.outMemOrders.size() || lhs.outMemPrecs.size() != rhs.outMemPrecs.size())
+        return false;
+    if (lhs.inMemOrders != rhs.inMemOrders || lhs.inMemPrecs != rhs.inMemPrecs)
+        return false;
+    if (lhs.outMemOrders != rhs.outMemOrders || lhs.outMemPrecs != rhs.outMemPrecs)
+        return false;
+    return true;
+}
+
+size_t get_attr_hash(size_t seed, const std::shared_ptr<SubgraphAttrs>& attrs) {
+    using namespace dnnl::impl;
+    using namespace dnnl::impl::primitive_hashing;
+
+    for (const auto& order : attrs->inMemOrders)
+        seed = get_vector_hash(seed, order);
+    for (const auto& prec : attrs->inMemPrecs)
+        seed = hash_combine(seed, prec.hash());
+
+    for (const auto& order : attrs->outMemOrders)
+        seed = get_vector_hash(seed, order);
+    for (const auto& prec : attrs->outMemPrecs)
+        seed = hash_combine(seed, prec.hash());
+
+    seed = hash_combine(seed, attrs->bodyHash);
+    return seed;
+}
 
 SubgraphCodeGenerator::SubgraphCodeGenerator(const std::shared_ptr<SubgraphAttrs>& snippet_attrs,
                                              const std::shared_ptr<CPURuntimeConfig>& config) {
