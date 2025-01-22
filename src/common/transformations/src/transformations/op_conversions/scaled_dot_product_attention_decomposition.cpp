@@ -70,7 +70,20 @@ std::shared_ptr<ov::Node> ov::pass::ScaledDotProductAttentionDecomposition::deco
 
     Output<Node> scale;
     if (node->get_input_size() < 5) {
-        scale = register_new_node<v8::Gather>(q_shape, minus_one, zero_i)->output(0);
+        auto&& query_shape = query.get_partial_shape();
+        // often the embeddings space size is known, so the dimension may be extracted into a constant
+        if (query_shape.rank().is_static()) {
+            auto&& last_dim = *(query_shape.rbegin());
+            if (last_dim.is_static()) {
+                scale = register_new_node(v0::Constant::create(element::i32, Shape{}, {last_dim.get_length()}));
+            }
+        }
+
+        if (!scale.get_node()) {
+            auto shape = register_new_node<v3::ShapeOf>(query, element::i32);
+            scale = register_new_node<v8::Gather>(shape, minus_one, zero_i);
+        }
+
         scale = register_new_node<v1::ConvertLike>(scale, query);
         auto sqrt_scale = register_new_node<v0::Sqrt>(scale);
         scale = register_new_node<v1::Divide>(one_f, sqrt_scale);
