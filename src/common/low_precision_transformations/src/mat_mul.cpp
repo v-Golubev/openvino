@@ -214,10 +214,6 @@ bool MatMulTransformation::canBeTransformed(const TransformationContext& context
                 return false;
             }
         }
-
-        if (!NetworkHelper::checkZeroPoint(dequantization1.subtract)) {
-            return false;
-        }
     } else {
         return false;
     }
