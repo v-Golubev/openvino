@@ -73,7 +73,8 @@ void InsertBuffers::insertion(LinearIR& linear_ir,
                               const LinearIR::constExprIt& end_it,
                               const LoopManagerPtr& loop_manager,
                               const std::vector<ExpressionPort>& loop_entries,
-                              const std::vector<ExpressionPort>& loop_exits) const {
+                              const std::vector<ExpressionPort>& loop_exits,
+                              bool use_hack) const {
     for (const auto& entry_port : loop_entries) {
         const auto& expr = entry_port.get_expr();
         const auto port_idx = entry_port.get_index();
@@ -109,14 +110,53 @@ void InsertBuffers::insertion(LinearIR& linear_ir,
         const auto buffer_loop_ids = get_buffer_loop_ids(current_loops, parent_loops, is_buffer_needed);
 
         if (is_buffer_needed) {
-            // We should insert Buffer between first different Loops.
-            // Example: Target Parent Loop identifies: 3, 2, 1
-            //          Current expr Loop identifies:  3, 4, 6
-            //          Need to insert between 2nd and 4th Loops - after 2nd Loop
-            const auto pos = insertion_position(linear_ir, loop_manager, parent_expr, expr);
-            const auto buffer = std::make_shared<op::Buffer>(parent->output(parent_port));
-            const auto buffer_consumer = has_shape_infer_parent ? top_shape_infer_expr->get_input_port(0)  : entry_port;
-            linear_ir.insert_node(buffer, std::vector<ExpressionPort>{ parent_expr_output }, buffer_loop_ids, false, pos, { buffer_consumer  });
+            bool should_be_hacked = parent_expr->get_node()->get_output_element_type(0) == ov::element::f32 && node_ma == nullptr;
+            if (use_hack && should_be_hacked) {
+                const auto pos = insertion_position(linear_ir, loop_manager, parent_expr, expr);
+                const auto convert_before = std::make_shared<op::ConvertSaturation>(parent->output(parent_port), ov::element::bf16);
+                auto convert_before_expr_it = linear_ir.insert_node(convert_before,
+                                                                    std::vector<ExpressionPort>{parent_expr_output},
+                                                                    parent_loops,
+                                                                    false,
+                                                                    pos);
+                for (size_t i = 0; i < parent_loops.size() - buffer_loop_ids.size(); ++i) {
+                    const auto& loop_id = *(parent_loops.rbegin() + i);
+                    const auto& loop_info = loop_manager->get_loop_info(loop_id);
+                    loop_info->replace_with_new_ports(parent_expr_output, convert_before_expr_it->get()->get_output_ports());
+                }
+
+                const auto buffer = std::make_shared<op::Buffer>(convert_before->output(0));
+                // std::cout << "[ INFO ] Hack is applied for buffer: " << buffer->get_friendly_name() << std::endl;
+                // std::cout << "\t parent = " << parent_expr->get_node()->get_friendly_name() << std::endl;
+                // std::cout << "\t node = " << expr->get_node()->get_friendly_name() << std::endl;
+                const auto buffer_connector = convert_before_expr_it->get()->get_output_port(0);
+                auto buffer_expr_it = linear_ir.insert_node(buffer,
+                                                            std::vector<ExpressionPort>{buffer_connector},
+                                                            buffer_loop_ids,
+                                                            false,
+                                                            ++convert_before_expr_it);
+
+                const auto convert_after = std::make_shared<op::ConvertSaturation>(buffer->output(0), ov::element::f32);
+                const auto convert_after_connector = buffer_expr_it->get()->get_output_port(0);
+                const auto buffer_consumer = has_shape_infer_parent ? top_shape_infer_expr->get_input_port(0) : entry_port;
+                auto convert_after_insertion_pos = buffer_expr_it;
+                std::advance(convert_after_insertion_pos, 3);
+                linear_ir.insert_node(convert_after,
+                                      std::vector<ExpressionPort>{convert_after_connector},
+                                      current_loops,
+                                      true,
+                                      convert_after_insertion_pos,
+                                      {buffer_consumer});
+            } else {
+                // We should insert Buffer between first different Loops.
+                // Example: Target Parent Loop identifies: 3, 2, 1
+                //          Current expr Loop identifies:  3, 4, 6
+                //          Need to insert between 2nd and 4th Loops - after 2nd Loop
+                const auto pos = insertion_position(linear_ir, loop_manager, parent_expr, expr);
+                const auto buffer = std::make_shared<op::Buffer>(parent->output(parent_port));
+                const auto buffer_consumer = has_shape_infer_parent ? top_shape_infer_expr->get_input_port(0)  : entry_port;
+                linear_ir.insert_node(buffer, std::vector<ExpressionPort>{ parent_expr_output }, buffer_loop_ids, false, pos, { buffer_consumer  });
+            }
         }
     }
 
@@ -137,12 +177,17 @@ void InsertBuffers::insertion(LinearIR& linear_ir,
             }
             OPENVINO_ASSERT(local_ids == buffer_loop_ids, "Incorrect loop configuration for Buffers");
         };
+        VectorDims child_loops;
         for (const auto& child_expr_input : child_exprs_inputs) {
             const auto& child_expr = child_expr_input.get_expr();
+            // std::cout << "[ INFO ] child expr = " << child_expr->get_node()->get_friendly_name() << std::endl;
+            if (ov::is_type<ov::op::v1::Subtract>(child_expr->get_node())) {
+                child_loops = child_expr->get_loop_ids();
+            }
             const auto child_port = child_expr_input.get_index();
             const auto& child = child_expr->get_node();
-            if (ov::is_type<ov::op::v0::Result>(child))
-                continue;
+            // if (ov::is_type<ov::op::v0::Result>(child))
+            //     continue;
             if (ov::is_type<op::Buffer>(child)) {
                 update_buffer_loop_ids(child_expr->get_loop_ids());
                 buffers.insert(child_expr);
@@ -182,23 +227,78 @@ void InsertBuffers::insertion(LinearIR& linear_ir,
                                                              return l.get_expr()->get_exec_num() < r.get_expr()->get_exec_num();
                                                          })->get_expr();
 
-            // We should insert Buffer between first different Loops.
-            // Example: Current expr Loop identifies: 3, 2, 1
-            //          Target consumers Loop identifies:  3, 4, 6
-            //          Need to insert after 2nd Loops
-            // Note: All potential consumers must have the same count of first equal Loop identifies and the same count of different last identifies
-            const auto pos = insertion_position(linear_ir, loop_manager, expr, consumer_expr);
+            bool should_be_hacked = expr->get_node()->get_output_element_type(0) == ov::element::f32;
+            // node_ma == nullptr;
+            if (use_hack && should_be_hacked) {
+                const auto pos = insertion_position(linear_ir, loop_manager, expr, consumer_expr);
+                const auto convert_before =
+                    std::make_shared<op::ConvertSaturation>(node->output(port_idx), ov::element::bf16);
+                const auto& parent_loops = expr->get_loop_ids();
+                const auto& parent_expr_output = exit_port;
+                auto convert_before_expr_it = linear_ir.insert_node(convert_before,
+                                                                    std::vector<ExpressionPort>{parent_expr_output},
+                                                                    parent_loops,
+                                                                    false,
+                                                                    pos);
+                for (size_t i = 0; i < parent_loops.size() - buffer_loop_ids.size(); ++i) {
+                    const auto& loop_id = *(parent_loops.rbegin() + i);
+                    const auto& loop_info = loop_manager->get_loop_info(loop_id);
+                    loop_info->replace_with_new_ports(parent_expr_output,
+                                                      convert_before_expr_it->get()->get_output_ports());
+                }
 
-            auto buffer = std::make_shared<op::Buffer>(node->output(port_idx));
-            // We cannot insert Node output connector on Buffer output because not all consumers of Node needs Buffer
-            //  Example:
-            //       Add
-            //      /   \  <- It should be the same PortConnector
-            //  Result   Buffer
-            //             |    <- It should be new PortConnector
-            //            Relu
-            // Output port connector is automatically filled from PortDescriptor
-            linear_ir.insert_node(buffer, std::vector<ExpressionPort>{ exit_port }, buffer_loop_ids, false, pos, { potential_consumers });
+                const auto buffer = std::make_shared<op::Buffer>(convert_before->output(0));
+                // std::cout << "[ INFO ] Exit hack is applied for buffer: " << buffer->get_friendly_name() << std::endl;
+                // std::cout << "\t node = " << expr->get_node()->get_friendly_name() << std::endl;
+                // std::cout << "\t parent loop idces = " << ov::PartialShape(parent_loops) << std::endl;
+                // std::cout << "\t buffer_loop_ids = " << ov::PartialShape(buffer_loop_ids) << std::endl;
+                // std::cout << "\t current_loops = " << ov::PartialShape(child_loops) << std::endl;
+                // for (const auto& consumer : potential_consumers) {
+                //     std::cout << "[ INFO ] Potential consumer node: " << consumer.get_expr()->get_node()->get_friendly_name() << std::endl;
+                // }
+                const auto buffer_connector = convert_before_expr_it->get()->get_output_port(0);
+                auto buffer_expr_it = linear_ir.insert_node(buffer,
+                                                            std::vector<ExpressionPort>{buffer_connector},
+                                                            buffer_loop_ids,
+                                                            false,
+                                                            ++convert_before_expr_it);
+
+                const auto convert_after = std::make_shared<op::ConvertSaturation>(buffer->output(0), ov::element::f32);
+                const auto convert_after_connector = buffer_expr_it->get()->get_output_port(0);
+                auto convert_after_insertion_pos = buffer_expr_it;
+                std::advance(convert_after_insertion_pos, 4);
+                linear_ir.insert_node(convert_after,
+                                      std::vector<ExpressionPort>{convert_after_connector},
+                                      child_loops,
+                                      true,
+                                      convert_after_insertion_pos,
+                                      {potential_consumers});
+            } else {
+                // We should insert Buffer between first different Loops.
+                // Example: Current expr Loop identifies: 3, 2, 1
+                //          Target consumers Loop identifies:  3, 4, 6
+                //          Need to insert after 2nd Loops
+                // Note: All potential consumers must have the same count of first equal Loop identifies and the same
+                // count of different last identifies
+                const auto pos = insertion_position(linear_ir, loop_manager, expr, consumer_expr);
+
+                auto buffer = std::make_shared<op::Buffer>(node->output(port_idx));
+                // We cannot insert Node output connector on Buffer output because not all consumers of Node needs
+                // Buffer
+                //  Example:
+                //       Add
+                //      /   \  <- It should be the same PortConnector
+                //  Result   Buffer
+                //             |    <- It should be new PortConnector
+                //            Relu
+                // Output port connector is automatically filled from PortDescriptor
+                linear_ir.insert_node(buffer,
+                                      std::vector<ExpressionPort>{exit_port},
+                                      buffer_loop_ids,
+                                      false,
+                                      pos,
+                                      {potential_consumers});
+            }
         }
     }
 }
@@ -207,6 +307,7 @@ bool InsertBuffers::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begi
     OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "Snippets::InsertBuffers")
     const auto& loop_manager = linear_ir.get_loop_manager();
     const auto loop_data_map = loop_manager->get_map();
+    bool use_hack = true;
     for (const auto& loop_data : loop_data_map) {
         const auto loop_info = loop_data.second;
         const auto loop_entries = loop_info->get_input_ports();
@@ -219,7 +320,7 @@ bool InsertBuffers::run(LinearIR& linear_ir, lowered::LinearIR::constExprIt begi
             return expr_ports;
         };
         // using begin() as expr_it because we work with LoopInfo, not expressions in Linear IR
-        insertion(linear_ir, begin, end, loop_manager, cvt_to_expr_ports(loop_entries), cvt_to_expr_ports(loop_exits));
+        insertion(linear_ir, begin, end, loop_manager, cvt_to_expr_ports(loop_entries), cvt_to_expr_ports(loop_exits), use_hack);
     }
 
     for (auto expr_it = begin; expr_it != end; expr_it++) {

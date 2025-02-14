@@ -33,7 +33,8 @@ private:
                    const LinearIR::constExprIt& end_it,
                    const LoopManagerPtr& loop_manager,
                    const std::vector<ExpressionPort>& loop_entries,
-                   const std::vector<ExpressionPort>& loop_exits) const;
+                   const std::vector<ExpressionPort>& loop_exits,
+                   bool use_hack = false) const;
 
     static LinearIR::constExprIt insertion_position(const LinearIR& linear_ir,
                                                     const LoopManagerPtr& loop_manager,
