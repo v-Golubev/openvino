@@ -50,6 +50,7 @@ protected:
     size_t loop_id = 0;
     bool evaluate_once = false;
     bool is_work_amount_dynamic = false;
+    bool is_skipped = false;
 };
 
 /* ============================================================== */
@@ -97,6 +98,8 @@ protected:
     bool are_ptr_increments_dynamic = false;
     bool are_final_offsets_dynamic = false;
     bool are_ptr_shifts_dynamic = false;
+
+    bool is_skipped = false;
 };
 
 /* ============================================================== */
