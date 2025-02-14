@@ -296,7 +296,7 @@ std::shared_ptr<ov::ICompiledModel> Plugin::compile_model(const std::shared_ptr<
     // SSE runtime check is needed for some ATOM machine, which is x86-64 but w/o SSE
     static Xbyak::util::Cpu cpu;
     if (cpu.has(Xbyak::util::Cpu::tSSE)) {
-        if (conf.denormalsOptMode == Config::DenormalsOptMode::DO_On) {
+        if (true || conf.denormalsOptMode == Config::DenormalsOptMode::DO_On) {
             flush_to_zero(true);
             conf.DAZOn = denormals_as_zero(true);
         } else if (conf.denormalsOptMode == Config::DenormalsOptMode::DO_Off) {
