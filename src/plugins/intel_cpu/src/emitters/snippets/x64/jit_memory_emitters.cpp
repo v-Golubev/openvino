@@ -47,6 +47,17 @@ jit_memory_emitter::jit_memory_emitter(jit_generator* h,
     }
 
     if (ov::snippets::utils::is_dynamic_value(compiled_byte_offset)) {
+        if (ov::is_type<ov::snippets::op::Load>(expr->get_node()) && !is_type<ov::intel_cpu::LoadConvertSaturation>(expr->get_node())) {
+            compiled_byte_offset = 304768;
+        } else {
+            compiled_byte_offset = 0;
+        }
+    }
+
+    std::cout << "[ INFO ] \t jit_memory_emitter for node " << expr->get_node()->get_friendly_name()
+              << "   \t offset = " << compiled_byte_offset << ", count = " << count << std::endl;
+
+    if (ov::snippets::utils::is_dynamic_value(compiled_byte_offset)) {
         is_offset_runtime = true;
         // Compiled byte offset is zero to manually `add` runtime offset before operation and `sub` after to reset
         // pointer in the register
