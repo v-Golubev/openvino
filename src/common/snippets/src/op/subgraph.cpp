@@ -573,7 +573,7 @@ snippets::Schedule Subgraph::generate(const void* compile_params) const {
     if (is_dynamic()) {
         ov::snippets::lowered::pass::PassPipeline shape_dependent_pipeline;
         shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::SetLoadStoreScalar>();
-        shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::InsertBroadcastMove>();
+        // shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::InsertBroadcastMove>();
         shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::LoadMoveBroadcastToBroadcastLoad>();
         shape_dependent_pipeline.run(*linear_ir);
     }
