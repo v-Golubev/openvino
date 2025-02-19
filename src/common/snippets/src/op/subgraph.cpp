@@ -20,6 +20,8 @@
 #include "snippets/pass/reduce_to_snippets_reduce.hpp"
 #include "snippets/pass/gn_decomposition.hpp"
 
+#include "openvino/pass/pattern/op/wrap_type.hpp"
+
 #include "snippets/runtime_configurator.hpp"
 #include "snippets/utils/utils.hpp"
 
@@ -55,6 +57,8 @@
 #include "snippets/lowered/pass/set_load_store_scalar.hpp"
 #include "snippets/lowered/pass/extract_loop_invariants.hpp"
 #include "snippets/lowered/pass/set_dynamic_wa_to_outermost_loop.hpp"
+#include "snippets/lowered/pass/serialize_control_flow.hpp"
+#include "snippets/lowered/pass/serialize_data_flow.hpp"
 
 #include "snippets/lowered/pass/init_registers.hpp"
 
@@ -395,6 +399,26 @@ std::shared_ptr<Subgraph> Subgraph::clone() const {
     return result;
 }
 
+class RemoveDQScale: public ov::pass::MatcherPass {
+public:
+    OPENVINO_MODEL_PASS_RTTI("snippets::pass::RemoveDQScale");
+    RemoveDQScale() {
+        MATCHER_SCOPE(RemoveDQScale);
+        auto mul_pattern = ov::pass::pattern::wrap_type<ov::opset1::Multiply>({ov::pass::pattern::any_input(), ov::pass::pattern::any_input()});
+
+        auto callback = [=](ov::pass::pattern::Matcher& m) {
+            OV_ITT_SCOPED_TASK(ov::pass::itt::domains::SnippetsTransform, "ov::intel_cpu::pass::RemoveDQScale")
+            const auto& pattern_map = m.get_pattern_value_map();
+            const auto& mul = pattern_map.at(mul_pattern).get_node_shared_ptr();
+            std::cout << "[ INFO ] mul with name " << mul->get_friendly_name() << " has been extracted." << std::endl;
+            return ov::replace_output_update_name(mul->output(0), mul->input_value(0));
+        };
+
+        auto m = std::make_shared<ov::pass::pattern::Matcher>(mul_pattern, matcher_name);
+        register_matcher(m, callback);
+    }
+};
+
 void Subgraph::data_flow_transformations(const BlockedShapeVector& blocked_input_shapes,
                                          const std::vector<ov::element::Type>& input_precisions,
                                          const std::vector<ov::element::Type>& output_precisions,
@@ -411,6 +435,7 @@ void Subgraph::data_flow_transformations(const BlockedShapeVector& blocked_input
         pass_config->disable<snippets::pass::AlignElementTypes>();
 
     ov::snippets::pass::Manager manager(pass_config, "SnippetsDataFlowManager");
+    manager.register_pass<RemoveDQScale>();
     manager.register_pass<snippets::pass::Canonicalization>(blocked_input_shapes);
     manager.register_pass<snippets::pass::AlignElementTypes>(input_precisions, output_precisions);
 
@@ -552,6 +577,9 @@ snippets::Schedule Subgraph::generate(const void* compile_params) const {
         shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::LoadMoveBroadcastToBroadcastLoad>();
         shape_dependent_pipeline.run(*linear_ir);
     }
+
+    lowered::pass::SerializeControlFlow("control_flow.xml").run(*linear_ir);
+    lowered::pass::SerializeDataFlow("data_flow.xml").run(*linear_ir);
 
     auto lowering_result = m_generator->generate(linear_ir, compile_params);
     return {std::move(lowering_result)};
