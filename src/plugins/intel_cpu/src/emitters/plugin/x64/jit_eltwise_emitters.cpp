@@ -3,6 +3,7 @@
 //
 
 #include "jit_eltwise_emitters.hpp"
+#include "debug_capabilities.hpp"
 
 using namespace dnnl::impl::utils;
 using namespace dnnl::impl::cpu;
@@ -227,6 +228,11 @@ void jit_subtract_emitter::emit_isa(const std::vector<size_t>& in_vec_idxs,
     auto uni_vsub = [this](Vmm vmm_dst, Vmm vmm_src0, Vmm vmm_src1) {
         switch (exec_prc_) {
         case ov::element::f32:
+            // h->uni_vxorps(vmm_src0, vmm_src0, vmm_src0);
+            if (std::getenv("PRINT")) {
+                RegPrinter::print<float>(*h, vmm_src0, "vmm_src0");
+                RegPrinter::print<float>(*h, vmm_src1, "vmm_src1");
+            }
             h->uni_vsubps(vmm_dst, vmm_src0, vmm_src1);
             break;
         case ov::element::i32:
@@ -2100,6 +2106,9 @@ void jit_exp_emitter::emit_isa(const std::vector<size_t>& in_vec_idxs, const std
     Vmm vmm_src = Vmm(in_vec_idxs[0]);
     Vmm vmm_dst = Vmm(out_vec_idxs[0]);
 
+    // if (std::getenv("PRINT")) {
+    //     RegPrinter::print<float>(*h, vmm_src, "vmm_src");
+    // }
     Vmm vmm_mask = need_vmm_mask() ? Vmm(aux_vec_idxs[0]) : Vmm();
     Vmm vmm_aux0 = Vmm(aux_vec_idxs[0 + static_cast<size_t>(need_vmm_mask())]);
     Vmm vmm_aux1 = Vmm(aux_vec_idxs[1 + static_cast<size_t>(need_vmm_mask())]);

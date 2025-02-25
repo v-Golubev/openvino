@@ -46,6 +46,51 @@ void Exp::SetUp() {
     }
 }
 
+void SubExp::SetUp() {
+    ov::test::InputShape inputShape0;
+    ov::element::Type type;
+    std::tie(inputShape0, type, ref_num_nodes, ref_num_subgraphs, targetDevice) = this->GetParam();
+    ov::test::InputShape inputShape1;
+    const auto input_shape_0 = inputShape0.second.back();
+    std::cout << ov::PartialShape(input_shape_0) << std::endl;
+    const auto input_shape_1 = ov::Shape{1, 1, input_shape_0[input_shape_0.size() - 2], 1};
+    init_input_shapes({{{}, {input_shape_0}}, {{}, {input_shape_1}}});
+
+    auto data0 = std::make_shared<op::v0::Parameter>(type, inputDynamicShapes[0]);
+    auto data1 = std::make_shared<op::v0::Parameter>(type, inputDynamicShapes[1]);
+    auto sub = std::make_shared<ov::op::v1::Subtract>(data0, data1);
+    auto exp = std::make_shared<op::v0::Exp>(sub);
+    function = std::make_shared<ov::Model>(NodeVector{exp}, ParameterVector{data0, data1});
+
+    setInferenceType(type);
+    if (!configuration.count("SNIPPETS_MODE")) {
+        configuration.insert({"SNIPPETS_MODE", "IGNORE_CALLBACK"});
+    }
+}
+
+void SubExp::generate_inputs(const std::vector<ov::Shape>& targetInputStaticShapes) {
+    const bool use_default_generate = true;
+    if (use_default_generate) {
+        ov::test::SubgraphBaseTest::generate_inputs(targetInputStaticShapes);
+        return;
+    }
+
+    auto generate = [=](size_t i, float val) {
+        const auto& dataShape = targetInputStaticShapes[i];
+        auto tensor = ov::Tensor{ov::element::f32, dataShape};
+        auto begin = tensor.data<float>();
+        std::fill(begin, begin + ov::shape_size(dataShape), val);
+        return tensor;
+    };
+
+    inputs.clear();
+    const auto& dataShape = targetInputStaticShapes[0];
+    const auto funcInput0 = function->inputs()[0];
+    const auto funcInput1 = function->inputs()[1];
+    inputs.insert({funcInput0.get_node_shared_ptr(), generate(0, std::numeric_limits<float>::infinity())});
+    inputs.insert({funcInput1.get_node_shared_ptr(), generate(1, 0.f)});
+}
+
 void ExpReciprocal::SetUp() {
     ov::test::InputShape inputShape0;
     ov::element::Type type;
@@ -66,6 +111,11 @@ TEST_P(Exp, CompareWithRefImpl) {
 }
 
 TEST_P(ExpReciprocal, CompareWithRefImpl) {
+    run();
+    validateNumSubgraphs();
+}
+
+TEST_P(SubExp, CompareWithRefImpl) {
     run();
     validateNumSubgraphs();
 }

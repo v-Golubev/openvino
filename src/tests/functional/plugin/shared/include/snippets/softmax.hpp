@@ -33,6 +33,17 @@ public:
 
 protected:
     void SetUp() override;
+
+    void generate_inputs(const std::vector<ov::Shape>& targetInputStaticShapes) override {
+        inputs.clear();
+        const auto& dataShape = targetInputStaticShapes[0];
+        const auto funcInput = function->inputs()[0];
+        auto tensor = ov::Tensor{funcInput.get_element_type(), {dataShape}};
+        auto begin = tensor.data<float>();
+        std::vector<float> vals(ov::shape_size(dataShape), std::numeric_limits<float>::infinity());
+        std::copy(vals.begin(), vals.end(), begin);
+        inputs.insert({funcInput.get_node_shared_ptr(), tensor});
+    }
 };
 
 class AddSoftmax : public testing::WithParamInterface<ov::test::snippets::AddSoftmaxParams>,

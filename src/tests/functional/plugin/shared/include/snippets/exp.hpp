@@ -5,6 +5,7 @@
 #pragma once
 
 #include "shared_test_classes/base/snippets_test_utils.hpp"
+#include "common_test_utils/ov_tensor_utils.hpp"
 
 namespace ov {
 namespace test {
@@ -25,6 +26,12 @@ public:
 
 protected:
     void SetUp() override;
+};
+
+class SubExp : public Exp {
+protected:
+    void SetUp() override;
+    void generate_inputs(const std::vector<ov::Shape>& targetInputStaticShapes) override;
 };
 
 class ExpReciprocal : public Exp {

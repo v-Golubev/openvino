@@ -30,6 +30,8 @@ jit_memory_emitter::jit_memory_emitter(jit_generator* h,
     src_prc = n->get_input_element_type(0);
     dst_prc = n->get_output_element_type(0);
 
+    std::cout << "[ INFO ] memory emitter is created\n";
+
     const auto& memory_access = std::dynamic_pointer_cast<ov::snippets::modifier::MemoryAccess>(expr->get_node());
     if (in_out_type_ == emitter_in_out_map::gpr_to_vec) {
         OV_CPU_JIT_EMITTER_ASSERT(memory_access->is_memory_access_input_port(0), "must be input port - memory access");

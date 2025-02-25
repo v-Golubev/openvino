@@ -178,25 +178,43 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[snippets::op::Reshape::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
     jitters[snippets::op::Reorder::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
 
-    jitters[snippets::op::Load::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
-    jitters[snippets::op::LoadReorder::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
-    jitters[snippets::op::BroadcastLoad::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_broadcast_emitter);
-    jitters[intel_cpu::LoadConvertSaturation::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
-    jitters[intel_cpu::LoadConvertTruncation::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
-
-    jitters[snippets::op::Store::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
-    jitters[intel_cpu::StoreConvertSaturation::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
-    jitters[intel_cpu::StoreConvertTruncation::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
+    if (!std::getenv("REF")) {
+        jitters[snippets::op::Load::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[snippets::op::LoadReorder::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[snippets::op::BroadcastLoad::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[intel_cpu::LoadConvertSaturation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[intel_cpu::LoadConvertTruncation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+    
+        jitters[snippets::op::Store::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[intel_cpu::StoreConvertSaturation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+        jitters[intel_cpu::StoreConvertTruncation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+    } else {
+        jitters[snippets::op::Load::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
+        jitters[snippets::op::LoadReorder::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
+        jitters[snippets::op::BroadcastLoad::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_broadcast_emitter);
+        jitters[intel_cpu::LoadConvertSaturation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
+        jitters[intel_cpu::LoadConvertTruncation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_load_memory_emitter);
+    
+        jitters[snippets::op::Store::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
+        jitters[intel_cpu::StoreConvertSaturation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
+        jitters[intel_cpu::StoreConvertTruncation::get_type_info_static()] =
+            CREATE_SNIPPETS_EMITTER(intel_cpu::jit_store_memory_emitter);
+    }
 
     jitters[snippets::op::Scalar::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_scalar_emitter);
     jitters[snippets::op::BroadcastMove::get_type_info_static()] =
-        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_broadcast_move_emitter);
+    CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
 
     jitters[snippets::op::ConvertTruncation::get_type_info_static()] =
         CREATE_CPU_EMITTER(intel_cpu::jit_convert_truncation_emitter);
@@ -208,7 +226,7 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[intel_cpu::FusedMulAdd::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_mul_add_emitter);
 
     // binary
-    jitters[op::v1::Add::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_add_emitter);
+    jitters[op::v1::Add::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
     jitters[op::v1::Divide::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_divide_emitter);
     jitters[op::v1::Equal::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_equal_emitter);
     jitters[op::v1::FloorMod::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_floor_mod_emitter);
@@ -219,13 +237,13 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[op::v1::LogicalAnd::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_logical_and_emitter);
     jitters[op::v1::LogicalOr::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_logical_or_emitter);
     jitters[op::v1::LogicalXor::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_logical_xor_emitter);
-    jitters[op::v1::Maximum::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_maximum_emitter);
+    jitters[op::v1::Maximum::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
     jitters[op::v1::Minimum::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_minimum_emitter);
     jitters[op::v1::Mod::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_mod_emitter);
-    jitters[op::v1::Multiply::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_multiply_emitter);
+    jitters[op::v1::Multiply::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
     jitters[op::v1::NotEqual::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_not_equal_emitter);
     jitters[snippets::op::PowerStatic::get_type_info_static()] =
-        CREATE_CPU_EMITTER(intel_cpu::jit_power_static_emitter);
+        CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
     jitters[op::v1::Power::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_power_dynamic_emitter);
     jitters[op::v0::PRelu::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_prelu_emitter);
     jitters[op::v0::SquaredDifference::get_type_info_static()] =
@@ -253,10 +271,10 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[ov::op::v4::HSwish::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_hswish_emitter);
     jitters[ov::op::v0::Gelu::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_gelu_v0_emitter);
     jitters[ov::op::v7::Gelu::get_type_info_static()] = CREATE_CPU_EMITTER(intel_cpu::jit_gelu_v7_emitter);
-    jitters[snippets::op::Fill::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_fill_emitter);
+    jitters[snippets::op::Fill::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
 
-    jitters[snippets::op::HorizonMax::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_horizon_emitter);
-    jitters[snippets::op::HorizonSum::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_horizon_emitter);
+    jitters[snippets::op::HorizonMax::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
+    jitters[snippets::op::HorizonSum::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_nop_emitter);
 
     // Note: jit_brgemm_emitter and jit_brgemm_copy_b_emitter support runtime recompilation, so their constructor takes
     // additional arguments
