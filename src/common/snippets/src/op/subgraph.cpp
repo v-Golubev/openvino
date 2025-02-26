@@ -55,6 +55,8 @@
 #include "snippets/lowered/pass/set_load_store_scalar.hpp"
 #include "snippets/lowered/pass/extract_loop_invariants.hpp"
 #include "snippets/lowered/pass/set_dynamic_wa_to_outermost_loop.hpp"
+#include "snippets/lowered/pass/serialize_control_flow.hpp"
+#include "snippets/lowered/pass/serialize_data_flow.hpp"
 
 #include "snippets/lowered/pass/init_registers.hpp"
 
@@ -552,6 +554,11 @@ snippets::Schedule Subgraph::generate(const void* compile_params) const {
         shape_dependent_pipeline.register_pass<ov::snippets::lowered::pass::LoadMoveBroadcastToBroadcastLoad>();
         shape_dependent_pipeline.run(*linear_ir);
     }
+
+    lowered::pass::PassPipeline pipeline;
+    pipeline.register_pass<lowered::pass::SerializeDataFlow>("data_flow.xml");
+    pipeline.register_pass<lowered::pass::SerializeControlFlow>("control_flow.xml");
+    pipeline.run(*linear_ir);
 
     auto lowering_result = m_generator->generate(linear_ir, compile_params);
     return {std::move(lowering_result)};

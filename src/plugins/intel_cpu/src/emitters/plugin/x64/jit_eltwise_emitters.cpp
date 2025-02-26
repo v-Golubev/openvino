@@ -228,6 +228,7 @@ void jit_subtract_emitter::emit_isa(const std::vector<size_t>& in_vec_idxs,
     auto uni_vsub = [this](Vmm vmm_dst, Vmm vmm_src0, Vmm vmm_src1) {
         switch (exec_prc_) {
         case ov::element::f32:
+            // uncomment to restore perf
             // h->uni_vxorps(vmm_src0, vmm_src0, vmm_src0);
             if (std::getenv("PRINT")) {
                 RegPrinter::print<float>(*h, vmm_src0, "vmm_src0");
@@ -2104,11 +2105,12 @@ template <x64::cpu_isa_t isa>
 void jit_exp_emitter::emit_isa(const std::vector<size_t>& in_vec_idxs, const std::vector<size_t>& out_vec_idxs) const {
     using Vmm = typename conditional3<isa == x64::sse41, Xmm, isa == x64::avx2, Ymm, Zmm>::type;
     Vmm vmm_src = Vmm(in_vec_idxs[0]);
-    Vmm vmm_dst = Vmm(out_vec_idxs[0]);
+    auto idx = out_vec_idxs[0];
+    if (auto str = std::getenv("REG")) {
+        idx = std::atoi(str);
+    }
+    Vmm vmm_dst = Vmm(idx);
 
-    // if (std::getenv("PRINT")) {
-    //     RegPrinter::print<float>(*h, vmm_src, "vmm_src");
-    // }
     Vmm vmm_mask = need_vmm_mask() ? Vmm(aux_vec_idxs[0]) : Vmm();
     Vmm vmm_aux0 = Vmm(aux_vec_idxs[0 + static_cast<size_t>(need_vmm_mask())]);
     Vmm vmm_aux1 = Vmm(aux_vec_idxs[1 + static_cast<size_t>(need_vmm_mask())]);
@@ -2172,6 +2174,7 @@ void jit_exp_emitter::emit_isa(const std::vector<size_t>& in_vec_idxs, const std
     h->uni_vfmadd213ps(vmm_dst, vmm_aux0, table_val("one"));
     // y = y * 2^n
     h->uni_vmulps(vmm_dst, vmm_dst, vmm_aux1);
+    // h->uni_vxorps(vmm_dst, vmm_dst, vmm_dst);
 }
 
 void jit_exp_emitter::register_table_entries() {

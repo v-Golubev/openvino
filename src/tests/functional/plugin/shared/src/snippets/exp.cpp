@@ -69,7 +69,9 @@ void SubExp::SetUp() {
 }
 
 void SubExp::generate_inputs(const std::vector<ov::Shape>& targetInputStaticShapes) {
-    const bool use_default_generate = true;
+    bool use_default_generate = false;
+    if (std::getenv("DEFAULT_GENERATE"))
+        use_default_generate = true;
     if (use_default_generate) {
         ov::test::SubgraphBaseTest::generate_inputs(targetInputStaticShapes);
         return;
