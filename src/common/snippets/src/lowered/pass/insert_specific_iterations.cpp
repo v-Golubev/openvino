@@ -172,12 +172,18 @@ bool InsertSpecificIterations::decompose(LinearIR& linear_ir, LinearIR::constExp
     auto decomposed = false;
     for (const auto& iter_type : loop_iterations) {
         if (is_decomposed_loop_needed(unified_loop_info, iter_type, remaining_work_amount)) {
-            const auto work_amount = get_decomposed_loop_work_amount(unified_loop_info, iter_type, remaining_work_amount);
-            const auto increment = get_decomposed_loop_increment(unified_loop_info, iter_type, remaining_work_amount);
+            auto work_amount = get_decomposed_loop_work_amount(unified_loop_info, iter_type, remaining_work_amount);
+            auto increment = get_decomposed_loop_increment(unified_loop_info, iter_type, remaining_work_amount);
             // Update remaining Loop work amount
             // Note: if work_amount is unknown and increment = 1, it means that a loop will iterate by whole work_amount
             if (!is_wa_dynamic || increment == 1 || iter_type == SpecificLoopIterType::LAST_ITER) {
                 remaining_work_amount -= work_amount;
+            }
+            if (SpecificLoopIterType::LAST_ITER == iter_type && unified_loop_info->get_dim_idx() == 0) {
+                work_amount = 10;
+                increment = 10;
+                remaining_work_amount = 0;
+                std::cout << "[ INFO ] remaining work amount = " << remaining_work_amount << std::endl;
             }
 
             auto decomposed_loop_end = loop_end;

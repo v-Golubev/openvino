@@ -21,7 +21,7 @@ SpecificIterationHandlers::SpecificIterationHandlers(size_t loop_work_amount, si
             last_iter_increment = loop_work_amount % loop_increment;
         } else if (utils::is_dynamic_value(loop_work_amount) && processing_dim_idx == 0) {
             // [149935] : Last Iterations of Loop processed last dimensions with Eltwise nodes inside should have increment = 1
-            last_iter_increment = 1;
+            last_iter_increment = 10;
         }
         if (last_iter_increment != 0) {
             m_last_iter_handlers.register_pass<lowered::pass::UpdateMemoryAccessCounts>(last_iter_increment);
