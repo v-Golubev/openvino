@@ -102,7 +102,7 @@ pass::FuseScaleShift::FuseScaleShift() {
                                                                    scalar_value) == dnnl_success);
             std::cout << "[ INFO ] FuseScaleShift fused shift: " << scalar_value << std::endl;
         } else {
-            OPENVINO_THROW("Unexpected postop type");
+            OPENVINO_THROW("Unexpected postop: ", post_op);
         }
         auto new_brgemm =
             clone_with_new_params(brgemm, postops_config, brgemm->input_values(), brgemm->get_input_port_descriptors());
@@ -168,7 +168,7 @@ pass::FuseBinaryEltwise::FuseBinaryEltwise(std::set<std::shared_ptr<ov::op::v0::
                                                                   memory_desc.getDnnlDesc().get()) == dnnl_success);
             std::cout << "[ INFO ] FuseBinaryEltwise fused binary add\n";
         } else {
-            OPENVINO_THROW("Unexpected postop type");
+            OPENVINO_THROW("Unexpected postop: ", post_op);
         }
 
         auto brgemm_inputs = brgemm->input_values();
