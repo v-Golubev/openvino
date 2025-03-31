@@ -26,19 +26,6 @@ using namespace ov::pass::pattern;
 using PortDescriptorUtils = snippets::lowered::PortDescriptorUtils;
 
 namespace {
-auto brgemm_predicate = [](const Output<Node>& output) {
-    return has_static_rank()(output) && consumers_count(1)(output);
-};
-
-auto binary_input_predicate = [](const Output<Node>& output) {
-    return has_static_shape()(output) && type_matches(ov::element::f32)(output) && consumers_count(1)(output);
-};
-
-auto scalar_predicate = [](const Output<Node>& output) {
-    return has_static_shape()(output) && type_matches(ov::element::f32)(output) &&
-           ov::shape_size(output.get_shape()) == 1;
-};
-
 std::shared_ptr<BrgemmCPU> clone_with_new_params(
     const std::shared_ptr<BrgemmCPU>& brgemm,
     const BrgemmCPU::PostopsConfig& postops,
@@ -66,6 +53,10 @@ std::shared_ptr<BrgemmCPU> clone_with_new_params(
     return new_brgemm;
 }
 
+auto brgemm_predicate = [](const Output<Node>& output) {
+    return has_static_rank()(output) && consumers_count(1)(output);
+};
+
 }  // namespace
 
 pass::FuseScaleShift::FuseScaleShift() {
@@ -74,7 +65,7 @@ pass::FuseScaleShift::FuseScaleShift() {
     auto m_brgemm = wrap_type<BrgemmCPU>(brgemm_predicate);
     auto m_optional_convert = optional<ov::snippets::op::ConvertSaturation>(m_brgemm);
 
-    auto m_scalar = wrap_type<ov::snippets::op::Scalar>();
+    auto m_scalar = wrap_type<ov::snippets::op::Scalar>(type_matches(ov::element::f32));
     auto m_scale = wrap_type<ov::op::v1::Multiply>({m_optional_convert, m_scalar});
     auto m_shift = wrap_type<ov::op::v1::Add>({m_optional_convert, m_scalar});
     auto m_postop = std::make_shared<ov::pass::pattern::op::Or>(OutputVector{m_scale, m_shift});
@@ -121,6 +112,10 @@ pass::FuseBinaryEltwise::FuseBinaryEltwise(std::set<std::shared_ptr<ov::op::v0::
 
     auto m_brgemm = wrap_type<BrgemmCPU>(brgemm_predicate);
     auto m_optional_convert = optional<ov::snippets::op::ConvertSaturation>(m_brgemm);
+
+    auto binary_input_predicate = [](const Output<Node>& output) {
+        return has_static_shape()(output) && type_matches(ov::element::f32)(output) && consumers_count(1)(output);
+    };
 
     auto m_postop_input = wrap_type<ov::op::v0::Parameter>(binary_input_predicate);
     auto m_rank_norm = optional<ov::snippets::op::RankNormalization>(m_postop_input);
