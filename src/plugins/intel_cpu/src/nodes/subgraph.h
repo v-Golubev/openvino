@@ -79,9 +79,11 @@ private:
     size_t output_num = 0;
 
     std::vector<MemoryPtr> srcMemPtrs = {};
+    std::vector<MemoryPtr> srcExternalMemPtrs = {};
     std::vector<MemoryPtr> dstMemPtrs = {};
 
     std::vector<ptrdiff_t> start_offset_in = {};
+    std::vector<ptrdiff_t> start_offset_in_external = {};
     std::vector<ptrdiff_t> start_offset_out = {};
 
     RepackedInputConfig repacked_constant_input_config = {};
@@ -91,6 +93,7 @@ private:
     mutable std::vector<VectorDims> in_shapes;
 
     std::shared_ptr<SubgraphBaseExecutor> execPtr = nullptr;
+
 };
 
 }  // namespace node

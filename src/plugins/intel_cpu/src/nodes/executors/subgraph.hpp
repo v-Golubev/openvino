@@ -46,6 +46,7 @@ public:
                          const std::shared_ptr<SubgraphAttrs>& snippet_attrs,
                          const std::shared_ptr<SubgraphCodeGenerator>& snippet,
                          std::vector<ptrdiff_t> start_offset_in,
+                         std::vector<ptrdiff_t> start_offset_in_external,
                          std::vector<ptrdiff_t> start_offset_out,
                          const BufferScratchpadAllocator& allocator,
                          const ov::intel_cpu::MultiCacheWeakPtr& kernel_cache);
@@ -53,6 +54,7 @@ public:
 
     virtual void execute(const dnnl::stream& strm,
                          const std::vector<MemoryPtr>& inMemPtrs,
+                         const std::vector<MemoryPtr>& inExternalMemPtrs,
                          const std::vector<MemoryPtr>& outMemPtrs);
 
     static void init_parallel_domain(const std::vector<size_t>& master_shape,
@@ -63,7 +65,9 @@ public:
                                      std::vector<size_t>& domain);
 
 protected:
-    virtual void exec_impl(const std::vector<MemoryPtr>& inMemPtrs, const std::vector<MemoryPtr>& outMemPtrs) = 0;
+    virtual void exec_impl(const std::vector<MemoryPtr>& inMemPtrs,
+                           const std::vector<MemoryPtr>& inExternalMemPtrs,
+                           const std::vector<MemoryPtr>& outMemPtrs) = 0;
 
     using initializer_functor = std::function<void(jit_snippets_call_args&, size_t)>;
     using call_functor = std::function<void(jit_snippets_call_args&, const std::vector<size_t>&, size_t)>;
@@ -95,6 +99,7 @@ protected:
     int m_nthreads = 0;
 
     std::vector<ptrdiff_t> m_start_offset_in = {};
+    std::vector<ptrdiff_t> m_start_offset_in_external = {};
     std::vector<ptrdiff_t> m_start_offset_out = {};
 };
 
@@ -110,21 +115,19 @@ protected:
 
     inline void init_call_args(jit_snippets_call_args& call_args,
                                const std::vector<MemoryPtr>& srcMemPtrs,
+                               const std::vector<MemoryPtr>& srcExternalMemPtrs,
                                const std::vector<MemoryPtr>& dstMemPtrs,
                                const std::vector<ptrdiff_t>& start_offset_in,
+                               const std::vector<ptrdiff_t>& start_offset_in_external,
                                const std::vector<ptrdiff_t>& start_offset_out,
                                size_t ithr) {
         call_args.init_external_ptrs(m_external_ptrs_idces.size());
-        size_t external_ptrs_idx = 0;
-        size_t src_ptrs_idx = 0;
 
         for (size_t i = 0; i < srcMemPtrs.size(); i++) {
-            const auto ptr = srcMemPtrs[i]->getDataAs<const uint8_t>() + start_offset_in[i];
-            if (m_external_ptrs_idces.count(i)) {
-                call_args.external_ptrs[external_ptrs_idx++] = ptr;
-            } else {
-                call_args.src_ptrs[src_ptrs_idx++] = ptr;
-            }
+            call_args.src_ptrs[i] = srcMemPtrs[i]->getDataAs<const uint8_t>() + start_offset_in[i];
+        }
+        for (size_t i = 0; i < srcExternalMemPtrs.size(); i++) {
+            call_args.external_ptrs[i] = srcExternalMemPtrs[i]->getDataAs<const uint8_t>() + start_offset_in_external[i];
         }
         for (size_t i = 0; i < dstMemPtrs.size(); i++) {
             call_args.dst_ptrs[i] = dstMemPtrs[i]->getDataAs<uint8_t>() + start_offset_out[i];
@@ -156,19 +159,28 @@ protected:
     }
 
     inline void init_original_ptrs(const std::vector<MemoryPtr>& srcMemPtrs,
+                                   const std::vector<MemoryPtr>& srcExternalMemPtrs,
                                    const std::vector<MemoryPtr>& dstMemPtrs,
                                    std::vector<const uint8_t*>& src_ptrs,
+                                   std::vector<const uint8_t*>& src_external_ptrs,
                                    std::vector<uint8_t*>& dst_ptrs,
                                    const std::vector<ptrdiff_t>& start_offset_in,
+                                   const std::vector<ptrdiff_t>& start_offset_in_external,
                                    const std::vector<ptrdiff_t>& start_offset_out) {
         const auto in_num = srcMemPtrs.size();
+        const auto external_in_num = srcExternalMemPtrs.size();
         const auto out_num = dstMemPtrs.size();
 
         src_ptrs.resize(in_num, nullptr);
+        src_external_ptrs.resize(external_in_num, nullptr);
         dst_ptrs.resize(out_num, nullptr);
 
         for (size_t i = 0; i < in_num; i++) {
             src_ptrs[i] = srcMemPtrs[i]->getDataAs<const uint8_t>() + start_offset_in[i];
+        }
+        for (size_t i = 0; i < external_in_num; i++) {
+            src_external_ptrs[i] =
+                srcExternalMemPtrs[i]->getDataAs<const uint8_t>() + start_offset_in_external[i];
         }
         for (size_t i = 0; i < out_num; i++) {
             dst_ptrs[i] = dstMemPtrs[i]->getDataAs<uint8_t>() + start_offset_out[i];
@@ -177,21 +189,27 @@ protected:
 
     inline void update_ptrs(jit_snippets_call_args& call_args,
                             const std::vector<const uint8_t*>& src_ptrs,
+                            const std::vector<const uint8_t*>& src_external_ptrs,
                             const std::vector<uint8_t*>& dst_ptrs,
                             const std::vector<size_t>& indexes) const {
         size_t external_ptrs_idx = 0;
         size_t src_ptrs_idx = 0;
 
         for (size_t i = 0; i < src_ptrs.size(); i++) {
-            auto i_ptr = src_ptrs[i];
+            auto i_ptr = src_ptrs[src_ptrs_idx++];
             for (size_t j = 0; j < indexes.size(); j++) {
                 i_ptr += m_data_offsets[i][j] * indexes[j];
             }
-            if (m_external_ptrs_idces.count(i)) {
-                call_args.external_ptrs[external_ptrs_idx++] = i_ptr;
-            } else {
-                call_args.src_ptrs[src_ptrs_idx++] = i_ptr;
+            call_args.src_ptrs[src_ptrs_idx - 1] = i_ptr;
+        }
+
+        for (size_t i = 0; i < src_external_ptrs.size(); i++) {
+            auto i_ptr = src_external_ptrs[external_ptrs_idx++];
+            for (size_t j = 0; j < indexes.size(); j++) {
+                // Note: no offsets are needed for external inputs, since they are handled outside the kernel
+                i_ptr += m_data_offsets[i][j] * indexes[j];
             }
+            call_args.external_ptrs[external_ptrs_idx - 1] = i_ptr;
         }
         for (size_t i = 0; i < dst_ptrs.size(); i++) {
             auto i_ptr = dst_ptrs[i];

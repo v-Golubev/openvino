@@ -379,13 +379,19 @@ void Subgraph::createPrimitive() {
 }
 
 void Subgraph::initMemoryPtrs() {
-    srcMemPtrs.resize(input_num);
-    dstMemPtrs.resize(output_num);
+    srcMemPtrs.reserve(input_num);
+    srcExternalMemPtrs.reserve(input_num);
+    dstMemPtrs.reserve(output_num);
+
+    const auto cpu_config = ov::as_type_ptr<CPURuntimeConfig>(subgraph_attrs->snippet->get_runtime_configurator()->get_config());
+
     for (size_t i = 0; i < input_num; i++) {
-        srcMemPtrs[i] = getSrcMemoryAtPort(i);
+        auto& ptr_to_update = cpu_config->brgemm_external_ptrs_idces.count(i) ? srcExternalMemPtrs : srcMemPtrs;
+        ptr_to_update.push_back(getSrcMemoryAtPort(i));
     }
+
     for (size_t i = 0; i < output_num; i++) {
-        dstMemPtrs[i] = getDstMemoryAtPort(i);
+        dstMemPtrs.push_back(getDstMemoryAtPort(i));
     }
 }
 
@@ -414,11 +420,19 @@ void Subgraph::initStartOffsets() {
     auto get_offset = [](const BlockedMemoryDescPtr& desc) {
         return static_cast<ptrdiff_t>(desc->getOffsetPadding() * desc->getPrecision().size());
     };
-    start_offset_in.resize(input_num);
+
+    start_offset_in.resize(srcMemPtrs.size());
     start_offset_out.resize(output_num);
-    for (size_t i = 0; i < input_num; i++) {
+    start_offset_in_external.resize(srcExternalMemPtrs.size()); // Resize for external memory offsets
+
+    for (size_t i = 0; i < srcMemPtrs.size(); i++) {
         start_offset_in[i] = get_offset(srcMemPtrs[i]->getDescWithType<BlockedMemoryDesc>());
     }
+
+    for (size_t i = 0; i < srcExternalMemPtrs.size(); i++) {
+        start_offset_in_external[i] = get_offset(srcExternalMemPtrs[i]->getDescWithType<BlockedMemoryDesc>());
+    }
+
     for (size_t i = 0; i < output_num; i++) {
         start_offset_out[i] = get_offset(dstMemPtrs[i]->getDescWithType<BlockedMemoryDesc>());
     }
@@ -766,6 +780,7 @@ void Subgraph::prepareParams() {
                                                                         key.attrs,
                                                                         code_gen,
                                                                         start_offset_in,
+                                                                        start_offset_in_external,
                                                                         start_offset_out,
                                                                         allocator,
                                                                         cache);
@@ -784,6 +799,7 @@ void Subgraph::prepareParams() {
                                                         key.attrs,
                                                         code_gen_result.first,
                                                         start_offset_in,
+                                                        start_offset_in_external,
                                                         start_offset_out,
                                                         allocator,
                                                         cache);
@@ -843,7 +859,7 @@ bool Subgraph::created() const {
 
 void Subgraph::execute(const dnnl::stream& strm) {
     OPENVINO_ASSERT(execPtr, "Can't execute Subgraph node. Primitive didn't created");
-    execPtr->execute(strm, srcMemPtrs, dstMemPtrs);
+    execPtr->execute(strm, srcMemPtrs, srcExternalMemPtrs, dstMemPtrs);
 }
 
 void Subgraph::executeDynamicImpl(const dnnl::stream& strm) {

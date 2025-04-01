@@ -15,12 +15,14 @@ public:
                      const std::shared_ptr<SubgraphAttrs>& snippet_attrs,
                      const std::shared_ptr<SubgraphCodeGenerator>& snippet,
                      const std::vector<ptrdiff_t>& start_offset_in,
+                     const std::vector<ptrdiff_t>& start_offset_in_external, // New parameter
                      const std::vector<ptrdiff_t>& start_offset_out,
                      const BufferScratchpadAllocator& allocator,
                      const ov::intel_cpu::MultiCacheWeakPtr& kernel_cache);
 
     void execute(const dnnl::stream& strm,
                  const std::vector<MemoryPtr>& in_mem_ptrs,
+                 const std::vector<MemoryPtr>& in_external_mem_ptrs,
                  const std::vector<MemoryPtr>& out_mem_ptrs) override;
 
     static std::vector<MemoryPtr> prepare_weights(const std::vector<MemoryPtr>& in_mem_ptrs,
@@ -88,7 +90,9 @@ public:
         : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
           SubgraphStaticBaseExecutor(std::forward<T>(first)) {}
 
-    void exec_impl(const std::vector<MemoryPtr>& in_mem_ptrs, const std::vector<MemoryPtr>& out_mem_ptrs) override;
+    void exec_impl(const std::vector<MemoryPtr>& in_mem_ptrs,
+                   const std::vector<MemoryPtr>& in_external_mem_ptrs,
+                   const std::vector<MemoryPtr>& out_mem_ptrs) override;
 };
 
 class SubgraphDynamicSpecializedExecutor : public SubgraphExecutor, public SubgraphDynamicSpecializedBaseExecutor {
@@ -98,7 +102,9 @@ public:
         : SubgraphExecutor(std::forward<T>(first), std::forward<Args>(rest)...),
           SubgraphDynamicSpecializedBaseExecutor(std::forward<T>(first)) {}
 
-    void exec_impl(const std::vector<MemoryPtr>& in_mem_ptrs, const std::vector<MemoryPtr>& out_mem_ptrs) override;
+    void exec_impl(const std::vector<MemoryPtr>& in_mem_ptrs,
+                   const std::vector<MemoryPtr>& in_external_mem_ptrs,
+                   const std::vector<MemoryPtr>& out_mem_ptrs) override;
 };
 
 }  // namespace ov::intel_cpu

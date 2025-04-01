@@ -78,11 +78,13 @@ SubgraphBaseExecutor::SubgraphBaseExecutor(const std::shared_ptr<CPURuntimeConfi
                                            const std::shared_ptr<SubgraphAttrs>& snippet_attrs,
                                            const std::shared_ptr<SubgraphCodeGenerator>& snippet,
                                            std::vector<ptrdiff_t> start_offset_in,
+                                           std::vector<ptrdiff_t> start_offset_in_external,
                                            std::vector<ptrdiff_t> start_offset_out,
                                            const BufferScratchpadAllocator& allocator,
                                            const ov::intel_cpu::MultiCacheWeakPtr& kernel_cache)
     : m_schedule(snippet->get()),
       m_start_offset_in(std::move(start_offset_in)),
+      m_start_offset_in_external(std::move(start_offset_in_external)),
       m_start_offset_out(std::move(start_offset_out)) {
     OPENVINO_ASSERT(m_schedule, "Schedule is empty!");
     OPENVINO_ASSERT(snippet_config, "Runtime Config is empty!");
@@ -180,8 +182,9 @@ void SubgraphBaseExecutor::parallel_forNd(const initializer_functor& initializer
 
 void SubgraphBaseExecutor::execute(const dnnl::stream& strm,
                                    const std::vector<MemoryPtr>& inMemPtrs,
+                                   const std::vector<MemoryPtr>& inExternalMemPtrs,
                                    const std::vector<MemoryPtr>& outMemPtrs) {
-    exec_impl(inMemPtrs, outMemPtrs);
+    exec_impl(inMemPtrs, inExternalMemPtrs, outMemPtrs);
 }
 
 }  // namespace ov::intel_cpu
