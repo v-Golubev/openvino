@@ -41,6 +41,7 @@
 #    include "transformations/snippets/x64/pass/lowered/fuse_load_store_and_convert.hpp"
 #    include "transformations/snippets/x64/pass/lowered/init_repacked_constant_inputs.hpp"
 #    include "transformations/snippets/x64/pass/lowered/insert_brgemm_copy_buffers.hpp"
+#    include "transformations/snippets/x64/pass/lowered/remove_external_parameters.hpp"
 #    include "transformations/snippets/x64/pass/remove_converts.hpp"
 #    include "transformations/snippets/x64/shape_inference.hpp"
 #endif
@@ -465,8 +466,15 @@ std::pair<std::vector<ov::element::Type>, std::vector<ov::element::Type>> Subgra
     return precisions;
 }
 
-void Subgraph::initPluginBlockedShapes() const {
-    in_shapes.resize(input_num);
+void Subgraph::initPluginBlockedShapes() {
+    const auto cpu_config = ov::as_type_ptr<CPURuntimeConfig>(subgraph_attrs->snippet->get_runtime_configurator()->get_config());
+    for (auto external_param_idx : cpu_config->brgemm_external_ptrs_idces) {
+        if (broadcastable_inputs.count(external_param_idx)) {
+            broadcastable_inputs.erase(external_param_idx);
+        }
+    }
+
+    in_shapes.resize(srcMemPtrs.size());
     for (size_t i = 0; i < srcMemPtrs.size(); i++) {
         in_shapes[i] = srcMemPtrs[i]->getDescWithType<BlockedMemoryDesc>()->getBlockDims();
     }
@@ -612,6 +620,8 @@ Subgraph::ControlFlowPasses Subgraph::getControlFlowPasses() {
 #else
 #    define SNIPPETS_REGISTER_PASS_RELATIVE_ARM64(PASS_PLACE, TARGET_PASS, PASS, ...)
 #endif  // OPENVINO_ARCH_ARM64
+
+    SNIPPETS_REGISTER_PASS_ABSOLUTE_X86_64(Place::PipelineEnd, ov::intel_cpu::pass::RemoveExternalParameters);
 
     SNIPPETS_REGISTER_PASS_RELATIVE_X86_64(Place::After,
                                            ov::snippets::lowered::pass::MarkLoops,
@@ -818,7 +828,12 @@ IShapeInfer::Result Subgraph::shapeInfer() const {
     }
 
     auto builder = [this](const SubgraphShapeInferResultKey& key) -> std::shared_ptr<SubgraphShapeInferResult> {
-        return std::make_shared<SubgraphShapeInferResult>(Node::shapeInfer());
+        std::vector<std::reference_wrapper<const VectorDims>> input_shapes;
+        input_shapes.reserve(srcMemPtrs.size());
+        for (size_t i = 0; i < srcMemPtrs.size(); ++i) {
+            input_shapes.emplace_back(std::ref(in_shapes[i]));
+        }
+        return std::make_shared<SubgraphShapeInferResult>(shapeInference->infer(input_shapes, {}));
     };
 
     const auto cache = context->getParamsCache();

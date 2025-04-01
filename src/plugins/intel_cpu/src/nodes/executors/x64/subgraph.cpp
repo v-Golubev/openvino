@@ -322,7 +322,8 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
                                                    const std::vector<MemoryPtr>& out_mem_ptrs) {
     const auto& callable = m_schedule->get_callable<dynamic_kernel>();
 
-    OPENVINO_ASSERT(m_data_offsets.size() == in_mem_ptrs.size() + in_external_mem_ptrs.size() + out_mem_ptrs.size(),
+    // OPENVINO_ASSERT(m_data_offsets.size() == in_mem_ptrs.size() + in_external_mem_ptrs.size() + out_mem_ptrs.size(),
+    OPENVINO_ASSERT(m_data_offsets.size() == in_mem_ptrs.size() + out_mem_ptrs.size(),
                     "Incorrect data offset count!");
     OPENVINO_ASSERT(m_data_offsets.front().size() == m_parallel_exec_domain.size(),
                     "Data offsets with invalid ranks detected");
@@ -343,7 +344,7 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
     switch (get_repacking_impl_type()) {
     case RepackingImplType::IN_PARALLEL:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
-            init_call_args(call_args, ithr);
+            init_call_args(call_args, ithr, src_external_ptrs.size());
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
             clean_repacked_offsets(ithr);
         };
@@ -356,7 +357,7 @@ void SubgraphDynamicSpecializedExecutor::exec_impl(const std::vector<MemoryPtr>&
     case RepackingImplType::SEPARATE:
     case RepackingImplType::NONE:
         initializer = [&](jit_snippets_call_args& call_args, size_t ithr) {
-            init_call_args(call_args, ithr);
+            init_call_args(call_args, ithr, src_external_ptrs.size());
             update_scratchpad_ptr(call_args.buffer_scratchpad_ptr, ithr);
         };
         caller = [&](jit_snippets_call_args& call_args, const std::vector<size_t>& indexes, size_t ithr) {

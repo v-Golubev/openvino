@@ -44,7 +44,7 @@ private:
     void initMemoryPtrs();
     void initAttributes();
     void initStartOffsets();
-    void initPluginBlockedShapes() const;
+    void initPluginBlockedShapes();
     void optimizeIR();
     void prepareWeights();
 

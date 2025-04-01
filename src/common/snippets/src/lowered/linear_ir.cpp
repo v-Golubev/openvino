@@ -204,9 +204,16 @@ void LinearIR::unregister_expression(const ExpressionPtr& expr) {
     }
 
     const auto& node = expr->get_node();
+    if (ov::is_type<ov::op::v0::Parameter>(node)) {
+        const auto it = std::find(m_parameter_expressions.cbegin(), m_parameter_expressions.cend(), expr);
+        OPENVINO_ASSERT(it != m_parameter_expressions.cend(), "ParameterExpression has not been found in the list of LinearIR Parameters!");
+        m_parameter_expressions.erase(it);
+        return;
+    }
     m_node2expression_map.erase(node);
-    OPENVINO_ASSERT((!ov::is_type_any_of<ov::op::v0::Parameter, ov::op::v0::Result>(node)),
-                    "unregister_expression mustn't be called for parameter or result expressions");
+    // OPENVINO_ASSERT((!ov::is_type_any_of<ov::op::v0::Parameter, ov::op::v0::Result>(node)),
+    //                 "unregister_expression mustn't be called for parameter or result expressions");
+
     if (const auto buffer_expr = ov::as_type_ptr<BufferExpression>(expr)) {
         const auto& it = std::find(m_buffer_expressions.cbegin(), m_buffer_expressions.cend(), buffer_expr);
         OPENVINO_ASSERT(it != m_buffer_expressions.cend(), "BufferExpression has not been found in the list of LinearIR Buffers!");

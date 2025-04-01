@@ -190,7 +190,7 @@ bool pass::FuseBrgemmCPUPostops::run_on_model(const std::shared_ptr<ov::Model>& 
     const auto res = GraphRewrite::run_on_model(m);
     for (const auto& param : m_external_params) {
         std::cout << " [ INFO ] FuseBrgemmCPUPostops::run_on_model: adding param with index "
-                  << m->get_parameter_index(param) << std::endl;
+                  << m->get_parameter_index(param) << ", name = " << param->get_friendly_name() << std::endl;
         m_brgemm_external_params_idces.insert(m->get_parameter_index(param));
     }
     return res;
