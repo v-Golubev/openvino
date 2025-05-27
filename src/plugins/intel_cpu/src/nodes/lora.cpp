@@ -87,8 +87,8 @@ void LoRA::selectOptimalPrimitiveDescriptor() {
 }
 
 int LoRA::registerToAllocationContext(int offset, AllocationContext& context) {
-    CPU_NODE_ASSERT(getOriginalInputsNumber() == m_graph.inputsNumber(),
-                    "Number of node inputs must be equal the number of inner graph's inputs");
+    CPU_NODE_ASSERT(getOriginalInputsNumber() == m_graph.inputsNumber() - 1,
+                    "Number of node inputs must be 1 less than the number of inner graph's inputs");
 
     for (size_t i = 0; i < getOriginalInputsNumber(); i++) {
         auto parentEdge = getParentEdgeAt(i);
@@ -114,8 +114,8 @@ int LoRA::registerToAllocationContext(int offset, AllocationContext& context) {
 }
 
 void LoRA::createPrimitive() {
-    CPU_NODE_ASSERT(getOriginalInputsNumber() == m_graph.inputsNumber(),
-                    "Number of node inputs must be equal the number of inner graph's inputs");
+    CPU_NODE_ASSERT(getOriginalInputsNumber() == m_graph.inputsNumber() - 1,
+                    "Number of node inputs must be 1 less than the number of inner graph's inputs");
     // Workaround to avoid making LoRa node always executable (isExecutable() = true)
     // This way we update subgraph's input memory without performing an actual Infer() call
     for (size_t i = 0; i < getOriginalInputsNumber(); i++) {
