@@ -240,7 +240,7 @@ bool LowPrecision::run_on_model(const std::shared_ptr<ov::Model>& m) {
                                                               attributeParams);
 
     const auto common = manager.register_pass<GraphRewrite>();
-    ADD_MATCHER(common, AddTransformation, params)
+    // ADD_MATCHER(common, AddTransformation, params)
     ADD_MATCHER(common, AssignAndReadValueTransformation, m, params)
     ADD_MATCHER(common, AvgPoolTransformation, params)
     ADD_MATCHER(common, BatchToSpaceTransformation, params)
@@ -293,7 +293,7 @@ bool LowPrecision::run_on_model(const std::shared_ptr<ov::Model>& m) {
     const auto cleanup = manager.register_pass<GraphRewrite>();
     ADD_MATCHER(cleanup, EliminateFakeQuantizeTransformation, params)
     ADD_MATCHER(cleanup, FoldConvertTransformation, params)
-    ADD_MATCHER(cleanup, FuseConvertTransformation, params)
+    // ADD_MATCHER(cleanup, FuseConvertTransformation, params)
     ADD_MATCHER(cleanup, FuseSubtractToFakeQuantizeTransformation, params)
     ADD_MATCHER(cleanup, FuseMultiplyToFakeQuantizeTransformation, params)
 
