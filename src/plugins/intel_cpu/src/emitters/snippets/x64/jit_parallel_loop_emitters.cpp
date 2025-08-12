@@ -4,6 +4,8 @@
 
 #include "jit_parallel_loop_emitters.hpp"
 
+#include <xbyak/xbyak.h>
+
 #include <algorithm>
 #include <cpu/x64/cpu_isa_traits.hpp>
 #include <cpu/x64/jit_generator.hpp>
