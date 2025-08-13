@@ -210,8 +210,8 @@ void jit_parallel_loop_begin_emitter::emit_parallel_executor_call(std::vector<Xb
     auto push_reg_on_stack = [&](Reg64 reg, size_t offset) {
         utils::push_ptr_with_static_offset_on_stack(h, offset, reg);
     };
-    for (auto i : mem_ptr_regs_idxs) {
-        push_reg_on_stack(Reg64(i), call_args_size + i * sizeof(uintptr_t*));
+    for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
+        push_reg_on_stack(Reg64(mem_ptr_regs_idxs[i]), call_args_size + i * sizeof(uintptr_t*));
     }
 
     const auto& aux_reg = get_call_address_reg();
@@ -245,8 +245,8 @@ void jit_parallel_loop_begin_emitter::emit_parallel_executor_call(std::vector<Xb
     m_par_to_seq_part_spiller->rsp_restore();
 
     // Restore data ptrs with applied finalization offsets
-    for (auto i : mem_ptr_regs_idxs) {
-        h->mov(Reg64(i), h->qword[h->rsp + call_args_size + i * sizeof(uintptr_t*)]);
+    for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
+        h->mov(Reg64(mem_ptr_regs_idxs[i]), h->qword[h->rsp + call_args_size + i * sizeof(uintptr_t*)]);
     }
     h->add(h->rsp, reserved_stack_size);
     m_par_to_seq_part_spiller->postamble();
@@ -268,11 +268,14 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
     // However some of mem_ptr_regs_idxs might coincide with abi_param_1 or abi_param_2.
     h->mov(Reg64(work_amount_reg_idx), abi_param1);
     bool abi_param2_collision = false;
-    for (int i : mem_ptr_regs_idxs) {
+    for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
+        Reg64 reg_to_restore = Reg64(mem_ptr_regs_idxs[i]);
+        OPENVINO_ASSERT(std::find(regs_to_restore.begin(), regs_to_restore.end(), reg_to_restore) == regs_to_restore.end(),
+                        "Expected to restore all registers except for mem_ptr_regs_idxs");
         if (i == abi_param2.getIdx()) {
             abi_param2_collision = true;
         } else {
-            h->mov(Reg64(i), h->ptr[abi_param2 + i * sizeof(uintptr_t*)]);
+            h->mov(reg_to_restore, h->ptr[abi_param2 + i * sizeof(uintptr_t*)]);
         }
     }
     if (abi_param2_collision) {
