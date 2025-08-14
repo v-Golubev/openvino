@@ -266,9 +266,9 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
         loop_premble_spill.insert({snippets::RegType::gpr, i});
     }
     m_seq_part_spiller->preamble(loop_premble_spill);
-    // Note: work_amount reg is guaranteed to differ from any mem_ptr_regs_idxs.
-    // However some of mem_ptr_regs_idxs might coincide with abi_param_1 or abi_param_2.
-    h->mov(Reg64(work_amount_reg_idx), abi_param1);
+
+    // Note: some of mem_ptr_regs_idxs might coincide with abi_param_2.
+    // abi_param_1 is always reserved for runtime parameters storage, so it can't coincide with any of mem_ptr_regs_idxs.
     std::optional<size_t> abi_param2_collision_index;
     for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
         auto reg_to_restore = Reg64(mem_ptr_regs_idxs[i]);
@@ -282,8 +282,11 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
         }
     }
     if (abi_param2_collision_index.has_value()) {
+        OPENVINO_ASSERT(work_amount_reg_idx != static_cast<size_t>(abi_param2.getIdx()),
+                        "Unexpected collision: the same reg is allocated for work_amount and memory pointer");
         h->mov(abi_param2, h->ptr[abi_param2 + abi_param2_collision_index.value() * sizeof(uintptr_t*)]);
     }
+    h->mov(Reg64(work_amount_reg_idx), abi_param1);
 
     const auto& aux_reg = get_call_address_reg();
     h->mov(aux_reg, reinterpret_cast<uintptr_t>(m_common_registers_buffer.data()));
