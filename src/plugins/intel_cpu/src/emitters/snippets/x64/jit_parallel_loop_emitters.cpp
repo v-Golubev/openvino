@@ -23,6 +23,7 @@
 #include "emitters/snippets/x64/kernel_executors/parallel_loop.hpp"
 #include "emitters/snippets/x64/utils.hpp"
 #include "emitters/utils.hpp"
+#include "openvino/core/except.hpp"
 #include "openvino/core/type.hpp"
 #include "snippets/emitter.hpp"
 #include "snippets/kernel_executor_table.hpp"
@@ -269,9 +270,10 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
     h->mov(Reg64(work_amount_reg_idx), abi_param1);
     bool abi_param2_collision = false;
     for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
-        Reg64 reg_to_restore = Reg64(mem_ptr_regs_idxs[i]);
-        OPENVINO_ASSERT(std::find(regs_to_restore.begin(), regs_to_restore.end(), reg_to_restore) == regs_to_restore.end(),
-                        "Expected to restore all registers except for mem_ptr_regs_idxs");
+        auto reg_to_restore = Reg64(mem_ptr_regs_idxs[i]);
+        OPENVINO_ASSERT(
+            std::find(regs_to_restore.begin(), regs_to_restore.end(), reg_to_restore) == regs_to_restore.end(),
+            "Expected to restore all registers except for mem_ptr_regs_idxs");
         if (i == abi_param2.getIdx()) {
             abi_param2_collision = true;
         } else {
