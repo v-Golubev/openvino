@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -268,20 +269,20 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
     // Note: work_amount reg is guaranteed to differ from any mem_ptr_regs_idxs.
     // However some of mem_ptr_regs_idxs might coincide with abi_param_1 or abi_param_2.
     h->mov(Reg64(work_amount_reg_idx), abi_param1);
-    bool abi_param2_collision = false;
+    std::optional<size_t> abi_param2_collision_index;
     for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
         auto reg_to_restore = Reg64(mem_ptr_regs_idxs[i]);
         OPENVINO_ASSERT(
             std::find(regs_to_restore.begin(), regs_to_restore.end(), reg_to_restore) == regs_to_restore.end(),
             "Expected to restore all registers except for mem_ptr_regs_idxs");
-        if (i == abi_param2.getIdx()) {
-            abi_param2_collision = true;
+        if (reg_to_restore == abi_param2) {
+            abi_param2_collision_index = i;
         } else {
             h->mov(reg_to_restore, h->ptr[abi_param2 + i * sizeof(uintptr_t*)]);
         }
     }
-    if (abi_param2_collision) {
-        h->mov(abi_param2, h->ptr[abi_param2 + abi_param2.getIdx() * sizeof(uintptr_t*)]);
+    if (abi_param2_collision_index.has_value()) {
+        h->mov(abi_param2, h->ptr[abi_param2 + abi_param2_collision_index.value() * sizeof(uintptr_t*)]);
     }
 
     const auto& aux_reg = get_call_address_reg();
