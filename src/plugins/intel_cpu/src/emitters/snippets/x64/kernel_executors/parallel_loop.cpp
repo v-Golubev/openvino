@@ -45,10 +45,10 @@ void ParallelLoopExecutor::execute(const ParallelLoopExecutor* executor, call_ar
     if (ov::snippets::utils::is_dynamic_value(config.get_increment())) {
         // Note: dynamic increment means tail loop, that executes only last iteration
         num_chunks = 1;
-        increment = loop_args->m_work_amount;
+        increment = static_cast<int>(loop_args->m_work_amount);
     } else {
         increment = config.get_increment();
-        num_chunks = loop_args->m_work_amount / increment;
+        num_chunks = static_cast<int>(loop_args->m_work_amount) / increment;
     }
     const int nthr = std::min(parallel_get_max_threads(), num_chunks);
 
