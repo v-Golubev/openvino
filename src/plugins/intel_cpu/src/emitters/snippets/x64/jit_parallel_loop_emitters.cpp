@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -160,9 +160,6 @@ jit_parallel_loop_begin_emitter::jit_parallel_loop_begin_emitter(jit_generator_t
       m_par_to_seq_part_spiller(std::make_shared<EmitABIRegSpills>(h)) {
     OV_CPU_JIT_EMITTER_ASSERT(ov::is_type<snippets::op::LoopBegin>(expr->get_node()), "expects LoopBegin expression");
     m_executor = kernel_table->register_kernel<ParallelLoopExecutor>(expr, ParallelLoopConfig(wa_increment));
-    // todo: we need to validate that the body expressions don't rely on any other registers except for loop port memory
-    // pointers if they do, we need to spill them before the call and restore in the multithread section
-    // Update: we must anyway do that, since some emitters use abi_param1 to get runtime information from call_args
 }
 
 void jit_parallel_loop_begin_emitter::validate_arguments(const std::vector<size_t>& in,
@@ -183,7 +180,6 @@ void jit_parallel_loop_begin_emitter::emit_code_impl(const std::vector<size_t>& 
                                                      const std::vector<size_t>& out,
                                                      const std::vector<size_t>& pool_vec_idxs,
                                                      const std::vector<size_t>& pool_gpr_idxs) const {
-    // todo: validate that the parameters obtained in the base class correspond to in & out
     validate_arguments(in, out);
     jit_emitter::emit_code_impl(in, out, pool_vec_idxs, pool_gpr_idxs);
 }

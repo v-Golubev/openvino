@@ -347,7 +347,6 @@ intel_cpu::CPUTargetMachine::CPUTargetMachine(dnnl::impl::cpu::x64::cpu_isa_t ho
     jitters[snippets::op::LoopBegin::get_type_info_static()] =
         CREATE_SNIPPETS_EMITTER(intel_cpu::jit_loop_begin_emitter);
     jitters[snippets::op::LoopEnd::get_type_info_static()] = CREATE_SNIPPETS_EMITTER(intel_cpu::jit_loop_end_emitter);
-    // todo: align names of node & emitter
     jitters[snippets::op::ParallelLoopBegin::get_type_info_static()] =
         CREATE_SNIPPETS_EMITTER(jit_parallel_loop_begin_emitter, configurator->get_kernel_executor_table());
     jitters[snippets::op::ParallelLoopEnd::get_type_info_static()] =

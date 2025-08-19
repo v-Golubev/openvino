@@ -1,4 +1,4 @@
-// Copyright (C) 2025 Intel Corporation
+// Copyright (C) 2018-2025 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 //
 
@@ -32,7 +32,6 @@ protected:
     jit_snippets_call_args::loop_args_t loop_args;
 };
 
-/* ================== jit_loop_begin_emitter ====================== */
 class jit_parallel_loop_begin_emitter : public jit_parallel_loop_base_emitter {
 public:
     jit_parallel_loop_begin_emitter(dnnl::impl::cpu::x64::jit_generator_t* h,

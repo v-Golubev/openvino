@@ -85,9 +85,6 @@
 #include "snippets/pass/convert_power_to_powerstatic.hpp"
 #include "snippets/pass/fuse_transpose_brgemm.hpp"
 #include "snippets/pass/gn_decomposition.hpp"
-// todo: remove debug serialization
-#include "snippets/lowered/pass/serialize_control_flow.hpp"
-#include "snippets/lowered/pass/serialize_data_flow.hpp"
 #include "snippets/pass/manager.hpp"
 #include "snippets/pass/matmul_to_brgemm.hpp"
 #include "snippets/pass/propagate_precision.hpp"
@@ -585,9 +582,6 @@ void Subgraph::control_flow_transformations(
     gen_pipeline.register_pass<lowered::pass::CleanupLoopOffsets>();
     gen_pipeline.register_pass<lowered::pass::OptimizeLoopSingleEvaluation>();
     gen_pipeline.run(*m_linear_ir);
-
-    ov::snippets::lowered::pass::SerializeControlFlow("snsdebug_control.xml").run(*m_linear_ir);
-    ov::snippets::lowered::pass::SerializeDataFlow("snsdebug_data.xml").run(*m_linear_ir);
 }
 
 snippets::Schedule Subgraph::generate(
