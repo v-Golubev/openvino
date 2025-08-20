@@ -99,8 +99,7 @@ jit_parallel_loop_base_emitter::jit_parallel_loop_base_emitter(jit_generator_t* 
         loop_end_input_regs = expr->get_reg_info().first;
     }
     OV_CPU_JIT_EMITTER_ASSERT(loop_end, "Failed to initialize LoopEnd in jit_parallel_loop_base_emitter");
-    num_inputs = loop_end->get_input_num();
-    num_outputs = loop_end->get_output_num();
+    io_num = loop_end->get_input_num() + loop_end->get_output_num();
     wa_increment = loop_end->get_increment();
     is_incremented = loop_end->get_is_incremented();
     evaluate_once = loop_end->get_evaluate_once();
@@ -156,8 +155,7 @@ jit_parallel_loop_begin_emitter::jit_parallel_loop_begin_emitter(jit_generator_t
       loop_begin_label{new Label()},
       loop_preamble_label{new Label()},
       loop_end_label(nullptr),
-      m_seq_part_spiller(std::make_shared<EmitABIRegSpills>(h)),
-      m_par_to_seq_part_spiller(std::make_shared<EmitABIRegSpills>(h)) {
+      m_parallel_section_reg_spiller(std::make_shared<EmitABIRegSpills>(h)) {
     OV_CPU_JIT_EMITTER_ASSERT(ov::is_type<snippets::op::LoopBegin>(expr->get_node()), "expects LoopBegin expression");
     m_executor = kernel_table->register_kernel<ParallelLoopExecutor>(expr, ParallelLoopConfig(wa_increment));
 }
@@ -197,7 +195,8 @@ void jit_parallel_loop_begin_emitter::emit_parallel_executor_call(std::vector<Xb
     // Note: mem_ptr_regs_idxs regs are not spilled, since they are handled manually:
     // before the parallel region call, they are passed via stack as ParallelLoopExecutor::execute parameter,
     // and restored after it with applied finalization offsets.
-    m_par_to_seq_part_spiller->preamble(get_regs_to_spill_except_mem_ptr_regs());
+    EmitABIRegSpills binary_call_reg_spiller(h);
+    binary_call_reg_spiller.preamble(get_regs_to_spill_except_mem_ptr_regs());
 
     const auto call_args_size = sizeof(typename ParallelLoopExecutor::call_args);
     const auto mem_ptrs_size = mem_ptr_regs_idxs.size() * sizeof(uintptr_t*);
@@ -213,9 +212,11 @@ void jit_parallel_loop_begin_emitter::emit_parallel_executor_call(std::vector<Xb
     }
 
     const auto& aux_reg = get_call_address_reg();
-    used_regs = m_par_to_seq_part_spiller->get_spilled_regs();
+    used_regs = binary_call_reg_spiller.get_spilled_regs();
     const auto memory_buf_size = EmitABIRegSpills::compute_memory_buffer_size(used_regs);
     m_common_registers_buffer.resize(memory_buf_size);
+    // Note: parallel loop emitter needs to spill registers to common buffer
+    // to propagate register states in each thread (stack of the main thread can't be used for such purpose).
     h->mov(aux_reg, reinterpret_cast<uintptr_t>(m_common_registers_buffer.data()));
     EmitABIRegSpills::store_regs_to_memory(h, used_regs, aux_reg);
 
@@ -236,18 +237,18 @@ void jit_parallel_loop_begin_emitter::emit_parallel_executor_call(std::vector<Xb
     h->mov(abi_param1, reinterpret_cast<uintptr_t>(m_executor.get()));
     h->mov(abi_param2, h->rsp);
 
-    m_par_to_seq_part_spiller->rsp_align(get_callee_saved_reg().getIdx());
+    binary_call_reg_spiller.rsp_align(get_callee_saved_reg().getIdx());
     // Note: we will return from this call only when the parallel region is finished (return from
     // jit_parallel_loop_end_emitter)
     h->call(aux_reg);
-    m_par_to_seq_part_spiller->rsp_restore();
+    binary_call_reg_spiller.rsp_restore();
 
     // Restore data ptrs with applied finalization offsets
     for (size_t i = 0; i < mem_ptr_regs_idxs.size(); ++i) {
         h->mov(Reg64(mem_ptr_regs_idxs[i]), h->qword[h->rsp + call_args_size + i * sizeof(uintptr_t*)]);
     }
     h->add(h->rsp, reserved_stack_size);
-    m_par_to_seq_part_spiller->postamble();
+    binary_call_reg_spiller.postamble();
 
     h->jmp(*loop_end_label, CodeGenerator::T_NEAR);
 }
@@ -261,7 +262,7 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
     for (auto i : get_callee_saved_reg_idxs()) {
         loop_premble_spill.insert({snippets::RegType::gpr, i});
     }
-    m_seq_part_spiller->preamble(loop_premble_spill);
+    m_parallel_section_reg_spiller->preamble(loop_premble_spill);
 
     // Note: some of mem_ptr_regs_idxs might coincide with abi_param_2.
     // abi_param_1 is always reserved for runtime parameters storage,
@@ -335,8 +336,7 @@ jit_parallel_loop_end_emitter::jit_parallel_loop_end_emitter(jit_generator_t* h,
     OV_CPU_JIT_EMITTER_ASSERT(loop_begin_emitter, "LoopBegin expected jit_loop_begin_emitter");
     loop_begin_emitter->set_loop_end_label(loop_end_label);
     loop_begin_label = loop_begin_emitter->get_begin_label();
-    m_seq_part_spiller = loop_begin_emitter->get_seq_part_spiller();
-    m_par_to_seq_part_spiller = loop_begin_emitter->get_par_to_seq_part_spiller();
+    m_parallel_section_reg_spiller = loop_begin_emitter->get_parallel_section_reg_spiller();
 }
 
 ov::snippets::lowered::ExpressionPtr jit_parallel_loop_end_emitter::get_loop_begin_expr(
@@ -349,16 +349,15 @@ ov::snippets::lowered::ExpressionPtr jit_parallel_loop_end_emitter::get_loop_beg
 
 void jit_parallel_loop_end_emitter::validate_arguments(const std::vector<size_t>& in,
                                                        const std::vector<size_t>& out) const {
-    const auto io_size = num_inputs + num_outputs;
     OV_CPU_JIT_EMITTER_ASSERT(out.empty(), "Invalid number of out arguments: expected 0 got ", out.size());
-    OV_CPU_JIT_EMITTER_ASSERT(in.size() == io_size + 1,
+    OV_CPU_JIT_EMITTER_ASSERT(in.size() == io_num + 1,
                               "Invalid number of in arguments: expected ",
-                              io_size + 1,
+                              io_num + 1,
                               " got ",
                               in.size());
-    OV_CPU_JIT_EMITTER_ASSERT(is_incremented.size() == io_size,
+    OV_CPU_JIT_EMITTER_ASSERT(is_incremented.size() == io_num,
                               "Invalid is_incremented size: expected ",
-                              io_size,
+                              io_num,
                               " got ",
                               is_incremented.size());
     OV_CPU_JIT_EMITTER_ASSERT(loop_end_label != nullptr && loop_begin_label != nullptr, "has not inited labels!");
@@ -409,7 +408,7 @@ void jit_parallel_loop_end_emitter::emit_impl(const std::vector<size_t>& in,
         h->cmp(reg_work_amount, wa_increment);
         h->jge(*loop_begin_label, CodeGenerator::T_NEAR);
     }
-    m_seq_part_spiller->postamble();
+    m_parallel_section_reg_spiller->postamble();
     // Note: parallel region ends here:
     h->ret();
     h->L(*loop_end_label);
