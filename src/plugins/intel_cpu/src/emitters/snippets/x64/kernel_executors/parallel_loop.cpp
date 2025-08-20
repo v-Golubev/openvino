@@ -12,6 +12,7 @@
 
 #include "common/utils.hpp"
 #include "emitters/utils.hpp"
+#include "openvino/core/except.hpp"
 #include "openvino/core/parallel.hpp"
 #include "snippets/utils/utils.hpp"
 
@@ -46,7 +47,7 @@ void ParallelLoopExecutor::execute(const ParallelLoopExecutor* executor, call_ar
     //  plus it would enable additional compiler optimizations like vectorized mem copy and for loops
     const auto num_ptrs = loop_args->m_num_data_ptrs;
 
-    const int increment =
+    const auto increment =
         // Note: dynamic increment means tail loop which is equal to work amount
         static_cast<int>(ov::snippets::utils::is_dynamic_value(config.get_increment()) ? loop_args->m_work_amount
                                                                                        : config.get_increment());
