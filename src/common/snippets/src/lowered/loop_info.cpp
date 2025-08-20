@@ -505,7 +505,14 @@ InnerSplittedUnifiedLoopInfo::InnerSplittedUnifiedLoopInfo(size_t increment,
                                                            const SpecificIterationHandlers& handlers,
                                                            LoopInfoPtr outer_splitted_loop_info,
                                                            bool is_parallel)
-    : UnifiedLoopInfo(utils::get_dynamic_value<size_t>(), increment, entries, exits, in_descs, out_descs, handlers, is_parallel),
+    : UnifiedLoopInfo(utils::get_dynamic_value<size_t>(),
+                      increment,
+                      entries,
+                      exits,
+                      in_descs,
+                      out_descs,
+                      handlers,
+                      is_parallel),
       m_outer_splitted_loop_info(std::move(outer_splitted_loop_info)) {
     OPENVINO_ASSERT(m_outer_splitted_loop_info != nullptr, "Outer Splitted Loop Info is missed!");
 }
