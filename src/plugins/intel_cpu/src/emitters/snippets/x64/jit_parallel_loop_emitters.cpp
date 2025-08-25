@@ -37,46 +37,6 @@ using namespace dnnl::impl::cpu::x64;
 
 namespace ov::intel_cpu {
 
-// TODO: unify with jit_loop_emitters
-namespace {
-class jit_aux_gpr_holder {
-public:
-    jit_aux_gpr_holder(dnnl::impl::cpu::x64::jit_generator_t* host,
-                       std::vector<size_t>& pool_gpr_idxs,
-                       const std::vector<size_t>& used_gpr_idxs)
-        : m_h(host),
-          m_pool_gpr_idxs(pool_gpr_idxs) {
-        // If the pool is empty, let's manualy allocate the gpr and push original vlaue on stack
-        if (m_pool_gpr_idxs.empty()) {
-            m_aux_gpr_idx = ov::intel_cpu::utils::get_aux_gpr(used_gpr_idxs);
-            m_is_preserved = true;
-            m_h->push(m_aux_gpr_idx);
-        } else {
-            m_aux_gpr_idx = Reg64(static_cast<int>(m_pool_gpr_idxs.back()));
-            m_pool_gpr_idxs.pop_back();
-        }
-    }
-
-    ~jit_aux_gpr_holder() {
-        if (m_is_preserved) {
-            m_h->pop(m_aux_gpr_idx);
-        } else {
-            m_pool_gpr_idxs.push_back(m_aux_gpr_idx.getIdx());
-        }
-    }
-
-    [[nodiscard]] const Reg64& get_reg() const {
-        return m_aux_gpr_idx;
-    }
-
-private:
-    dnnl::impl::cpu::x64::jit_generator_t* m_h;
-    std::vector<size_t>& m_pool_gpr_idxs;
-    Reg64 m_aux_gpr_idx;
-    bool m_is_preserved = false;
-};
-}  // namespace
-
 jit_parallel_loop_base_emitter::jit_parallel_loop_base_emitter(jit_generator_t* h,
                                                                cpu_isa_t isa,
                                                                const ov::snippets::lowered::ExpressionPtr& expr)
@@ -299,7 +259,7 @@ void jit_parallel_loop_begin_emitter::emit_impl([[maybe_unused]] const std::vect
     // TODO: reuse loop_begin_emitter code
     auto reg_work_amount = Reg64(static_cast<int>(out.back()));
     if (ov::snippets::utils::is_dynamic_value(loop_args.m_work_amount)) {
-        jit_aux_gpr_holder gpr_holder(h, aux_gpr_idxs, out);
+        utils::jit_aux_gpr_holder gpr_holder(h, aux_gpr_idxs, out);
         Reg64 reg_loop_args_ptr = gpr_holder.get_reg();
         h->mov(reg_loop_args_ptr, h->ptr[abi_param1 + GET_OFF(loop_args)]);
         h->mov(reg_work_amount, h->ptr[reg_loop_args_ptr + loop_id_offset + GET_OFF_LOOP_ARGS(m_work_amount)]);
@@ -393,7 +353,7 @@ void jit_parallel_loop_end_emitter::emit_impl(const std::vector<size_t>& in,
         };
 
         if (is_dynamic) {
-            jit_aux_gpr_holder gpr_holder(h, aux_gpr_idxs, in);
+            utils::jit_aux_gpr_holder gpr_holder(h, aux_gpr_idxs, in);
             reg_increments = gpr_holder.get_reg();
             h->mov(reg_increments, wa_increment);
             h->mov(reg_increments, h->ptr[abi_param1 + GET_OFF(loop_args)]);
