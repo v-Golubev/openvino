@@ -12,7 +12,6 @@
 
 #include "common/utils.hpp"
 #include "emitters/utils.hpp"
-#include "openvino/core/except.hpp"
 #include "openvino/core/parallel.hpp"
 #include "snippets/utils/utils.hpp"
 

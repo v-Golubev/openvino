@@ -200,21 +200,19 @@ static bool is_segfault_detector_emitter(const intel_cpu::jit_emitter* emitter) 
 #define CREATE_LOOP_EMITTER(regular_emitter, parallel_emitter, ...)                               \
     {[this](const snippets::lowered::ExpressionPtr& expr) -> std::shared_ptr<snippets::Emitter> { \
          auto loop_node = ov::as_type_ptr<snippets::op::LoopBase>(expr->get_node());              \
-         OV_CPU_JIT_EMITTER_ASSERT(loop_node, "Expected LoopBase node");                          \
+         OPENVINO_ASSERT(loop_node, "Expected LoopBase node");                                    \
          if (loop_node->get_is_parallel()) {                                                      \
              return std::make_shared<parallel_emitter>(h.get(), isa, expr, ##__VA_ARGS__);        \
-         } else {                                                                                 \
-             return std::make_shared<regular_emitter>(h.get(), isa, expr);                        \
          }                                                                                        \
+         return std::make_shared<regular_emitter>(h.get(), isa, expr);                            \
      },                                                                                           \
      [](const std::shared_ptr<ov::Node>& n) -> std::set<std::vector<element::Type>> {             \
          auto loop_node = ov::as_type_ptr<snippets::op::LoopBase>(n);                             \
-         OV_CPU_JIT_EMITTER_ASSERT(loop_node, "Expected LoopBase node");                          \
+         OPENVINO_ASSERT(loop_node, "Expected LoopBase node");                                    \
          if (loop_node->get_is_parallel()) {                                                      \
              return parallel_emitter::get_supported_precisions(n);                                \
-         } else {                                                                                 \
-             return regular_emitter::get_supported_precisions(n);                                 \
          }                                                                                        \
+         return regular_emitter::get_supported_precisions(n);                                     \
      }}
 
 #define CREATE_DEBUG_TPP_EMITTER(e_type)                                                               \
