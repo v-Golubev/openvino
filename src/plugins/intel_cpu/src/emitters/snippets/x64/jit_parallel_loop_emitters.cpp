@@ -116,7 +116,8 @@ jit_parallel_loop_begin_emitter::jit_parallel_loop_begin_emitter(jit_generator_t
       loop_preamble_label{new Label()},
       loop_end_label(nullptr),
       m_parallel_section_reg_spiller(std::make_shared<EmitABIRegSpills>(h)) {
-    OV_CPU_JIT_EMITTER_ASSERT(ov::is_type<snippets::op::LoopBegin>(expr->get_node()), "expects LoopBegin expression");
+    auto loop_begin = ov::as_type_ptr<snippets::op::LoopBegin>(expr->get_node());
+    OV_CPU_JIT_EMITTER_ASSERT(loop_begin && loop_begin->get_is_parallel(), "expects parallel LoopBegin expression");
     m_executor = kernel_table->register_kernel<ParallelLoopExecutor>(expr, ParallelLoopConfig(wa_increment));
 }
 
@@ -288,8 +289,8 @@ jit_parallel_loop_end_emitter::jit_parallel_loop_end_emitter(jit_generator_t* h,
       loop_begin_label{nullptr},
       loop_end_label{new Label()} {
     in_out_type_ = emitter_in_out_map::gpr_to_gpr;
-    const auto loop_end = ov::as_type_ptr<snippets::op::ParallelLoopEnd>(expr->get_node());
-    OV_CPU_JIT_EMITTER_ASSERT(loop_end != nullptr, "expected LoopEnd expr");
+    auto loop_end = ov::as_type_ptr<snippets::op::LoopEnd>(expr->get_node());
+    OV_CPU_JIT_EMITTER_ASSERT(loop_end && loop_end->get_is_parallel(), "expected parallel LoopEnd expr");
     const auto begin_expr = get_loop_begin_expr(expr);
     const auto& loop_begin_emitter =
         std::dynamic_pointer_cast<jit_parallel_loop_begin_emitter>(begin_expr->get_emitter());
@@ -302,8 +303,9 @@ jit_parallel_loop_end_emitter::jit_parallel_loop_end_emitter(jit_generator_t* h,
 ov::snippets::lowered::ExpressionPtr jit_parallel_loop_end_emitter::get_loop_begin_expr(
     const ov::snippets::lowered::ExpressionPtr& expr) {
     auto begin_expr = expr->get_input_port_connectors().back()->get_source().get_expr();
-    OV_CPU_JIT_EMITTER_ASSERT(ov::is_type<snippets::op::ParallelLoopBegin>(begin_expr->get_node()),
-                              "LoopEnd expression must have th last port connector to LoopBegin");
+    auto loop_begin = ov::as_type_ptr<snippets::op::LoopBegin>(begin_expr->get_node());
+    OV_CPU_JIT_EMITTER_ASSERT(loop_begin && loop_begin->get_is_parallel(),
+                              "LoopEnd expression must have the last port connector to parallel LoopBegin");
     return begin_expr;
 }
 
