@@ -27,8 +27,12 @@ public:
     explicit LoopBase(const OutputVector& args, bool is_parallel = false);
     LoopBase() = default;
 
-    bool get_is_parallel() const { return m_is_parallel; }
-    void set_is_parallel(bool is_parallel) { m_is_parallel = is_parallel; }
+    bool get_is_parallel() const {
+        return m_is_parallel;
+    }
+    void set_is_parallel(bool is_parallel) {
+        m_is_parallel = is_parallel;
+    }
 
     bool visit_attributes(AttributeVisitor& visitor) override;
 
