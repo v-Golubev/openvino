@@ -39,9 +39,9 @@ void ParallelLoopExecutor::execute(const ParallelLoopExecutor* executor, call_ar
     OV_CPU_JIT_EMITTER_ASSERT(call_args, "has nullptr call_args");
     const auto& loop_args = call_args->loop_args;
     const auto& stack_ptr = call_args->mem_ptrs;
-    OPENVINO_ASSERT(loop_args, "has nullptr loop_args");
-    OPENVINO_ASSERT(stack_ptr, "has nullptr mem_ptrs");
-    OPENVINO_ASSERT(call_args->preamble_ptr, "has nullptr preamble_ptr");
+    OV_CPU_JIT_EMITTER_ASSERT(loop_args, "has nullptr loop_args");
+    OV_CPU_JIT_EMITTER_ASSERT(stack_ptr, "has nullptr mem_ptrs");
+    OV_CPU_JIT_EMITTER_ASSERT(call_args->preamble_ptr, "has nullptr preamble_ptr");
 
     // todo: it might worth to use num_ptrs as a template parameter, because it is always known in advance
     //  plus it would enable additional compiler optimizations like vectorized mem copy and for loops

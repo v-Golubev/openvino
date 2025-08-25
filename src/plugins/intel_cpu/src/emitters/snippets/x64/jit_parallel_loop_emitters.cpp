@@ -56,6 +56,7 @@ jit_parallel_loop_base_emitter::jit_parallel_loop_base_emitter(jit_generator_t* 
         loop_end_input_regs = loop_end_expr->get_reg_info().first;
     } else {
         loop_end = ov::as_type_ptr<snippets::op::LoopEnd>(expr->get_node());
+        OV_CPU_JIT_EMITTER_ASSERT(loop_end, "loop end node is expected");
         loop_end_input_regs = expr->get_reg_info().first;
     }
     OV_CPU_JIT_EMITTER_ASSERT(loop_end, "Failed to initialize LoopEnd in jit_parallel_loop_base_emitter");
@@ -249,6 +250,9 @@ void jit_parallel_loop_begin_emitter::emit_parallel_region_initialization(
     h->mov(Reg64(work_amount_reg_idx), abi_param1);
 
     const auto& aux_reg = get_call_address_reg();
+    OV_CPU_JIT_EMITTER_ASSERT(
+        std::find(regs_to_restore.begin(), regs_to_restore.end(), aux_reg) == regs_to_restore.end(),
+        "aux_reg mustn't coincide with any reg from regs_to_restore");
     h->mov(aux_reg, reinterpret_cast<uintptr_t>(m_common_registers_buffer.data()));
     EmitABIRegSpills::load_regs_from_memory(h, regs_to_restore, aux_reg, m_common_registers_buffer.size());
 
@@ -325,6 +329,8 @@ void jit_parallel_loop_end_emitter::validate_arguments(const std::vector<size_t>
     OV_CPU_JIT_EMITTER_ASSERT(loop_end_label != nullptr && loop_begin_label != nullptr, "has not inited labels!");
     OV_CPU_JIT_EMITTER_ASSERT(!snippets::utils::is_dynamic_value(wa_increment) || evaluate_once,
                               "loop increment might be dynamic only if loop evaluates once!");
+    OV_CPU_JIT_EMITTER_ASSERT(m_parallel_section_reg_spiller != nullptr,
+                              "parallel section reg spiller is not initialized");
 }
 
 void jit_parallel_loop_end_emitter::emit_code_impl(const std::vector<size_t>& in,
@@ -374,6 +380,7 @@ void jit_parallel_loop_end_emitter::emit_impl(const std::vector<size_t>& in,
     // Note: parallel region ends here:
     h->ret();
     h->L(*loop_end_label);
+    // Note: finalization offsets are applied in ParallelLoopExecutor::execute after parallel region is ended
 }
 
 }  // namespace ov::intel_cpu
