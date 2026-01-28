@@ -43,7 +43,7 @@ KERNEL(fully_connected_gpu_imad)(
 #if OUTPUT_3D
     const uint tile_batch = OUTPUT_FEATURE_NUM / (uint)get_global_size(2);
 #else
-    const uint tile_batch = OUTPUT_BATCH_NUM / (uint)get_global_size(1);
+    const uint tile_batch = TILE_BATCH;
 #endif
 #else
     const uint tile_batch = TILE_BATCH;

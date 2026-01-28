@@ -3084,7 +3084,7 @@ std::shared_ptr<primitive_impl> ImplementationsFactory::get_primitive_impl_for_p
     std::shared_ptr<primitive_impl> dynamic_impl = nullptr;
     // 2. Try to find existing dynamic impl which supports given shapes
     for (auto& impl : m_dynamic_impls_cache) {
-        if (impl->m_manager->support_shapes(params)) {
+        if (impl->m_manager->support_shapes(updated_params)) {
             dynamic_impl = impl;
             break;
         }
@@ -3092,10 +3092,10 @@ std::shared_ptr<primitive_impl> ImplementationsFactory::get_primitive_impl_for_p
 
     // 3. Try to create new shape agnostic impl & cache it
     if (!dynamic_impl) {
-        dynamic_impl = find_impl(node, params, shape_types::dynamic_shape);
+        dynamic_impl = find_impl(node, updated_params, shape_types::dynamic_shape);
         if (dynamic_impl && !inst.can_be_optimized()) {
             dynamic_impl->set_node_params(*node);
-            auto kernels = kernels_cache.compile(params, dynamic_impl->get_kernels_source());
+            auto kernels = kernels_cache.compile(updated_params, dynamic_impl->get_kernels_source());
             dynamic_impl->set_kernels(std::move(kernels));
             m_dynamic_impls_cache.push_back(dynamic_impl);
         }
@@ -3103,7 +3103,7 @@ std::shared_ptr<primitive_impl> ImplementationsFactory::get_primitive_impl_for_p
 
     // 4. If we have any dynamic impl, do adjustment for new shape before returning in back
     if (dynamic_impl) {
-        dynamic_impl->update(inst, params);
+        dynamic_impl->update(inst, updated_params);
         return dynamic_impl;
     }
 
