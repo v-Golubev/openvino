@@ -18,26 +18,26 @@ public:
     /// \brief Constructs a MOE3GemmFusedCompressed operation with config only
     /// \param args The input tensors, in the following order:
     ///   0: hidden_states - input tensor with hidden representations
-    ///   1: routing_weights - [num_seq, num_experts] raw routing logits (before softmax/sigmoid)
-    ///   2: w0_weight - expert weights for first projection,
+    ///   1: routing_weights - [num_seq, topk] normalized weights for selected experts
+    ///   2: topk_indices - [num_seq, topk] indices of selected top-k experts
+    ///   3: w0_weight - expert weights for first projection,
     ///   shape [num_experts, inter_size, group_num, group_size]
-    ///   3: w0_scale - expert scale for first projection for compressed experts,
+    ///   4: w0_scale - expert scale for first projection for compressed experts,
     ///   shape [num_experts, inter_size, group_num, 1]
-    ///   4: w0_zp - expert zp for first projection for compressed experts,
+    ///   5: w0_zp - expert zp for first projection for compressed experts,
     ///   shape [num_experts, inter_size, group_num, 1]
-    ///   5: w1_weight - expert weights for second projection,
+    ///   6: w1_weight - expert weights for second projection,
     ///   shape [num_experts, inter_size, group_num, group_size]
-    ///   6: w1_scale - expert scale for second projection for compressed experts,
+    ///   7: w1_scale - expert scale for second projection for compressed experts,
     ///   shape [num_experts, inter_size, group_num, 1]
-    ///   7: w1_zp - expert zp for second projection for compressed experts,
+    ///   8: w1_zp - expert zp for second projection for compressed experts,
     ///   shape [num_experts, inter_size, group_num, 1]
-    ///   8: w2_weight - expert weights for final projection,
+    ///   9: w2_weight - expert weights for final projection,
     ///   shape [num_experts, hidden_size, group_num, group_size]
-    ///   9: w2_scale - expert scale for final projection for compressed experts,
+    ///   10: w2_scale - expert scale for final projection for compressed experts,
     ///   shape [num_experts, hidden_size, group_num, 1]
-    ///   10: w2_zp - expert zp for final projection for compressed experts,
+    ///   11: w2_zp - expert zp for final projection for compressed experts,
     ///   shape [num_experts, hidden_size, group_num, 1]
-    ///   11: routing_bias (optional) - [1, num_experts] routing bias for sigmoid routing
     /// \param config Configuration for the MOE 3GEMM SWIGLU fused operation
     MOE3GemmFusedCompressed(const OutputVector& args, const MOECompressed::Config config);
 

@@ -24,25 +24,25 @@ struct moe_3gemm_fused_compressed : public primitive_base<moe_3gemm_fused_compre
     // @param id      An identifier of new primitive.
     // @param inputs  A list of Input primitive ids (inputs).
     //                   0: hidden_states - input tensor with hidden representations
-    //                   1: routing_weights - [num_seq, num_experts] routing weights for all experts
-    //                   2: w0_weight - expert weights for first projection,
+    //                   1: routing_weights - [batch, seq_len, top_k] pre-computed top-k routing weights
+    //                   2: topk_indices - [batch, seq_len, top_k] pre-computed top-k expert indices
+    //                   3: w0_weight - expert weights for first projection,
     //                      shape [num_experts, inter_size, group_num, group_size]
-    //                   3: w0_scale - expert scale for first projection for compressed experts,
+    //                   4: w0_scale - expert scale for first projection for compressed experts,
     //                      shape [num_experts, inter_size, group_num, 1]
-    //                   4: w0_zp - expert zp for first projection for compressed experts,
+    //                   5: w0_zp - expert zp for first projection for compressed experts,
     //                      shape [num_experts, inter_size, group_num, 1]
-    //                   5: w1_weight - expert weights for second projection,
+    //                   6: w1_weight - expert weights for second projection,
     //                      shape [num_experts, inter_size, group_num, group_size]
-    //                   6: w1_scale - expert scale for second projection for compressed experts,
+    //                   7: w1_scale - expert scale for second projection for compressed experts,
     //                      shape [num_experts, inter_size, group_num, 1]
-    //                   7: w1_zp - expert zp for second projection for compressed experts,
+    //                   8: w1_zp - expert zp for second projection for compressed experts,
     //                      shape [num_experts, inter_size, group_num, 1]
-    //                   8: w2_weight - expert weights for final projection,
+    //                   9: w2_weight - expert weights for final projection,
     //                      shape [num_experts, hidden_size, group_num, group_size]
-    //                   9: w2_scale - expert scale for final projection for compressed experts,
+    //                   10: w2_scale - expert scale for final projection for compressed experts,
     //                      shape [num_experts, hidden_size, group_num, 1]
-    //                   10: w2_zp - expert zp for final projection for compressed experts,
-    //                   11: routing_bias (optional) - [1, num_experts] routing bias for sigmoid routing
+    //                   11: w2_zp - expert zp for final projection for compressed experts,
     //
     moe_3gemm_fused_compressed(const primitive_id& id, const std::vector<input_info>& inputs, const MOE3GemmFusedCompressed::Config& config)
         : primitive_base(id, inputs, 1, {optional_data_type()}),

@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "intel_gpu/op/moe_3gemm_fused_compressed.hpp"
-#include "openvino/pass/pattern/op/or.hpp"
 #include "openvino/pass/pattern/op/pattern.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/rt_info/keep_const_precision.hpp"
@@ -24,15 +23,11 @@ KeepMOE3GemmConstPrecision::KeepMOE3GemmConstPrecision() {
     auto zp_1_m = wrap_type<ov::op::v0::Constant>(type_matches(ov::element::u4));
     auto zp_2_m = wrap_type<ov::op::v0::Constant>(type_matches(ov::element::u4));
 
-    // Softmax routing: 11 inputs (no routing_bias)
-    auto moe_softmax_m = wrap_type<ov::intel_gpu::op::MOE3GemmFusedCompressed>(
-        {any_input(), any_input(), wei_0_m, any_input(), zp_0_m, wei_1_m, any_input(), zp_1_m, wei_2_m, any_input(), zp_2_m});
-
-    // SigmoidBias routing: 12 inputs (routing_bias appended at index 11)
-    auto moe_sigmoid_m = wrap_type<ov::intel_gpu::op::MOE3GemmFusedCompressed>(
-        {any_input(), any_input(), wei_0_m, any_input(), zp_0_m, wei_1_m, any_input(), zp_1_m, wei_2_m, any_input(), zp_2_m, any_input()});
-
-    auto moe_3gemm_fused_compressed_m = std::make_shared<ov::pass::pattern::op::Or>(OutputVector{moe_softmax_m, moe_sigmoid_m});
+    // 12 inputs: hidden_states, routing_weights, topk_indices,
+    //            w0_weight, w0_scale, w0_zp, w1_weight, w1_scale, w1_zp, w2_weight, w2_scale, w2_zp
+    auto moe_3gemm_fused_compressed_m = wrap_type<ov::intel_gpu::op::MOE3GemmFusedCompressed>(
+        {any_input(), any_input(), any_input(),
+         wei_0_m, any_input(), zp_0_m, wei_1_m, any_input(), zp_1_m, wei_2_m, any_input(), zp_2_m});
 
     ov::matcher_pass_callback callback = [OV_CAPTURE_CPY_AND_THIS](ov::pass::pattern::Matcher& m) {
         const auto& pattern_map = m.get_pattern_value_map();
