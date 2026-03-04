@@ -113,8 +113,8 @@ const std::vector<MoeTestShapeParams> moe_params_smoke = {
     },
 };
 
-// Compressed weights – covers the full FuseVectorizedMOE3GEMM + ConvertMOEToMOECompressed +
-// FuseMOE3GemmCompressed pipeline that runs in production.
+// Compressed weights – covers the full FuseVectorizedMOE3GEMM + ConvertMOEToMOECompressed
+// pipeline that runs in production.
 const std::vector<ov::element::Type> weights_precisions = {
     ov::element::u8,
     ov::element::u4,

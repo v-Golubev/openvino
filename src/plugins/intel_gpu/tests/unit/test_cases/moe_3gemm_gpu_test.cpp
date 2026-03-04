@@ -552,7 +552,7 @@ TEST_P(moe_3gemm_compressed_gpu_random, moe_accuracy_test_random) {
     topology.add(data("w2_scale", w2_scale_mem));
     topology.add(data("w2_zp", w2_zp_mem));
 
-    cldnn::MOE3GemmFusedCompressed::Config moe_config;
+    cldnn::MOECompressed::Config moe_config;
     moe_config.hidden_size = config.hidden_size;
     moe_config.inter_size = config.inter_size;
     moe_config.num_expert = config.num_experts;
@@ -683,7 +683,7 @@ TEST_F(moe_3gemm_compressed_gpu_u4, moe_accuracy_test_u4_softmax) {
     topology.add(data("w2_scale", w2_scale));
     topology.add(data("w2_zp", w2_zp));
 
-    cldnn::MOE3GemmFusedCompressed::Config config;
+    cldnn::MOECompressed::Config config;
     config.hidden_size = hidden_size;
     config.inter_size = inter_size;
     config.num_expert = num_experts;
@@ -807,7 +807,7 @@ TEST_F(moe_3gemm_compressed_gpu_u4, moe_accuracy_test_u4_sigmoid_bias) {
     topology.add(data("w2_scale", w2_scale));
     topology.add(data("w2_zp", w2_zp));
 
-    cldnn::MOE3GemmFusedCompressed::Config config;
+    cldnn::MOECompressed::Config config;
     config.hidden_size = hidden_size;
     config.inter_size = inter_size;
     config.num_expert = num_experts;

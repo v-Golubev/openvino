@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "intel_gpu/op/moe_3gemm_fused_compressed.hpp"
+#include "intel_gpu/op/moe_compressed.hpp"
 #include "openvino/pass/pattern/op/pattern.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "transformations/rt_info/keep_const_precision.hpp"
@@ -25,14 +25,14 @@ KeepMOE3GemmConstPrecision::KeepMOE3GemmConstPrecision() {
 
     // 12 inputs: hidden_states, routing_weights, topk_indices,
     //            w0_weight, w0_scale, w0_zp, w1_weight, w1_scale, w1_zp, w2_weight, w2_scale, w2_zp
-    auto moe_3gemm_fused_compressed_m = wrap_type<ov::intel_gpu::op::MOE3GemmFusedCompressed>(
+    auto moe_compressed_m = wrap_type<ov::intel_gpu::op::MOECompressed>(
         {any_input(), any_input(), any_input(),
          wei_0_m, any_input(), zp_0_m, wei_1_m, any_input(), zp_1_m, wei_2_m, any_input(), zp_2_m});
 
     ov::matcher_pass_callback callback = [OV_CAPTURE_CPY_AND_THIS](ov::pass::pattern::Matcher& m) {
         const auto& pattern_map = m.get_pattern_value_map();
-        auto moe_3gemm_fused_compressed = ov::as_type_ptr<ov::intel_gpu::op::MOE3GemmFusedCompressed>(m.get_match_root());
-        if (!moe_3gemm_fused_compressed || transformation_callback(moe_3gemm_fused_compressed)) {
+        auto moe_compressed = ov::as_type_ptr<ov::intel_gpu::op::MOECompressed>(m.get_match_root());
+        if (!moe_compressed || transformation_callback(moe_compressed)) {
             return false;
         }
 
@@ -46,7 +46,7 @@ KeepMOE3GemmConstPrecision::KeepMOE3GemmConstPrecision() {
         return true;
     };
 
-    auto m = std::make_shared<ov::pass::pattern::Matcher>(moe_3gemm_fused_compressed_m, "KeepMOE3GemmConstPrecision");
+    auto m = std::make_shared<ov::pass::pattern::Matcher>(moe_compressed_m, "KeepMOE3GemmConstPrecision");
     this->register_matcher(m, callback);
 }
 

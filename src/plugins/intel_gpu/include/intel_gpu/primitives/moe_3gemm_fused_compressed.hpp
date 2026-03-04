@@ -5,12 +5,12 @@
 #pragma once
 #include <vector>
 
-#include "intel_gpu/op/moe_3gemm_fused_compressed.hpp"
+#include "intel_gpu/op/moe_compressed.hpp"
 #include "intel_gpu/runtime/engine.hpp"
 #include "primitive.hpp"
 
 namespace cldnn {
-using MOE3GemmFusedCompressed = ov::intel_gpu::op::MOE3GemmFusedCompressed;
+using MOECompressed = ov::intel_gpu::op::MOECompressed;
 
 /// @brief moe compressed primitive
 /// @details Performs moe compressed
@@ -44,11 +44,11 @@ struct moe_3gemm_fused_compressed : public primitive_base<moe_3gemm_fused_compre
     //                      shape [num_experts, hidden_size, group_num, 1]
     //                   11: w2_zp - expert zp for final projection for compressed experts,
     //
-    moe_3gemm_fused_compressed(const primitive_id& id, const std::vector<input_info>& inputs, const MOE3GemmFusedCompressed::Config& config)
+    moe_3gemm_fused_compressed(const primitive_id& id, const std::vector<input_info>& inputs, const MOECompressed::Config& config)
         : primitive_base(id, inputs, 1, {optional_data_type()}),
           _config(config) {}
 
-    MOE3GemmFusedCompressed::Config _config;
+    MOECompressed::Config _config;
 
     bool operator==(const primitive& rhs) const override {
         if (!compare_common_params(rhs))
