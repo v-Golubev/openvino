@@ -15,6 +15,7 @@ namespace pass {
 // BGM-producing passes (IR → GatherMatmul)
 class TRANSFORMATIONS_API ConvertTiledMoeBlockTo2GatherMatmuls;
 class TRANSFORMATIONS_API ConvertTiledMoeBlockTo3GatherMatmuls;
+class TRANSFORMATIONS_API FuseConcatIntoGatherMatmulWeights;
 
 class TRANSFORMATIONS_API ConvertTiledMoeBlockToGatherMatmuls;
 
@@ -34,6 +35,14 @@ public:
     ConvertTiledMoeBlockTo3GatherMatmuls();
 };
 
+// Pushes a Concat on GatherMatmul's weight input down through decompression
+// chains to the leaf Constants, merging them into a single chain.
+class ov::pass::FuseConcatIntoGatherMatmulWeights : public ov::pass::MatcherPass {
+public:
+    OPENVINO_MATCHER_PASS_RTTI("FuseConcatIntoGatherMatmulWeights");
+    FuseConcatIntoGatherMatmulWeights();
+};
+
 // CPU uses BGM-producing passes only (stops at BGMs)
 class ov::pass::ConvertTiledMoeBlockToGatherMatmuls : public ov::pass::GraphRewrite {
 public:
@@ -41,5 +50,6 @@ public:
     ConvertTiledMoeBlockToGatherMatmuls() {
         add_matcher<ov::pass::ConvertTiledMoeBlockTo2GatherMatmuls>();
         add_matcher<ov::pass::ConvertTiledMoeBlockTo3GatherMatmuls>();
+        add_matcher<ov::pass::FuseConcatIntoGatherMatmulWeights>();
     }
 };

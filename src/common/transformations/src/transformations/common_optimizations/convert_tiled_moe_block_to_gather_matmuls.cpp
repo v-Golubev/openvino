@@ -4,6 +4,7 @@
 
 #include "transformations/common_optimizations/convert_tiled_moe_block_to_gather_matmuls.hpp"
 
+#include <cstring>
 #include <initializer_list>
 
 #include "itt.hpp"
@@ -47,6 +48,78 @@ void validate_nodes(const pattern::PatternValueMap& map, const std::initializer_
         map.at(node).get_node_shared_ptr()->validate_and_infer_types();
     }
 };
+
+// Concatenate two Constants along the given axis via raw byte-level copy.
+// Handles sub-byte types (u4/i4) correctly by requiring byte-aligned slices.
+// Falls back to make_try_fold<Concat> for standard (byte-aligned) element types
+// or when byte alignment cannot be guaranteed.
+std::shared_ptr<ov::Node> concat_constants_raw(const std::shared_ptr<v0::Constant>& c1,
+                                               const std::shared_ptr<v0::Constant>& c2,
+                                               int64_t axis) {
+    const auto& et = c1->get_element_type();
+    const size_t bitwidth = et.bitwidth();
+
+    // For standard byte-sized types, use make_try_fold (well-tested path)
+    if (bitwidth >= 8) {
+        return ov::op::util::make_try_fold<v0::Concat>(ov::OutputVector{c1, c2}, axis);
+    }
+
+    // Sub-byte types: manual byte-level copy to avoid potential evaluation bugs
+    auto s1 = c1->get_shape();
+    auto s2 = c2->get_shape();
+    const size_t rank = s1.size();
+    const size_t pos_axis = axis >= 0 ? static_cast<size_t>(axis) : rank + axis;
+    if (pos_axis >= rank || s1.size() != s2.size()) {
+        return nullptr;
+    }
+
+    // Validate shapes match on all axes except the concat axis
+    for (size_t i = 0; i < rank; ++i) {
+        if (i != pos_axis && s1[i] != s2[i]) {
+            return nullptr;
+        }
+    }
+
+    auto out_shape = s1;
+    out_shape[pos_axis] += s2[pos_axis];
+
+    size_t outer = 1;
+    for (size_t i = 0; i < pos_axis; ++i)
+        outer *= s1[i];
+
+    size_t inner = 1;
+    for (size_t i = pos_axis + 1; i < rank; ++i)
+        inner *= s1[i];
+
+    const size_t s1_slice_elems = s1[pos_axis] * inner;
+    const size_t s2_slice_elems = s2[pos_axis] * inner;
+    const size_t elems_per_byte = 8 / bitwidth;
+
+    // Require byte-aligned slices for correct sub-byte copy
+    if (s1_slice_elems % elems_per_byte != 0 || s2_slice_elems % elems_per_byte != 0) {
+        // Fall back to make_try_fold (may be buggy for sub-byte but no better option)
+        return ov::op::util::make_try_fold<v0::Concat>(ov::OutputVector{c1, c2}, axis);
+    }
+
+    const size_t s1_bytes = s1_slice_elems * bitwidth / 8;
+    const size_t s2_bytes = s2_slice_elems * bitwidth / 8;
+
+    ov::Tensor out_tensor(et, out_shape);
+    auto* src1 = static_cast<const uint8_t*>(c1->get_data_ptr());
+    auto* src2 = static_cast<const uint8_t*>(c2->get_data_ptr());
+    auto* dst = static_cast<uint8_t*>(out_tensor.data());
+
+    for (size_t o = 0; o < outer; ++o) {
+        std::memcpy(dst, src1, s1_bytes);
+        dst += s1_bytes;
+        src1 += s1_bytes;
+        std::memcpy(dst, src2, s2_bytes);
+        dst += s2_bytes;
+        src2 += s2_bytes;
+    }
+
+    return std::make_shared<v0::Constant>(out_tensor);
+}
 
 std::shared_ptr<ov::op::v0::Unsqueeze> introduce_n_experts_dim(const ov::Output<ov::Node>& data) {
     auto zero_const = std::make_shared<ov::op::v0::Constant>(ov::element::i32, ov::Shape{}, 0);
@@ -298,36 +371,36 @@ ConvertTiledMoeBlockTo3GatherMatmuls::ConvertTiledMoeBlockTo3GatherMatmuls() {
         const auto up_mm_node = pm.at(p.up_matmul).get_node_shared_ptr();
         const auto down_mm_node = pm.at(p.down_matmul).get_node_shared_ptr();
 
-        // Constant-fold the concatenation of gate_w and up_w along axis 1
+        // Concatenate gate_w and up_w along axis 1
         // gate_w: [n_experts, intermediate_size, hidden_size]
         // up_w:   [n_experts, intermediate_size, hidden_size]
         // result: [n_experts, 2*intermediate_size, hidden_size]
-        auto gate_w_const = ov::as_type_ptr<v0::Constant>(gate_mm_node->input_value(1).get_node_shared_ptr());
-        auto up_w_const = ov::as_type_ptr<v0::Constant>(up_mm_node->input_value(1).get_node_shared_ptr());
-        if (!gate_w_const || !up_w_const) {
-            return false;
-        }
+        auto gate_w = gate_mm_node->input_value(1);
+        auto up_w = up_mm_node->input_value(1);
 
-        auto gate_up_w = ov::op::util::make_try_fold<v0::Concat>(
-            ov::OutputVector{gate_w_const, up_w_const}, 1);
-        auto gate_up_w_const = ov::as_type_ptr<v0::Constant>(gate_up_w);
-        if (!gate_up_w_const) {
+        // Get intermediate_size from gate_w partial shape before concat
+        const auto gate_w_pshape = gate_w.get_partial_shape();
+        if (gate_w_pshape.rank().is_dynamic() || gate_w_pshape.rank().get_length() < 2 ||
+            gate_w_pshape[1].is_dynamic()) {
             return false;
         }
-        ov::copy_runtime_info({gate_mm_node, up_mm_node}, gate_up_w_const);
+        const int64_t intermediate_size = static_cast<int64_t>(gate_w_pshape[1].get_length());
+
+        // Try constant folding; if inputs are not constants, keep a plain Concat.
+        // GatherMatmul supports B on any constant-rooted path (not just v0::Constant).
+        auto gate_up_w = ov::op::util::make_try_fold<v0::Concat>(ov::OutputVector{gate_w, up_w}, 1);
+        ov::copy_runtime_info({gate_mm_node, up_mm_node}, gate_up_w);
 
         // GatherMatmul A shape: [n_activated_experts, batch_size * seq_length, hidden_size]
         const auto unsqueeze = introduce_n_experts_dim(experts_subgraph_input);
 
         // gate_up_bgm: single BGM with concatenated gate+up weights (no bias → 3-input ctor)
         const auto gate_up_gathered_mm =
-            std::make_shared<GatherMatmul>(unsqueeze, gate_up_w_const, active_indices);
+            std::make_shared<GatherMatmul>(unsqueeze, gate_up_w, active_indices);
         ov::copy_runtime_info({gate_mm_node, up_mm_node}, gate_up_gathered_mm);
         gate_up_gathered_mm->set_friendly_name(gate_mm_node->get_friendly_name() + "_gate_up");
 
         // Slice the gate_up_bgm output to recover gate and up halves along the last axis
-        const auto gate_w_shape = gate_w_const->get_shape();
-        const int64_t intermediate_size = static_cast<int64_t>(gate_w_shape[1]);
 
         // gate_slice: [..., 0:intermediate_size]
         auto gate_slice_start = v0::Constant::create(ov::element::i64, ov::Shape{1}, {0});
@@ -366,7 +439,7 @@ ConvertTiledMoeBlockTo3GatherMatmuls::ConvertTiledMoeBlockTo3GatherMatmuls() {
         ov::copy_runtime_info(swiglu_node, new_swiglu);
         new_swiglu->set_friendly_name(swiglu_node->get_friendly_name());
 
-        // down_bgm: unchanged
+        // down_bgm
         const auto down_gathered_mm =
             std::make_shared<GatherMatmul>(new_swiglu, down_mm_node->input_value(1), active_indices);
         ov::copy_runtime_info(down_mm_node, down_gathered_mm);
@@ -420,10 +493,192 @@ ConvertTiledMoeBlockTo3GatherMatmuls::ConvertTiledMoeBlockTo3GatherMatmuls() {
         const auto reshape = std::make_shared<v1::Reshape>(new_reduce_sum, shape_slice, true);
         ov::replace_output_update_name(pm.at(p.reduce_sum), reshape->output(0));
         reshape->set_friendly_name(new_reduce_sum->get_friendly_name() + "_Reshape");
+
+        // Register GatherMatmul nodes so FuseConcatIntoGatherMatmulWeights
+        // (in the same GraphRewrite) can visit them.
+        register_new_node(gate_up_gathered_mm);
+        register_new_node(down_gathered_mm);
         return true;
     };
 
     auto matcher = std::make_shared<pattern::Matcher>(p.reduce_sum, matcher_name);
+    this->register_matcher(matcher, callback);
+}
+
+// ============================================================================
+// FuseConcatIntoGatherMatmulWeights
+//
+// Matches GatherMatmul where input B is a Concat of two parallel
+// decompression (or constant) subgraphs. Pushes the Concat down through
+// element-wise ops to the leaf Constants, eliminating the top-level Concat
+// and producing a single merged chain.
+//
+// Before:  Const_1 → [Convert → Sub → Mul → Reshape → Convert] ──┐
+//          Const_2 → [Convert → Sub → Mul → Reshape → Convert] ──┴─ Concat ─→ GatherMatmul
+//
+// After:   Concat(Const_1, Const_2) → [Convert → Sub(Concat(zp1,zp2)) →
+//            Mul(Concat(s1,s2)) → Reshape → Convert] ─→ GatherMatmul
+// ============================================================================
+
+namespace {
+
+// Recursively merge two parallel decompression chains by pushing Concat to leaf constants.
+// For Reshape: the shape-target input (input 1) is adjusted to account for the doubled
+//   concat-axis dimension, or kept as-is if it contains -1 (auto-adjusts).
+// For all other nodes with matching types: all inputs are merged recursively.
+// At Constants (leaf nodes): creates a folded Concat, or reuses one constant when
+//   the concat axis exceeds the constant rank (broadcast-compatible constants like
+//   scalar zero-points or scales).
+// Returns empty Output on failure (mismatched topology).
+ov::Output<ov::Node> merge_weight_branches(const ov::Output<ov::Node>& out1,
+                                           const ov::Output<ov::Node>& out2,
+                                           int64_t concat_axis,
+                                           ov::NodeVector& new_nodes) {
+    auto n1 = out1.get_node_shared_ptr();
+    auto n2 = out2.get_node_shared_ptr();
+
+    // If both sides point to the same node, just reuse it (shared constant/subgraph)
+    if (n1 == n2) {
+        return out1;
+    }
+
+    // Base case: both are Constants
+    if (ov::is_type<v0::Constant>(n1) && ov::is_type<v0::Constant>(n2)) {
+        auto c1 = ov::as_type_ptr<v0::Constant>(n1);
+        auto c2 = ov::as_type_ptr<v0::Constant>(n2);
+
+        const auto rank = static_cast<int64_t>(c1->get_shape().size());
+        const auto pos_axis = concat_axis >= 0 ? concat_axis : rank + concat_axis;
+
+        // If concat axis is out of range (e.g., scalar or lower-rank broadcast constants),
+        // these constants apply identically to both branches via broadcasting.
+        // Reuse one if shapes match; fail otherwise.
+        if (pos_axis < 0 || pos_axis >= rank) {
+            if (c1->get_shape() == c2->get_shape()) {
+                return out1;
+            }
+            return {};
+        }
+
+        // Use raw byte-level concat for sub-byte types to avoid evaluation bugs
+        auto merged = concat_constants_raw(c1, c2, concat_axis);
+        if (!merged) {
+            return {};
+        }
+        new_nodes.push_back(merged);
+        return merged->output(0);
+    }
+
+    // Both must be the same op type with the same number of inputs
+    if (n1->get_type_info() != n2->get_type_info()) {
+        return {};
+    }
+    if (n1->get_input_size() != n2->get_input_size()) {
+        return {};
+    }
+
+    // For Reshape: merge only the data input (0).  Adjust the target shape (input 1)
+    // to account for the doubled concat-axis dimension if the target uses explicit values.
+    if (ov::is_type<v1::Reshape>(n1)) {
+        auto merged_data = merge_weight_branches(n1->input_value(0), n2->input_value(0), concat_axis, new_nodes);
+        if (!merged_data.get_node()) {
+            return {};
+        }
+
+        // Determine whether the target shape needs adjustment
+        auto target1 = ov::as_type_ptr<v0::Constant>(n1->input_value(1).get_node_shared_ptr());
+        auto target2 = ov::as_type_ptr<v0::Constant>(n2->input_value(1).get_node_shared_ptr());
+        ov::Output<ov::Node> new_target = n1->input_value(1);
+
+        if (target1 && target2) {
+            auto vals1 = target1->cast_vector<int64_t>();
+            auto vals2 = target2->cast_vector<int64_t>();
+            // Check if any dimension uses -1 (auto-infer) — if so, it auto-adjusts
+            bool has_auto = std::any_of(vals1.begin(), vals1.end(), [](int64_t v) { return v == -1; });
+            if (!has_auto && vals1.size() == vals2.size()) {
+                // All explicit values — adjust the concat-axis dimension
+                const auto target_rank = static_cast<int64_t>(vals1.size());
+                const auto pos_axis = concat_axis >= 0 ? concat_axis : target_rank + concat_axis;
+                if (pos_axis >= 0 && pos_axis < target_rank) {
+                    vals1[pos_axis] += vals2[pos_axis];
+                    auto adjusted = v0::Constant::create(target1->get_element_type(), target1->get_shape(), vals1);
+                    new_nodes.push_back(adjusted);
+                    new_target = adjusted->output(0);
+                }
+            }
+        }
+
+        auto new_node = n1->clone_with_new_inputs({merged_data, new_target});
+        new_nodes.push_back(new_node);
+        return new_node->output(0);
+    }
+
+    // For all other node types (Convert, Subtract, Multiply, Transpose, etc.):
+    // recursively merge every input from both branches.
+    ov::OutputVector merged_inputs;
+    for (size_t i = 0; i < n1->get_input_size(); ++i) {
+        auto merged = merge_weight_branches(n1->input_value(i), n2->input_value(i), concat_axis, new_nodes);
+        if (!merged.get_node()) {
+            return {};
+        }
+        merged_inputs.push_back(merged);
+    }
+
+    auto new_node = n1->clone_with_new_inputs(merged_inputs);
+    new_nodes.push_back(new_node);
+    return new_node->output(0);
+}
+
+}  // namespace
+
+FuseConcatIntoGatherMatmulWeights::FuseConcatIntoGatherMatmulWeights() {
+    MATCHER_SCOPE(FuseConcatIntoGatherMatmulWeights);
+
+    auto concat_m = pattern::wrap_type<v0::Concat>({pattern::any_input(), pattern::any_input()});
+    auto bgm_m = pattern::wrap_type<ov::op::internal::GatherMatmul>(
+        {pattern::any_input(), concat_m, pattern::any_input(), pattern::any_input()});
+
+    matcher_pass_callback callback = [=](pattern::Matcher& m) {
+        auto& pm = m.get_pattern_value_map();
+
+        auto bgm_node = pm.at(bgm_m).get_node_shared_ptr();
+        auto concat_node = ov::as_type_ptr<v0::Concat>(pm.at(concat_m).get_node_shared_ptr());
+        if (!concat_node || concat_node->get_input_size() != 2) {
+            return false;
+        }
+
+        auto branch1 = concat_node->input_value(0);
+        auto branch2 = concat_node->input_value(1);
+
+        // If the Concat is already folded to a Constant, nothing to do
+        if (ov::is_type<v0::Constant>(concat_node)) {
+            return false;
+        }
+
+        int64_t concat_axis = concat_node->get_axis();
+
+        ov::NodeVector new_nodes;
+        auto merged = merge_weight_branches(branch1, branch2, concat_axis, new_nodes);
+        if (!merged.get_node()) {
+            return false;
+        }
+
+        // Validate the merged subgraph
+        for (const auto& node : new_nodes) {
+            node->validate_and_infer_types();
+        }
+
+        // Replace the Concat output with the merged chain output
+        concat_node->output(0).replace(merged);
+        ov::copy_runtime_info(concat_node, new_nodes);
+
+        // Re-validate GatherMatmul with the new B input
+        bgm_node->validate_and_infer_types();
+
+        return true;
+    };
+
+    auto matcher = std::make_shared<pattern::Matcher>(bgm_m, matcher_name);
     this->register_matcher(matcher, callback);
 }
 

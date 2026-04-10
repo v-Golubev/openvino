@@ -684,18 +684,35 @@ inline std::shared_ptr<ov::Model> initMoE3GeMMSubgraphRef(bool use_scatter_v12,
                                              seed++,
                                              matmul_transpose_b);
 
-    auto gate_gathered_mm = std::make_shared<GatherMatmul>(unsqueeze_experts, gate_weights, router_topk_indices);
-
-    auto swish = std::make_shared<ov::op::v4::Swish>(gate_gathered_mm);
-
     auto up_weights = build_matmul_weights(ov::Shape{number_of_experts, hidden_size, intermediate_size},
                                            weights_precision,
                                            seed++,
                                            matmul_transpose_b);
 
-    auto up_gathered_mm = std::make_shared<GatherMatmul>(unsqueeze_experts, up_weights, router_topk_indices);
+    // gate_up_w: concat gate and up weights along axis 1 (the intermediate_size axis in transposed storage)
+    auto gate_up_w = ov::op::util::make_try_fold<ov::op::v0::Concat>(ov::OutputVector{gate_weights, up_weights}, 1);
 
-    auto swiglu = std::make_shared<ov::op::v1::Multiply>(swish, up_gathered_mm);
+    auto gate_up_gathered_mm = std::make_shared<GatherMatmul>(unsqueeze_experts, gate_up_w, router_topk_indices);
+
+    // Slice gate half: [..., 0:intermediate_size]
+    auto gate_slice = std::make_shared<ov::op::v8::Slice>(
+        gate_up_gathered_mm,
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {0}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {static_cast<int64_t>(intermediate_size)}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {-1}));
+
+    auto swish = std::make_shared<ov::op::v4::Swish>(gate_slice);
+
+    // Slice up half: [..., intermediate_size:2*intermediate_size]
+    auto up_slice = std::make_shared<ov::op::v8::Slice>(
+        gate_up_gathered_mm,
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {static_cast<int64_t>(intermediate_size)}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {static_cast<int64_t>(2 * intermediate_size)}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+        ov::op::v0::Constant::create(ov::element::i64, ov::Shape{1}, {-1}));
+
+    auto swiglu = std::make_shared<ov::op::v1::Multiply>(swish, up_slice);
 
     auto down_weights = build_matmul_weights(ov::Shape{number_of_experts, intermediate_size, hidden_size},
                                              weights_precision,
