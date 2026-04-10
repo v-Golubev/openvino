@@ -28,6 +28,7 @@
 #include "ov_ops/gather_matmul.hpp"
 #include "ov_ops/gather_matmul_compressed.hpp"
 #include "ov_ops/moe_compressed.hpp"
+#include "transformations/utils/utils.hpp"
 
 namespace ov::pass {
 
@@ -39,157 +40,6 @@ namespace v0 = ov::op::v0;
 namespace v1 = ov::op::v1;
 namespace v4 = ov::op::v4;
 namespace v8 = ov::op::v8;
-
-Convert3GatherMatmulMoeBlockToMoeOp::Convert3GatherMatmulMoeBlockToMoeOp(size_t has_batch_dim,
-                                                                         ov::element::Type out_type) {
-    MATCHER_SCOPE(Convert3GatherMatmulMoeBlockToMoeOp);
-
-    auto experts_reshape_m = pattern::any_input();
-    auto unsqueeze_m = pattern::wrap_type<v0::Unsqueeze>({experts_reshape_m, pattern::any_input()});
-
-    auto gate_w_m = pattern::any_input();
-    auto topk_indices_m = pattern::any_input();
-
-    // Plain BGM (4 inputs: A, B, indices, bias)
-    auto bgm_gate_4_m = pattern::wrap_type<GatherMatmul>({unsqueeze_m, gate_w_m, topk_indices_m, pattern::any_input()});
-    // Compressed BGM (6 inputs: A, B, indices, bias, scale, zp)
-    auto gate_scale_m = pattern::any_input();
-    auto gate_zp_m = pattern::any_input();
-    auto bgm_gate_6_m = pattern::wrap_type<GatherMatmulCompressed>(
-        {unsqueeze_m, gate_w_m, topk_indices_m, pattern::any_input(), gate_scale_m, gate_zp_m});
-    // Or-pattern
-    auto bgm_gate_m = std::make_shared<pattern::op::Or>(OutputVector{bgm_gate_4_m, bgm_gate_6_m});
-
-    auto swish_m = pattern::wrap_type<v4::Swish>({bgm_gate_m});
-
-    auto up_w_m = pattern::any_input();
-    auto bgm_up_4_m = pattern::wrap_type<GatherMatmul>({unsqueeze_m, up_w_m, topk_indices_m, pattern::any_input()});
-    auto up_scale_m = pattern::any_input();
-    auto up_zp_m = pattern::any_input();
-    auto bgm_up_6_m = pattern::wrap_type<GatherMatmulCompressed>(
-        {unsqueeze_m, up_w_m, topk_indices_m, pattern::any_input(), up_scale_m, up_zp_m});
-    auto bgm_up_m = std::make_shared<pattern::op::Or>(OutputVector{bgm_up_4_m, bgm_up_6_m});
-
-    auto swiglu_m = pattern::wrap_type<v1::Multiply>({swish_m, bgm_up_m});
-
-    auto down_w_m = pattern::any_input();
-    auto bgm_down_4_m = pattern::wrap_type<GatherMatmul>({swiglu_m, down_w_m, topk_indices_m, pattern::any_input()});
-    auto down_scale_m = pattern::any_input();
-    auto down_zp_m = pattern::any_input();
-    auto bgm_down_6_m = pattern::wrap_type<GatherMatmulCompressed>(
-        {swiglu_m, down_w_m, topk_indices_m, pattern::any_input(), down_scale_m, down_zp_m});
-    auto bgm_down_m = std::make_shared<pattern::op::Or>(OutputVector{bgm_down_4_m, bgm_down_6_m});
-
-    // Compact routing: Transpose → Unsqueeze
-    auto routing_transpose_m = pattern::wrap_type<v1::Transpose>({pattern::any_input(), pattern::any_input()});
-    auto routing_unsqueeze_m = pattern::wrap_type<v0::Unsqueeze>({routing_transpose_m, pattern::any_input()});
-
-    auto final_mul_m = pattern::wrap_type<v1::Multiply>({bgm_down_m, routing_unsqueeze_m}, pattern::consumers_count(1));
-    auto reduce_sum_m = pattern::wrap_type<v1::ReduceSum>({final_mul_m, pattern::any_input()}, {{"keep_dims", false}});
-    auto end_reshape_shape_m = pattern::any_input();
-    auto end_reshape_m = pattern::wrap_type<v1::Reshape>({reduce_sum_m, end_reshape_shape_m});
-
-    matcher_pass_callback callback = [=](pattern::Matcher& m) {
-        auto& pm = m.get_pattern_value_map();
-
-        if (transformation_callback(m.get_match_root())) {
-            return false;
-        }
-
-        auto experts_reshape_node = pm.at(experts_reshape_m).get_node_shared_ptr();
-        auto hidden_states = experts_reshape_node->input_value(0);
-
-        auto routing = pm.at(routing_unsqueeze_m).get_node_shared_ptr();
-        auto topk_indices = pm.at(topk_indices_m);
-        auto gate_w = pm.at(gate_w_m);
-        auto up_w = pm.at(up_w_m);
-        auto down_w = pm.at(down_w_m);
-
-        // Extract expert_beta from Swish
-        float expert_beta = 1.0f;
-        auto swish_node = pm.at(swish_m).get_node_shared_ptr();
-        if (auto swish_op = ov::as_type_ptr<v4::Swish>(swish_node)) {
-            if (swish_op->get_input_size() > 1) {
-                if (auto beta_const = ov::as_type_ptr<v0::Constant>(swish_op->get_input_node_shared_ptr(1))) {
-                    expert_beta = beta_const->cast_vector<float>()[0];
-                }
-            }
-        }
-
-        std::shared_ptr<ov::Node> moe_node;
-        bool is_compressed = pm.count(bgm_gate_6_m) > 0;
-
-        if (is_compressed) {
-            // Build MOECompressed with 12 inputs: hidden, routing, topk,
-            // gate_w, gate_scale, gate_zp, up_w, up_scale, up_zp, down_w, down_scale, down_zp
-            ov::OutputVector moe_inputs = {
-                hidden_states,
-                routing,
-                topk_indices,
-                gate_w,
-                pm.at(gate_scale_m),
-                pm.at(gate_zp_m),
-                up_w,
-                pm.at(up_scale_m),
-                pm.at(up_zp_m),
-                down_w,
-                pm.at(down_scale_m),
-                pm.at(down_zp_m),
-            };
-
-            // Populate compressed config from weight shapes
-            auto wei_partial_shape = gate_w.get_partial_shape();
-            OPENVINO_ASSERT(wei_partial_shape.is_static(), "MOE weight shape should be static.");
-            auto weight_shape = wei_partial_shape.to_shape();
-            bool group_compressed = (weight_shape.size() == 4);
-
-            auto topk_shape = topk_indices.get_partial_shape();
-            OPENVINO_ASSERT(topk_shape[1].is_static(), "K dimension in moe topk input should be static.");
-
-            MOECompressed::Config compressed_config{
-                {ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU, 0.0f, expert_beta},
-                group_compressed ? weight_shape[2] * weight_shape[3] : weight_shape[2],
-                weight_shape[1],
-                weight_shape[0],
-                0,  // num_shared_expert
-                static_cast<size_t>(topk_shape[1].get_length()),
-                group_compressed ? weight_shape[3] : std::numeric_limits<size_t>::max(),
-                has_batch_dim,
-                false,
-                out_type,
-            };
-
-            auto moe_compressed = std::make_shared<MOECompressed>(moe_inputs, compressed_config);
-
-            // Insert Convert if output type was forced and differs from original
-            if (moe_compressed->get_output_element_type(0) != hidden_states.get_element_type()) {
-                moe_compressed->set_friendly_name(m.get_match_root()->get_friendly_name() + "/MOECompressed");
-                auto convert = std::make_shared<v0::Convert>(moe_compressed, hidden_states.get_element_type());
-                convert->set_friendly_name(m.get_match_root()->get_friendly_name());
-                ov::copy_runtime_info(m.get_matched_nodes(), {moe_compressed, convert});
-                moe_node = convert;
-            } else {
-                moe_node = moe_compressed;
-            }
-        } else {
-            ov::op::internal::MOE::Config config{ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU, 0.0f, expert_beta};
-            // Plain MOE with 6 inputs
-            ov::OutputVector moe_inputs = {hidden_states, routing, topk_indices, gate_w, up_w, down_w};
-
-            moe_node = std::make_shared<ov::op::internal::MOE>(moe_inputs, config);
-        }
-
-        moe_node->set_friendly_name(m.get_match_root()->get_friendly_name());
-        ov::copy_runtime_info(m.get_matched_nodes(), moe_node);
-        ov::replace_node(m.get_match_root(), moe_node);
-
-        register_new_node(moe_node);
-        return true;
-    };
-
-    auto matcher = std::make_shared<pattern::Matcher>(end_reshape_m, matcher_name);
-    this->register_matcher(matcher, callback);
-}
 
 Convert2GatherMatmulMoeBlockToMoeOp::Convert2GatherMatmulMoeBlockToMoeOp(size_t has_batch_dim,
                                                                          ov::element::Type out_type) {
@@ -209,9 +59,13 @@ Convert2GatherMatmulMoeBlockToMoeOp::Convert2GatherMatmulMoeBlockToMoeOp(size_t 
     auto gate_up_zp_m = pattern::any_input();
     auto bgm_gate_up_6_m = pattern::wrap_type<GatherMatmulCompressed>(
         {unsqueeze_m, gate_up_w_m, topk_indices_m, gate_up_bias_m, gate_up_scale_m, gate_up_zp_m});
-    auto bgm_gate_up_m = bgm_gate_up_4_m | bgm_gate_up_6_m;
 
-    // Activation subgraph between gate_up and down BGMs
+    // Plain BGM (3 inputs, no bias — used by 3-GEMM path)
+    auto bgm_gate_up_3_m = pattern::wrap_type<GatherMatmul>({unsqueeze_m, gate_up_w_m, topk_indices_m});
+
+    auto bgm_gate_up_m = bgm_gate_up_4_m | bgm_gate_up_6_m | bgm_gate_up_3_m;
+
+    // --- GEMM2_BIAS_SWIGLU_CLAMP activation branch ---
     auto slice1_m = pattern::wrap_type<v8::Slice>(
         {bgm_gate_up_m, pattern::any_input(), pattern::any_input(), pattern::any_input(), pattern::any_input()});
     auto clamp_m = pattern::wrap_type<v0::Clamp>({slice1_m});
@@ -221,20 +75,34 @@ Convert2GatherMatmulMoeBlockToMoeOp::Convert2GatherMatmulMoeBlockToMoeOp(size_t 
         {bgm_gate_up_m, pattern::any_input(), pattern::any_input(), pattern::any_input(), pattern::any_input()});
     auto minimum1_m = pattern::wrap_type<v1::Minimum>({slice2_m, pattern::wrap_const()});
     auto swish_beta_m = pattern::wrap_const();
-    auto swish_m = pattern::wrap_type<v4::Swish>({minimum1_m, swish_beta_m});
+    auto swish_clamp_m = pattern::wrap_type<v4::Swish>({minimum1_m, swish_beta_m});
 
-    auto multiply2_m = pattern::wrap_type<v1::Multiply>({add1_m, swish_m});
+    auto multiply_clamp_m = pattern::wrap_type<v1::Multiply>({add1_m, swish_clamp_m});
+
+    // --- GEMM3_SWIGLU activation branch ---
+    auto gate_slice_m = pattern::wrap_type<v8::Slice>(
+        {bgm_gate_up_m, pattern::any_input(), pattern::any_input(), pattern::any_input(), pattern::any_input()});
+    auto swish_swiglu_m = pattern::wrap_type<v4::Swish>({gate_slice_m});
+    auto up_slice_m = pattern::wrap_type<v8::Slice>(
+        {bgm_gate_up_m, pattern::any_input(), pattern::any_input(), pattern::any_input(), pattern::any_input()});
+    auto multiply_swiglu_m = pattern::wrap_type<v1::Multiply>({swish_swiglu_m, up_slice_m});
+
+    // Or-pattern for the activation result
+    auto activation_result_m = multiply_clamp_m | multiply_swiglu_m;
 
     auto down_w_m = pattern::any_input();
     auto down_bias_m = pattern::any_input();
     // Plain BGM (4 inputs)
-    auto bgm_down_4_m = pattern::wrap_type<GatherMatmul>({multiply2_m, down_w_m, topk_indices_m, down_bias_m});
+    auto bgm_down_4_m = pattern::wrap_type<GatherMatmul>({activation_result_m, down_w_m, topk_indices_m, down_bias_m});
     // Compressed BGM (6 inputs)
     auto down_scale_m = pattern::any_input();
     auto down_zp_m = pattern::any_input();
     auto bgm_down_6_m = pattern::wrap_type<GatherMatmulCompressed>(
-        {multiply2_m, down_w_m, topk_indices_m, down_bias_m, down_scale_m, down_zp_m});
-    auto bgm_down_m = bgm_down_4_m | bgm_down_6_m;
+        {activation_result_m, down_w_m, topk_indices_m, down_bias_m, down_scale_m, down_zp_m});
+    // Plain BGM (3 inputs, no bias — used by 3-GEMM path)
+    auto bgm_down_3_m = pattern::wrap_type<GatherMatmul>({activation_result_m, down_w_m, topk_indices_m});
+
+    auto bgm_down_m = bgm_down_4_m | bgm_down_6_m | bgm_down_3_m;
 
     // Compact routing: Transpose → Unsqueeze
     auto routing_transpose_m = pattern::wrap_type<v1::Transpose>({pattern::any_input(), pattern::any_input()});
@@ -258,86 +126,244 @@ Convert2GatherMatmulMoeBlockToMoeOp::Convert2GatherMatmulMoeBlockToMoeOp(size_t 
         auto routing = pm.at(routing_unsqueeze_m).get_node_shared_ptr();
         auto topk_indices = pm.at(topk_indices_m);
         auto gate_up_w = pm.at(gate_up_w_m);
-        auto gate_up_bias = pm.at(gate_up_bias_m);
         auto down_w = pm.at(down_w_m);
-        auto down_bias = pm.at(down_bias_m);
 
-        // Extract expert_beta from Swish beta
-        auto swish_beta_const = ov::as_type_ptr<v0::Constant>(pm.at(swish_beta_m).get_node_shared_ptr());
-        float expert_beta = swish_beta_const->cast_vector<float>()[0];
+        // Detect which activation branch matched
+        const bool is_gemm2_clamp = pm.count(clamp_m) > 0;
+        const bool is_gemm3_swiglu = pm.count(swish_swiglu_m) > 0;
 
-        // Extract expert_alpha from Clamp max
-        float expert_alpha = 0.0f;
-        if (auto clamp_op = ov::as_type_ptr<v0::Clamp>(pm.at(clamp_m).get_node_shared_ptr())) {
-            expert_alpha = static_cast<float>(clamp_op->get_max());
+        if (!is_gemm2_clamp && !is_gemm3_swiglu) {
+            return false;
         }
 
         std::shared_ptr<ov::Node> moe_node;
 
-        const bool is_compressed = pm.count(bgm_gate_up_6_m) > 0;
-        if (is_compressed) {
-            // Build MOECompressed inputs
-            // GEMM2 compressed layout: hidden, routing, topk,
-            // gate_up_w, gate_up_scale, [gate_up_zp,] gate_up_bias,
-            // down_w, down_scale, [down_zp,] down_bias
-            ov::OutputVector moe_inputs;
-            moe_inputs.push_back(hidden_states);
-            moe_inputs.push_back(routing);
-            moe_inputs.push_back(topk_indices);
+        if (is_gemm2_clamp) {
+            // --- GEMM2_BIAS_SWIGLU_CLAMP path (existing logic) ---
+            auto gate_up_bias = pm.at(gate_up_bias_m);
+            auto down_bias = pm.at(down_bias_m);
 
-            // Absent zp is represented as Constant(element::dynamic, Shape{0})
-            bool has_zp = pm.at(gate_up_zp_m).get_element_type() != ov::element::dynamic;
+            // Extract expert_beta from Swish beta
+            auto swish_beta_const = ov::as_type_ptr<v0::Constant>(pm.at(swish_beta_m).get_node_shared_ptr());
+            float expert_beta = swish_beta_const->cast_vector<float>()[0];
 
-            // gate_up params
-            moe_inputs.push_back(gate_up_w);
-            moe_inputs.push_back(pm.at(gate_up_scale_m));
-            if (has_zp) {
-                moe_inputs.push_back(pm.at(gate_up_zp_m));
+            // Extract expert_alpha from Clamp max
+            float expert_alpha = 0.0f;
+            if (auto clamp_op = ov::as_type_ptr<v0::Clamp>(pm.at(clamp_m).get_node_shared_ptr())) {
+                expert_alpha = static_cast<float>(clamp_op->get_max());
             }
-            moe_inputs.push_back(gate_up_bias);
 
-            // down params
-            moe_inputs.push_back(down_w);
-            moe_inputs.push_back(pm.at(down_scale_m));
-            if (has_zp) {
-                moe_inputs.push_back(pm.at(down_zp_m));
+            const bool is_compressed = pm.count(bgm_gate_up_6_m) > 0;
+            if (is_compressed) {
+                // Build MOECompressed inputs
+                ov::OutputVector moe_inputs;
+                moe_inputs.push_back(hidden_states);
+                moe_inputs.push_back(routing);
+                moe_inputs.push_back(topk_indices);
+
+                bool has_zp = pm.at(gate_up_zp_m).get_element_type() != ov::element::dynamic;
+
+                moe_inputs.push_back(gate_up_w);
+                moe_inputs.push_back(pm.at(gate_up_scale_m));
+                if (has_zp) {
+                    moe_inputs.push_back(pm.at(gate_up_zp_m));
+                }
+                moe_inputs.push_back(gate_up_bias);
+
+                moe_inputs.push_back(down_w);
+                moe_inputs.push_back(pm.at(down_scale_m));
+                if (has_zp) {
+                    moe_inputs.push_back(pm.at(down_zp_m));
+                }
+                moe_inputs.push_back(down_bias);
+
+                auto weight_shape = gate_up_w.get_shape();
+                bool group_compressed = (weight_shape.size() == 4);
+                size_t hidden = group_compressed ? weight_shape[2] * weight_shape[3] : weight_shape[2];
+
+                auto topk_indices_shape = topk_indices.get_partial_shape();
+                auto topk_rank = topk_indices_shape.rank().get_length();
+                OPENVINO_ASSERT(topk_indices_shape[topk_rank - 1].is_static(),
+                                "K dimension in moe topk_indices input should be static.");
+
+                MOECompressed::Config compressed_config{
+                    {ov::op::internal::MOE::Expert_type::GEMM2_BIAS_SWIGLU_CLAMP, expert_alpha, expert_beta},
+                    hidden,
+                    weight_shape[1],
+                    weight_shape[0],
+                    0,
+                    static_cast<size_t>(topk_indices_shape[topk_rank - 1].get_length()),
+                    group_compressed ? weight_shape[3] : std::numeric_limits<size_t>::max(),
+                    has_batch_dim,
+                    has_zp,
+                    out_type,
+                };
+
+                moe_node = std::make_shared<MOECompressed>(moe_inputs, compressed_config);
+            } else {
+                const ov::op::internal::MOE::Config config{
+                    ov::op::internal::MOE::Expert_type::GEMM2_BIAS_SWIGLU_CLAMP,
+                    expert_alpha,
+                    expert_beta};
+                const ov::OutputVector moe_inputs =
+                    {hidden_states, routing, topk_indices, gate_up_w, gate_up_bias, down_w, down_bias};
+
+                moe_node = std::make_shared<ov::op::internal::MOE>(moe_inputs, config);
             }
-            moe_inputs.push_back(down_bias);
-
-            // Populate compressed config from weight shapes
-            auto weight_shape = gate_up_w.get_shape();
-            auto scale_shape = pm.at(gate_up_scale_m).get_shape();
-            bool group_compressed = (weight_shape.size() == 4);
-            size_t hidden = group_compressed ? weight_shape[2] * weight_shape[3] : weight_shape[2];
-
-            auto topk_indices_shape = topk_indices.get_partial_shape();
-            auto topk_rank = topk_indices_shape.rank().get_length();
-            OPENVINO_ASSERT(topk_indices_shape[topk_rank - 1].is_static(),
-                            "K dimension in moe topk_indices input should be static.");
-
-            MOECompressed::Config compressed_config{
-                {ov::op::internal::MOE::Expert_type::GEMM2_BIAS_SWIGLU_CLAMP, expert_alpha, expert_beta},
-                hidden,
-                weight_shape[1],
-                weight_shape[0],
-                0,  // num_shared_expert
-                static_cast<size_t>(topk_indices_shape[topk_rank - 1].get_length()),
-                group_compressed ? weight_shape[3] : std::numeric_limits<size_t>::max(),
-                has_batch_dim,
-                has_zp,
-                out_type,
-            };
-
-            moe_node = std::make_shared<MOECompressed>(moe_inputs, compressed_config);
         } else {
-            const ov::op::internal::MOE::Config config{ov::op::internal::MOE::Expert_type::GEMM2_BIAS_SWIGLU_CLAMP,
-                                                       expert_alpha,
-                                                       expert_beta};
-            // Plain MOE with 7 inputs
-            const ov::OutputVector moe_inputs =
-                {hidden_states, routing, topk_indices, gate_up_w, gate_up_bias, down_w, down_bias};
+            // --- GEMM3_SWIGLU path ---
+            // Extract expert_beta from Swish node (default 1.0f if no beta input)
+            float expert_beta = 1.0f;
+            auto swish_node = pm.at(swish_swiglu_m).get_node_shared_ptr();
+            if (auto swish_op = ov::as_type_ptr<v4::Swish>(swish_node)) {
+                if (swish_op->get_input_size() > 1) {
+                    if (auto beta_const = ov::as_type_ptr<v0::Constant>(swish_op->get_input_node_shared_ptr(1))) {
+                        expert_beta = beta_const->cast_vector<float>()[0];
+                    }
+                }
+            }
 
-            moe_node = std::make_shared<ov::op::internal::MOE>(moe_inputs, config);
+            // Split gate_up_w back into gate_w and up_w constant halves
+            auto gate_up_w_const = ov::as_type_ptr<v0::Constant>(gate_up_w.get_node_shared_ptr());
+            if (!gate_up_w_const) {
+                return false;
+            }
+            auto gate_up_shape = gate_up_w_const->get_shape();
+            // gate_up_w shape: [n_experts, 2*intermediate_size, hidden_size]
+            // Split along axis 1 into two halves
+            const int64_t half = static_cast<int64_t>(gate_up_shape[1] / 2);
+
+            auto gate_w = ov::op::util::make_try_fold<v8::Slice>(
+                gate_up_w_const,
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {0}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {half}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+            auto gate_w_const = ov::as_type_ptr<v0::Constant>(gate_w);
+
+            auto up_w = ov::op::util::make_try_fold<v8::Slice>(
+                gate_up_w_const,
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {half}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {2 * half}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+            auto up_w_const = ov::as_type_ptr<v0::Constant>(up_w);
+
+            if (!gate_w_const || !up_w_const) {
+                return false;
+            }
+
+            const bool is_compressed = pm.count(bgm_gate_up_6_m) > 0;
+            if (is_compressed) {
+                // Build MOECompressed with 12 inputs: hidden, routing, topk,
+                // gate_w, gate_scale, gate_zp, up_w, up_scale, up_zp, down_w, down_scale, down_zp
+                // For the GEMM3_SWIGLU compressed path, the gate_up scale/zp also need splitting.
+                // However, the scale/zp correspond to the full gate_up_w and must be split similarly.
+                auto gate_up_scale = pm.at(gate_up_scale_m);
+                auto gate_up_zp = pm.at(gate_up_zp_m);
+
+                // Scale shape matches weight shape on the split axis
+                auto gate_up_scale_const = ov::as_type_ptr<v0::Constant>(gate_up_scale.get_node_shared_ptr());
+                auto gate_up_zp_const = ov::as_type_ptr<v0::Constant>(gate_up_zp.get_node_shared_ptr());
+                if (!gate_up_scale_const) {
+                    return false;
+                }
+
+                auto scale_shape = gate_up_scale_const->get_shape();
+                const int64_t scale_half = static_cast<int64_t>(scale_shape[1] / 2);
+
+                auto gate_scale = ov::op::util::make_try_fold<v8::Slice>(
+                    gate_up_scale_const,
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {0}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {scale_half}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+
+                auto up_scale = ov::op::util::make_try_fold<v8::Slice>(
+                    gate_up_scale_const,
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {scale_half}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {2 * scale_half}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                    v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+
+                std::shared_ptr<ov::Node> gate_zp, up_zp;
+                bool has_zp = gate_up_zp.get_element_type() != ov::element::dynamic;
+                if (has_zp && gate_up_zp_const) {
+                    auto zp_shape = gate_up_zp_const->get_shape();
+                    const int64_t zp_half = static_cast<int64_t>(zp_shape[1] / 2);
+
+                    gate_zp = ov::op::util::make_try_fold<v8::Slice>(
+                        gate_up_zp_const,
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {0}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {zp_half}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+
+                    up_zp = ov::op::util::make_try_fold<v8::Slice>(
+                        gate_up_zp_const,
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {zp_half}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {2 * zp_half}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}),
+                        v0::Constant::create(ov::element::i64, ov::Shape{1}, {1}));
+                } else {
+                    gate_zp = gate_up_zp.get_node_shared_ptr();
+                    up_zp = gate_up_zp.get_node_shared_ptr();
+                }
+
+                ov::OutputVector moe_inputs = {
+                    hidden_states,
+                    routing,
+                    topk_indices,
+                    gate_w_const,
+                    gate_scale,
+                    gate_zp,
+                    up_w_const,
+                    up_scale,
+                    up_zp,
+                    down_w,
+                    pm.at(down_scale_m),
+                    pm.at(down_zp_m),
+                };
+
+                auto wei_shape = gate_w_const->get_shape();
+                bool group_compressed = (wei_shape.size() == 4);
+
+                auto topk_shape = topk_indices.get_partial_shape();
+                OPENVINO_ASSERT(topk_shape[1].is_static(), "K dimension in moe topk input should be static.");
+
+                MOECompressed::Config compressed_config{
+                    {ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU, 0.0f, expert_beta},
+                    group_compressed ? wei_shape[2] * wei_shape[3] : wei_shape[2],
+                    wei_shape[1],
+                    wei_shape[0],
+                    0,
+                    static_cast<size_t>(topk_shape[1].get_length()),
+                    group_compressed ? wei_shape[3] : std::numeric_limits<size_t>::max(),
+                    has_batch_dim,
+                    false,
+                    out_type,
+                };
+
+                auto moe_compressed = std::make_shared<MOECompressed>(moe_inputs, compressed_config);
+
+                if (moe_compressed->get_output_element_type(0) != hidden_states.get_element_type()) {
+                    moe_compressed->set_friendly_name(m.get_match_root()->get_friendly_name() + "/MOECompressed");
+                    auto convert = std::make_shared<v0::Convert>(moe_compressed, hidden_states.get_element_type());
+                    convert->set_friendly_name(m.get_match_root()->get_friendly_name());
+                    ov::copy_runtime_info(m.get_matched_nodes(), {moe_compressed, convert});
+                    moe_node = convert;
+                } else {
+                    moe_node = moe_compressed;
+                }
+            } else {
+                ov::op::internal::MOE::Config config{ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU,
+                                                     0.0f,
+                                                     expert_beta};
+                ov::OutputVector moe_inputs = {hidden_states, routing, topk_indices,
+                                               gate_w_const, up_w_const, down_w};
+
+                moe_node = std::make_shared<ov::op::internal::MOE>(moe_inputs, config);
+            }
         }
 
         moe_node->set_friendly_name(m.get_match_root()->get_friendly_name());

@@ -11,6 +11,7 @@
 #include "openvino/core/rt_info.hpp"
 #include "openvino/op/add.hpp"
 #include "openvino/op/clamp.hpp"
+#include "openvino/op/concat.hpp"
 #include "openvino/op/constant.hpp"
 #include "openvino/op/matmul.hpp"
 #include "openvino/op/minimum.hpp"
@@ -27,6 +28,7 @@
 #include "openvino/pass/pattern/op/optional.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "ov_ops/gather_matmul.hpp"
+#include "transformations/utils/utils.hpp"
 
 namespace {
 using namespace ov::pass;
@@ -296,20 +298,77 @@ ConvertTiledMoeBlockTo3GatherMatmuls::ConvertTiledMoeBlockTo3GatherMatmuls() {
         const auto up_mm_node = pm.at(p.up_matmul).get_node_shared_ptr();
         const auto down_mm_node = pm.at(p.down_matmul).get_node_shared_ptr();
 
+        // Constant-fold the concatenation of gate_w and up_w along axis 1
+        // gate_w: [n_experts, intermediate_size, hidden_size]
+        // up_w:   [n_experts, intermediate_size, hidden_size]
+        // result: [n_experts, 2*intermediate_size, hidden_size]
+        auto gate_w_const = ov::as_type_ptr<v0::Constant>(gate_mm_node->input_value(1).get_node_shared_ptr());
+        auto up_w_const = ov::as_type_ptr<v0::Constant>(up_mm_node->input_value(1).get_node_shared_ptr());
+        if (!gate_w_const || !up_w_const) {
+            return false;
+        }
+
+        auto gate_up_w = ov::op::util::make_try_fold<v0::Concat>(
+            ov::OutputVector{gate_w_const, up_w_const}, 1);
+        auto gate_up_w_const = ov::as_type_ptr<v0::Constant>(gate_up_w);
+        if (!gate_up_w_const) {
+            return false;
+        }
+        ov::copy_runtime_info({gate_mm_node, up_mm_node}, gate_up_w_const);
+
         // GatherMatmul A shape: [n_activated_experts, batch_size * seq_length, hidden_size]
-        // Number of activated experts is always 1 for the first GatherMatmul
         const auto unsqueeze = introduce_n_experts_dim(experts_subgraph_input);
-        const auto gate_gathered_mm =
-            std::make_shared<GatherMatmul>(unsqueeze, gate_mm_node->input_value(1), active_indices);
-        const auto up_gathered_mm =
-            std::make_shared<GatherMatmul>(unsqueeze, up_mm_node->input_value(1), active_indices);
-        ov::replace_node_update_name(gate_mm_node, gate_gathered_mm);
-        ov::replace_node_update_name(up_mm_node, up_gathered_mm);
 
-        validate_nodes(pm, {p.swish, p.swiglu});
+        // gate_up_bgm: single BGM with concatenated gate+up weights (no bias → 3-input ctor)
+        const auto gate_up_gathered_mm =
+            std::make_shared<GatherMatmul>(unsqueeze, gate_up_w_const, active_indices);
+        ov::copy_runtime_info({gate_mm_node, up_mm_node}, gate_up_gathered_mm);
+        gate_up_gathered_mm->set_friendly_name(gate_mm_node->get_friendly_name() + "_gate_up");
 
+        // Slice the gate_up_bgm output to recover gate and up halves along the last axis
+        const auto gate_w_shape = gate_w_const->get_shape();
+        const int64_t intermediate_size = static_cast<int64_t>(gate_w_shape[1]);
+
+        // gate_slice: [..., 0:intermediate_size]
+        auto gate_slice_start = v0::Constant::create(ov::element::i64, ov::Shape{1}, {0});
+        auto gate_slice_stop = v0::Constant::create(ov::element::i64, ov::Shape{1}, {intermediate_size});
+        auto gate_slice_step = v0::Constant::create(ov::element::i64, ov::Shape{1}, {1});
+        auto gate_slice_axes = v0::Constant::create(ov::element::i64, ov::Shape{1}, {-1});
+        auto gate_slice = std::make_shared<v8::Slice>(gate_up_gathered_mm,
+                                                      gate_slice_start,
+                                                      gate_slice_stop,
+                                                      gate_slice_step,
+                                                      gate_slice_axes);
+        ov::copy_runtime_info(gate_mm_node,
+                              {gate_slice, gate_slice_start, gate_slice_stop, gate_slice_step, gate_slice_axes});
+
+        // up_slice: [..., intermediate_size:2*intermediate_size]
+        auto up_slice_start = v0::Constant::create(ov::element::i64, ov::Shape{1}, {intermediate_size});
+        auto up_slice_stop = v0::Constant::create(ov::element::i64, ov::Shape{1}, {2 * intermediate_size});
+        auto up_slice_step = v0::Constant::create(ov::element::i64, ov::Shape{1}, {1});
+        auto up_slice_axes = v0::Constant::create(ov::element::i64, ov::Shape{1}, {-1});
+        auto up_slice = std::make_shared<v8::Slice>(gate_up_gathered_mm,
+                                                    up_slice_start,
+                                                    up_slice_stop,
+                                                    up_slice_step,
+                                                    up_slice_axes);
+        ov::copy_runtime_info(up_mm_node,
+                              {up_slice, up_slice_start, up_slice_stop, up_slice_step, up_slice_axes});
+
+        // Reconnect: Swish(gate_slice) * up_slice
+        const auto swish_node = pm.at(p.swish).get_node_shared_ptr();
+        const auto new_swish = swish_node->clone_with_new_inputs({gate_slice->output(0)});
+        ov::copy_runtime_info(swish_node, new_swish);
+        new_swish->set_friendly_name(swish_node->get_friendly_name());
+
+        const auto swiglu_node = pm.at(p.swiglu).get_node_shared_ptr();
+        const auto new_swiglu = swiglu_node->clone_with_new_inputs({new_swish->output(0), up_slice->output(0)});
+        ov::copy_runtime_info(swiglu_node, new_swiglu);
+        new_swiglu->set_friendly_name(swiglu_node->get_friendly_name());
+
+        // down_bgm: unchanged
         const auto down_gathered_mm =
-            std::make_shared<GatherMatmul>(pm.at(p.swiglu), down_mm_node->input_value(1), active_indices);
+            std::make_shared<GatherMatmul>(new_swiglu, down_mm_node->input_value(1), active_indices);
         ov::copy_runtime_info(down_mm_node, down_gathered_mm);
         down_gathered_mm->set_friendly_name(down_mm_node->get_friendly_name());
 

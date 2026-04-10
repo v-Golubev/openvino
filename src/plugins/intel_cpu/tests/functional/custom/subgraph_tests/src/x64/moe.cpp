@@ -91,7 +91,7 @@ public:
         case MoEType::MoE2GeMM:
             return 2;
         case MoEType::MoE3GeMM:
-            return 3;
+            return 2;
         default:
             OPENVINO_THROW("Unsupported MoEType");
         }
