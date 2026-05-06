@@ -10,6 +10,7 @@
 #include <openvino/op/clamp.hpp>
 #include <openvino/op/concat.hpp>
 #include <openvino/op/constant.hpp>
+#include <openvino/op/gelu.hpp>
 #include <openvino/op/matmul.hpp>
 #include <openvino/op/minimum.hpp>
 #include <openvino/op/moe.hpp>
@@ -34,6 +35,7 @@
 #include "openvino/op/transpose.hpp"
 #include "openvino/op/unsqueeze.hpp"
 #include "ov_ops/gather_matmul.hpp"
+#include "ov_ops/glu.hpp"
 #include "transformations/common_optimizations/convert_tiled_moe_block_to_gather_matmuls.hpp"
 #include "transformations/common_optimizations/moe_op_fusion.hpp"
 
@@ -583,6 +585,138 @@ inline std::shared_ptr<ov::Model> build_2gemm_bgm_to_moe_reference_model() {
 }
 
 // ============================================================================
+// Gelu (GeGLU) variant of the 3-GEMM BGM model
+// ============================================================================
+
+inline std::shared_ptr<ov::Model> build_3gemm_bgm_model_gelu() {
+    using namespace ov;
+
+    const size_t batch = 2;
+    const Dimension in_dim = Dimension::dynamic();
+    const size_t hidden_size = 2048;
+    const size_t intermediate_size = 4096;
+    const size_t number_of_experts = 3;
+    const size_t topk = 2;
+
+    auto input = std::make_shared<op::v0::Parameter>(element::f32, PartialShape{batch, in_dim, hidden_size});
+    auto experts_reshape = std::make_shared<op::v1::Reshape>(
+        input,
+        op::v0::Constant::create(element::i64, Shape{2}, std::vector<int64_t>{-1, static_cast<int64_t>(hidden_size)}),
+        false);
+
+    auto unsqueeze =
+        std::make_shared<op::v0::Unsqueeze>(experts_reshape, op::v0::Constant::create(element::i32, Shape{}, {0}));
+
+    // Router
+    auto router_matmul = std::make_shared<op::v0::MatMul>(
+        experts_reshape,
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, hidden_size}, {1.0f}),
+        false,
+        true);
+    auto router_topk = std::make_shared<op::v11::TopK>(router_matmul,
+                                                       op::v0::Constant::create(element::i64, Shape{}, {topk}),
+                                                       -1,
+                                                       op::v11::TopK::Mode::MAX,
+                                                       op::v11::TopK::SortType::SORT_VALUES,
+                                                       element::i64);
+    auto topk_indices = router_topk->output(1);
+    auto chosen_experts = router_topk->output(0);
+
+    // Weights
+    auto gate_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, intermediate_size, hidden_size}, {1.0f});
+    auto up_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, intermediate_size, hidden_size}, {1.0f});
+    auto down_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, hidden_size, intermediate_size}, {1.0f});
+
+    // 3 BGMs with Gelu instead of Swish
+    auto bgm_gate = std::make_shared<GatherMatmul>(unsqueeze, gate_w, topk_indices);
+    auto gelu = std::make_shared<op::v7::Gelu>(bgm_gate);
+    auto bgm_up = std::make_shared<GatherMatmul>(unsqueeze, up_w, topk_indices);
+    auto geglu = std::make_shared<op::v1::Multiply>(gelu, bgm_up);
+    auto bgm_down = std::make_shared<GatherMatmul>(geglu, down_w, topk_indices);
+
+    // Compact routing
+    auto router_transpose = std::make_shared<op::v1::Transpose>(
+        chosen_experts,
+        op::v0::Constant::create(element::i64, Shape{2}, std::vector<int64_t>{1, 0}));
+    auto router_unsqueeze =
+        std::make_shared<op::v0::Unsqueeze>(router_transpose, op::v0::Constant::create(element::i32, Shape{}, {-1}));
+
+    auto final_mul = std::make_shared<op::v1::Multiply>(bgm_down, router_unsqueeze);
+    auto reduce_sum =
+        std::make_shared<op::v1::ReduceSum>(final_mul,
+                                            op::v0::Constant::create(element::i64, Shape{1}, std::vector<int64_t>{0}),
+                                            false);
+
+    auto end_reshape = std::make_shared<op::v1::Reshape>(
+        reduce_sum,
+        op::v0::Constant::create(
+            element::i64,
+            Shape{3},
+            std::vector<int64_t>{static_cast<int64_t>(batch), -1, static_cast<int64_t>(hidden_size)}),
+        true);
+
+    return std::make_shared<ov::Model>(ov::OutputVector{end_reshape}, ov::ParameterVector{input});
+}
+
+inline std::shared_ptr<ov::Model> build_3gemm_bgm_to_moe_reference_model_gelu() {
+    using namespace ov;
+
+    const size_t batch = 2;
+    const Dimension in_dim = Dimension::dynamic();
+    const size_t hidden_size = 2048;
+    const size_t intermediate_size = 4096;
+    const size_t number_of_experts = 3;
+    const size_t topk = 2;
+
+    auto input = std::make_shared<op::v0::Parameter>(element::f32, PartialShape{batch, in_dim, hidden_size});
+
+    auto experts_reshape = std::make_shared<op::v1::Reshape>(
+        input,
+        op::v0::Constant::create(element::i64, Shape{2}, std::vector<int64_t>{-1, static_cast<int64_t>(hidden_size)}),
+        false);
+
+    auto router_matmul = std::make_shared<op::v0::MatMul>(
+        experts_reshape,
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, hidden_size}, {1.0f}),
+        false,
+        true);
+    auto router_topk = std::make_shared<op::v11::TopK>(router_matmul,
+                                                       op::v0::Constant::create(element::i64, Shape{}, {topk}),
+                                                       -1,
+                                                       op::v11::TopK::Mode::MAX,
+                                                       op::v11::TopK::SortType::SORT_VALUES,
+                                                       element::i64);
+    auto topk_indices = router_topk->output(1);
+    auto chosen_experts = router_topk->output(0);
+
+    auto router_transpose = std::make_shared<op::v1::Transpose>(
+        chosen_experts,
+        op::v0::Constant::create(element::i64, Shape{2}, std::vector<int64_t>{1, 0}));
+    auto router_unsqueeze =
+        std::make_shared<op::v0::Unsqueeze>(router_transpose, op::v0::Constant::create(element::i32, Shape{}, {-1}));
+
+    // Weights
+    auto gate_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, intermediate_size, hidden_size}, {1.0f});
+    auto up_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, intermediate_size, hidden_size}, {1.0f});
+    auto down_w =
+        op::v0::Constant::create(element::f32, Shape{number_of_experts, hidden_size, intermediate_size}, {1.0f});
+
+    // MOE op with Gelu glu_type
+    ov::OutputVector moe_inputs = {input, router_unsqueeze, topk_indices, gate_w, up_w, down_w};
+    ov::op::internal::MOE::Config config;
+    config.expert_type = ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU;
+    config.glu_type = ov::op::internal::GLU::GluType::Gelu;
+    auto moe = std::make_shared<ov::op::internal::MOE>(moe_inputs, config);
+
+    return std::make_shared<ov::Model>(ov::OutputVector{moe}, ov::ParameterVector{input});
+}
+
+// ============================================================================
 // Tests for BGM→MOE passes (Convert3GatherMatmulMoeBlockToMoeOp, Convert2GatherMatmulMoeBlockToMoeOp)
 // ============================================================================
 
@@ -590,6 +724,12 @@ TEST_F(TransformationTestsF, Convert3GatherMatmulMoeBlockToMoeOp_basic) {
     model = build_3gemm_bgm_model();
     manager.register_pass<ov::pass::Convert3GatherMatmulMoeBlockToMoeOp>();
     model_ref = build_3gemm_bgm_to_moe_reference_model();
+}
+
+TEST_F(TransformationTestsF, Convert3GatherMatmulMoeBlockToMoeOp_gelu) {
+    model = build_3gemm_bgm_model_gelu();
+    manager.register_pass<ov::pass::Convert3GatherMatmulMoeBlockToMoeOp>();
+    model_ref = build_3gemm_bgm_to_moe_reference_model_gelu();
 }
 
 TEST_F(TransformationTestsF, Convert2GatherMatmulMoeBlockToMoeOp_basic) {

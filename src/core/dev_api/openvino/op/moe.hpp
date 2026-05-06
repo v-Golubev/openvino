@@ -11,6 +11,7 @@
 #include "openvino/core/type/element_type.hpp"
 #include "openvino/op/constant.hpp"
 #include "openvino/op/op.hpp"
+#include "ov_ops/glu.hpp"
 
 namespace ov::op::internal {
 ///
@@ -30,6 +31,7 @@ public:
         float expert_alpha{0.0f};  // Expert attribute for clamp bounds
         float expert_beta{1.0f};   // Expert attribute for swish beta
         size_t gate_idx{0};        // gate (swish) lane in interleaved gate/up; GEMM2 only
+        GLU::GluType glu_type{GLU::GluType::Swish};  // Activation type: Swish (SwiGLU) or Gelu (GeGLU)
     };
 
     /// \brief Constructs a MOE operation with config only

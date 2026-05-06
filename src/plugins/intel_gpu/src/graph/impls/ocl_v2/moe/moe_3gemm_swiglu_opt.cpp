@@ -597,6 +597,11 @@ protected:
         jit.make("SUBGROUP_SIZE", info.arch >= gpu_arch::xe2 ? 32 : 16);
         jit.make("INTERMEDIA_SIZE", desc->_config.inter_size);
         jit.make("MOE_DTYPE", "half");
+        // GLU activation type: 0=Swish, 1=Gelu, 2=Gelu_Tanh
+        jit.make("GLU_TYPE", static_cast<int>(desc->_config.glu_type));
+        if (desc->_config.glu_type == ov::op::internal::GLU::GluType::Swish) {
+            jit.make("SWISH_BETA", desc->_config.expert_beta);
+        }
         if (m_use_grouped_gemm)
             jit.make("ONEDNN_GROUPED_GEMM_USED", 1);
         return jit;
@@ -754,6 +759,8 @@ protected:
         auto desc = params.typed_desc<moe_3gemm_fused_compressed>();
         add_common_consts(params, jit);
         jit.make("GATE_UP_ENABLE", 1);
+        // GLU activation type: 0=Swish, 1=Gelu, 2=Gelu_Tanh
+        jit.make("GLU_TYPE", static_cast<int>(desc->_config.glu_type));
         if (!_disable_shared_experts && desc->_config.num_shared_expert > 0 &&
             params.input_layouts.size() > static_cast<size_t>(MOE3GemmInputIndex::SHARED_GATE_WEIGHT)) {
             jit.make("SHARED_EXPERT_ENABLE", 1);

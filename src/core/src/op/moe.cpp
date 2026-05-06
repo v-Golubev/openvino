@@ -42,6 +42,7 @@ bool MOE::visit_attributes(ov::AttributeVisitor& visitor) {
     visitor.on_attribute("expert_alpha", m_config.expert_alpha);
     visitor.on_attribute("expert_beta", m_config.expert_beta);
     visitor.on_attribute("gate_idx", m_config.gate_idx);
+    visitor.on_attribute("glu_type", m_config.glu_type);
 
     return true;
 }

@@ -566,6 +566,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 manager.register_pass<ov::intel_gpu::FuseMOE3GemmCompressed>();
             }
         }
+        manager.register_pass<ov::pass::Serialize>("after.xml", "");
         manager.register_pass<ov::pass::GatedDeltaNetFusion>();
         manager.register_pass<ov::pass::InitNodeInfo>();
         manager.register_pass<EinsumDecomposition>();

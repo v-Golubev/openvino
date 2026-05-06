@@ -227,8 +227,20 @@ KERNEL (index_add_)(const __global MOE_DTYPE* src_tok,
 
 #elif PREFILL_SWIGLU_ENABLE
 
-#define SWISH_BETA 1.0f
 #define ACC_DTYPE float
+
+inline ACC_DTYPE apply_glu_activation(ACC_DTYPE gate_value) {
+#if GLU_TYPE == 0  // Swish / SiLU
+    return gate_value / (1.0f + native_exp(-SWISH_BETA * gate_value));
+#elif GLU_TYPE == 1  // Gelu (erf approximation)
+    return (0.5f * gate_value * (1.0f + erf(gate_value * 0.7071067811865475f)));
+#elif GLU_TYPE == 2  // Gelu_Tanh
+    return (0.5f * gate_value * (1.0f + tanh(0.79788458347320556640625f * gate_value * (1.0f + 0.044715f * gate_value * gate_value))));
+#else
+    return gate_value / (1.0f + native_exp(-gate_value));  // fallback: SiLU with beta=1
+#endif
+}
+
 __attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE)))
 KERNEL(swiglu_ref) (
     const __global MOE_DTYPE* up, // [token_len * expert_topK, inter_size]
@@ -245,14 +257,14 @@ KERNEL(swiglu_ref) (
     const uint offset = token_idx * INTERMEDIA_SIZE + n_offset - sg_id;
     ACC_DTYPE up_value = as_half(intel_sub_group_block_read_us((const __global ushort *)(up + offset)));
     ACC_DTYPE gate_value = as_half(intel_sub_group_block_read_us((const __global ushort *)(gate + offset)));
-    ACC_DTYPE value = gate_value / (1.0f + native_exp(-SWISH_BETA * gate_value));
+    ACC_DTYPE value = apply_glu_activation(gate_value);
     half result = value * up_value;
     intel_sub_group_block_write_us((__global ushort *)(output + offset), as_ushort(result));
 #else
     const uint offset = token_idx * INTERMEDIA_SIZE + n_offset;
     ACC_DTYPE gate_value = gate[offset];
     ACC_DTYPE up_value = up[offset];
-    ACC_DTYPE value = gate_value / (1.0f + native_exp(-SWISH_BETA * gate_value));
+    ACC_DTYPE value = apply_glu_activation(gate_value);
     ACC_DTYPE result = value * up_value;
     output[offset] = result;
 #endif

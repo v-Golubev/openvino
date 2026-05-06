@@ -53,6 +53,20 @@
 #    define DEQUANT_8BIT(v)    convert_half(v)
 #endif
 
+// GLU activation dispatch: apply gate activation based on GLU_TYPE
+// 0=Swish/SiLU, 1=Gelu(erf), 2=Gelu_Tanh
+inline float apply_gate_activation(float gate_val) {
+#if GLU_TYPE == 0
+    return gate_val / (1.0f + exp(-gate_val));
+#elif GLU_TYPE == 1
+    return 0.5f * gate_val * (1.0f + erf(gate_val * 0.7071067811865475f));
+#elif GLU_TYPE == 2
+    return 0.5f * gate_val * (1.0f + tanh(0.79788458347320556640625f * gate_val * (1.0f + 0.044715f * gate_val * gate_val)));
+#else
+    return gate_val / (1.0f + exp(-gate_val));
+#endif
+}
+
 #if GATE_UP_ENABLE
 inline void gate_up_gemv_n2x_u4(const __global uchar* weight,
                                 __global half* scales,
@@ -152,8 +166,8 @@ inline void gate_up_gemv_n2x_u4(const __global uchar* weight,
         sum_all1 = sub_group_reduce_add(sum_all1);
         if (id_local == 0) {
             if (silu) {
-                y[n] *= sum_all0 / (1 + exp(-sum_all0));
-                y[n + 1] *= sum_all1 / (1 + exp(-sum_all1));
+                y[n] *= apply_gate_activation(sum_all0);
+                y[n + 1] *= apply_gate_activation(sum_all1);
             } else {
                 y[n] = sum_all0;
                 y[n + 1] = sum_all1;
@@ -259,8 +273,8 @@ inline void gate_up_gemv_n2x_u8(const __global uchar* weight,
         sum_all1 = sub_group_reduce_add(sum_all1);
         if (id_local == 0) {
             if (silu) {
-                y[n] *= sum_all0 / (1 + exp(-sum_all0));
-                y[n + 1] *= sum_all1 / (1 + exp(-sum_all1));
+                y[n] *= apply_gate_activation(sum_all0);
+                y[n + 1] *= apply_gate_activation(sum_all1);
             } else {
                 y[n] = sum_all0;
                 y[n + 1] = sum_all1;
@@ -335,8 +349,8 @@ inline void gate_up_gemv_n2x_f16(const __global half* weight, __global half* y, 
         sum_all1 = sub_group_reduce_add(sum_all1);
         if (id_local == 0) {
             if (silu) {
-                y[n] *= sum_all0 / (1 + exp(-sum_all0));
-                y[n + 1] *= sum_all1 / (1 + exp(-sum_all1));
+                y[n] *= apply_gate_activation(sum_all0);
+                y[n + 1] *= apply_gate_activation(sum_all1);
             } else {
                 y[n] = sum_all0;
                 y[n + 1] = sum_all1;
