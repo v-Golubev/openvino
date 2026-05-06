@@ -44,7 +44,7 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
 
     auto hidden_state_m = ANY;
     auto hidden_state_reshape = optional<ov::op::v1::Reshape>({hidden_state_m, ANY});
-    auto matmul = wrap_type<ov::op::v0::MatMul>({hidden_state_reshape, ANY}, consumers_count(1));
+    auto matmul = wrap_type<ov::op::v0::MatMul>({ANY, ANY}, consumers_count(1));
 
     // ── Softmax routing branch ──────────────────────────────────────────
     auto sm_softmax = wrap_type<ov::op::v8::Softmax>({matmul}, consumers_count(1));
@@ -54,7 +54,14 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
     auto sm_reduce = wrap_type<ov::op::v1::ReduceSum>({sm_topk->output(0), ANY}, consumers_count(1));
     auto sm_norm = wrap_type<ov::op::v1::Divide>({sm_topk->output(0), sm_reduce}, consumers_count(1));
     auto sm_convert_topk = optional<ov::op::v0::Convert>({sm_topk->output(1)});
-    auto sm_transpose = wrap_type<ov::op::v1::Transpose>({sm_norm, ANY}, consumers_count(1));
+    // Gemma 4 applies a per-expert scale: Multiply(norm, Gather(per_expert_scale, topk_indices, axis)).
+    // The Gather selects per-chosen-expert scales so this cannot be factored out as a post-op.
+    // Instead, we pass the per_expert_scale constant to the fused op which applies it during
+    // the scatter-reduction phase (w[e] *= per_expert_scale[expert_id[e]]).
+    auto sm_per_expert_scale_m = ANY;
+    auto sm_norm_scaled = optional<ov::op::v1::Multiply>({sm_norm, sm_per_expert_scale_m}, consumers_count(1));
+    auto sm_slice = optional<ov::op::v8::Slice>({sm_norm_scaled, ANY, ANY, ANY, ANY});
+    auto sm_transpose = wrap_type<ov::op::v1::Transpose>({sm_slice, ANY}, consumers_count(1));
     auto sm_unsqueeze = wrap_type<ov::op::v0::Unsqueeze>({sm_transpose, ANY}, consumers_count(1));
 
     // ── Sigmoid+bias routing branch ─────────────────────────────────────
@@ -174,9 +181,11 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
             args.push_back(pattern_map.at(sig_routing_bias));
             args.push_back(pattern_map.at(sig_eps_value));
             config.routing_type = ov::op::internal::MOECompressed::RoutingType::SIGMOID_BIAS;
-        } else if (has_shared_expert) {
-            // SOFTMAX + shared expert: insert dummy placeholders at indices 11-12
-            // so that shared expert inputs always start at index 13.
+        } else {
+            // SOFTMAX: always insert dummy routing_bias/eps placeholders at indices 11-12
+            // so that (a) shared expert inputs always start at index 13, and (b) per_expert_scale
+            // is always the last input, and (c) total input count never accidentally matches
+            // the standard MOECompressed layout (12 inputs).
             auto dummy_bias = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{1}, {0.0f});
             auto dummy_eps = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{1}, {0.0f});
             args.push_back(dummy_bias);
@@ -193,6 +202,19 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
             args.push_back(pattern_map.at(shared_down_scale_m));
             args.push_back(pattern_map.at(shared_down_zp_m));
             args.push_back(pattern_map.at(shared_gate_gate_wei_m));
+        }
+
+        // Per-expert scale: Gemma 4 style routing where each expert has an
+        // individual scale applied to its routing weight after normalization.
+        // The pattern matched Multiply(norm, Gather(scale_const, topk_indices, axis)).
+        // We pass the raw scale constant [num_experts] to the fused op.
+        if (pattern_map.count(sm_norm_scaled)) {
+            auto gather_output = pattern_map.at(sm_per_expert_scale_m);
+            auto gather_node = gather_output.get_node_shared_ptr();
+            // The Gather's data input (input 0) is the per_expert_scale constant
+            auto per_expert_scale = gather_node->input_value(0);
+            args.push_back(per_expert_scale);
+            config.has_per_expert_scale = true;
         }
 
         std::shared_ptr<ov::Node> moe_router_fused = std::make_shared<ov::intel_gpu::op::MOE3GemmFusedCompressed>(args, config);

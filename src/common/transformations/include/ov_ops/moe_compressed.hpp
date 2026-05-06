@@ -32,6 +32,7 @@ public:
         // In Non-CB, intermediate shapes are expanded to {Batch, SeqLen, HiddenSize}
         bool has_batch_dim = false;
         bool has_zp = false;
+        bool has_per_expert_scale = false;
         ov::element::Type out_type = ov::element::dynamic;
         RoutingType routing_type = RoutingType::SOFTMAX;
     };

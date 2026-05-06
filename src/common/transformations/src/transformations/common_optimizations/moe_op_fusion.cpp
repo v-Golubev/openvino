@@ -192,6 +192,7 @@ Convert3GatherMatmulMoeBlockToMoeOp::Convert3GatherMatmulMoeBlockToMoeOp(bool ha
                 group_size,
                 has_batch_dim,
                 has_zp,
+                false,  // has_per_expert_scale
                 ov::element::f16,
             };
 
@@ -400,6 +401,7 @@ Convert2GatherMatmulMoeBlockToMoeOp::Convert2GatherMatmulMoeBlockToMoeOp(bool ha
                 group_size,
                 has_batch_dim,
                 has_zp,
+                false,  // has_per_expert_scale
                 ov::element::dynamic,
             };
 

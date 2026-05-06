@@ -163,6 +163,7 @@ bool MOECompressed::visit_attributes(ov::AttributeVisitor& visitor) {
     visitor.on_attribute("group_size", m_config.group_size);
     visitor.on_attribute("has_batch_dim", m_config.has_batch_dim);
     visitor.on_attribute("has_zp", m_config.has_zp);
+    visitor.on_attribute("has_per_expert_scale", m_config.has_per_expert_scale);
     visitor.on_attribute("out_type", m_config.out_type);
     visitor.on_attribute("routing_type", m_config.routing_type);
     return true;

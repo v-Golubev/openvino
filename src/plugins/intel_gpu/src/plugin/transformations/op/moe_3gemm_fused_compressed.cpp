@@ -13,9 +13,10 @@ MOE3GemmFusedCompressed::MOE3GemmFusedCompressed(const OutputVector& args, const
 }
 
 void MOE3GemmFusedCompressed::validate_and_infer_types() {
-    const size_t expected_inputs = m_config.num_shared_expert > 0 ? 23
-                                 : m_config.routing_type == MOECompressed::RoutingType::SIGMOID_BIAS ? 13
-                                 : 11;
+    // Base input counts: SOFTMAX=13 (11 + 2 dummy bias/eps), SIGMOID_BIAS=13, shared=23.
+    size_t expected_inputs = m_config.num_shared_expert > 0 ? 23 : 13;
+    if (m_config.has_per_expert_scale)
+        expected_inputs += 1;
     OPENVINO_ASSERT(get_input_size() == expected_inputs,
                     "MOECompressed: expected ",
                     expected_inputs,
@@ -31,7 +32,11 @@ void MOE3GemmFusedCompressed::validate_and_infer_types() {
                         get_input_partial_shape(12));
     }
 
-    MOECompressed::validate_and_infer_types();
+    // Set output type/shape. Do NOT call MOECompressed::validate_and_infer_types()
+    // because the parent's weight-index validation assumes the standard MOECompressed
+    // input layout (with topk_indices at index 2), which doesn't apply here.
+    auto output_type = m_config.out_type == ov::element::dynamic ? get_input_element_type(0) : m_config.out_type;
+    set_output_type(0, output_type, get_input_partial_shape(0));
 }
 
 std::shared_ptr<ov::Node> MOE3GemmFusedCompressed::clone_with_new_inputs(const ov::OutputVector& new_args) const {

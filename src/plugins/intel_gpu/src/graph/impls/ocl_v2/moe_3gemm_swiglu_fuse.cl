@@ -8,6 +8,9 @@ KERNEL(softmax_topk)(
     const __global MOE_DTYPE* input, // [input_batch, sort_in_num]
     __global uint* output_index, // [input_batch, TOP_K]
     __global MOE_DTYPE* output // [input_batch, TOP_K]
+#if HAS_PER_EXPERT_SCALE
+    , const __global MOE_DTYPE* per_expert_scale // [num_experts]
+#endif
 ) {
     // gws [batch, sort_in_num]
     const uint batch = (uint)get_global_id(0);
@@ -68,6 +71,11 @@ KERNEL(softmax_topk)(
             output[i] = local_output[i]/softmax_total;
             output_index[i] = local_index[i];
         }
+#if HAS_PER_EXPERT_SCALE
+        for(uint i = 0; i < TOP_K; i++) {
+            output[i] *= per_expert_scale[output_index[i]];
+        }
+#endif
     }
 }
 

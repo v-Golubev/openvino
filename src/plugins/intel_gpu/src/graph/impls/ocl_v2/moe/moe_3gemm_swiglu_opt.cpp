@@ -369,6 +369,7 @@ protected:
         jit.make("VALUE_NUM", desc->_config.num_expert);
         jit.make("MOE_DTYPE", params.get_input_layout(0).data_type == ov::element::f16 ? "half" : "float");
         jit.make("MOE_DTYPE_SIZE", params.get_input_layout(0).data_type == ov::element::f16 ? 2 : 4);
+        jit.make("HAS_PER_EXPERT_SCALE", desc->_config.has_per_expert_scale ? 1 : 0);
         return jit;
     }
 
@@ -2505,10 +2506,16 @@ public:
         auto lws_size = config.num_expert;
         cldnn::event::ptr topk_event;
         if (config.routing_type == ov::op::internal::MOECompressed::RoutingType::SOFTMAX) {
+            std::vector<memory::ptr> softmax_inputs = {
+                instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::ROUTING_WEIGHTS))};
+            if (config.has_per_expert_scale) {
+                // per_expert_scale is always the last input
+                softmax_inputs.push_back(instance.input_memory_ptr(instance.inputs_memory_count() - 1));
+            }
             topk_event = execute_stage(events,
                                        instance,
                                        *softmax_topk,
-                                       {instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::ROUTING_WEIGHTS))},
+                                       softmax_inputs,
                                        {scratch.topk_id, scratch.topk_weights},
                                        {token_num, lws_size},
                                        {1, lws_size},

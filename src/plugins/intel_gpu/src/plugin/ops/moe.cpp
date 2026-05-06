@@ -78,9 +78,9 @@ static void CreateMOE3GemmFusedCompressedOp(ProgramBuilder& p, const std::shared
     ///                   shape [1, hidden_size, group_num, 1]
     ///   22: shared_gate_gate_weight - shared expert gate weight for gating,
     ///                   shape [hidden_size]
-    const size_t expected_inputs = config.num_shared_expert > 0 ? 23
-                                 : config.routing_type == ov::op::internal::MOECompressed::RoutingType::SIGMOID_BIAS ? 13
-                                 : 11;
+    size_t expected_inputs = config.num_shared_expert > 0 ? 23 : 13;
+    if (config.has_per_expert_scale)
+        expected_inputs += 1;
     validate_inputs_count(op, {expected_inputs});
 
     const std::string layerName = layer_type_name_ID(op);
