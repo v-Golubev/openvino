@@ -1073,6 +1073,11 @@ public:
         };
 
         _dnnl_weights.resize(cur_moe->_config.num_expert);
+
+        // Check if weights are f16 (non-compressed) — no scale/zp needed
+        ov::element::Type weight_dt = moe_fusion_wei_addr.weight[0]->get_layout().data_type;
+        bool is_f16_weight = (weight_dt == ov::element::f16);
+
         // Per-GEMM ic_group_size from scale shape; config.group_size can't represent gate/up vs down differing.
         const auto ic_group_size_from_scale = [](size_t ic, const cldnn::memory::ptr& scale_mem) {
             const auto& scale_shape = scale_mem->get_layout().get_shape();
@@ -1083,15 +1088,34 @@ public:
             auto& dnnl_weights = _dnnl_weights[j];
             dnnl_weights.resize(3);
             dnnl_weights[0].ic = _hidden_size;
-            dnnl_weights[0].ic_group_size = ic_group_size_from_scale(_hidden_size, moe_fusion_wei_addr.scale[0]);
             dnnl_weights[0].oc = _intermediate_size;
             dnnl_weights[1].ic = _hidden_size;
-            dnnl_weights[1].ic_group_size = ic_group_size_from_scale(_hidden_size, moe_fusion_wei_addr.scale[1]);
             dnnl_weights[1].oc = _intermediate_size;
             dnnl_weights[2].ic = _intermediate_size;
-            dnnl_weights[2].ic_group_size = ic_group_size_from_scale(_intermediate_size, moe_fusion_wei_addr.scale[2]);
             dnnl_weights[2].oc = _hidden_size;
+
+            if (is_f16_weight) {
+                // f16 weights: no quantization, set ic_group_size = -1 to skip scale/zp in onednn_matmul
+                dnnl_weights[0].ic_group_size = -1;
+                dnnl_weights[1].ic_group_size = -1;
+                dnnl_weights[2].ic_group_size = -1;
+            } else {
+                dnnl_weights[0].ic_group_size = ic_group_size_from_scale(_hidden_size, moe_fusion_wei_addr.scale[0]);
+                dnnl_weights[1].ic_group_size = ic_group_size_from_scale(_hidden_size, moe_fusion_wei_addr.scale[1]);
+                dnnl_weights[2].ic_group_size = ic_group_size_from_scale(_intermediate_size, moe_fusion_wei_addr.scale[2]);
+            }
+
             for (int i = 0; i < 3; i++) {
+                // weight shape: [ic, oc]
+                int64_t wei_offset = j * get_bytes_count(dnnl_weights[i].ic * dnnl_weights[i].oc, moe_fusion_wei_addr.weight[i]->get_layout());
+                dnnl_weights[i].weight =
+                    convert2dnnl(moe_fusion_wei_addr.weight[i], {dnnl_weights[i].ic, dnnl_weights[i].oc}, dnnl::memory::format_tag::ba, wei_offset);
+
+                if (is_f16_weight) {
+                    // No scale/zp for f16 weights
+                    continue;
+                }
+
                 // Cross-check ic/ic_group_size against scale shape (drift caused u8 inf bug).
                 {
                     const auto& sshape = moe_fusion_wei_addr.scale[i]->get_layout().get_shape();
@@ -1122,10 +1146,6 @@ public:
                         OPENVINO_ASSERT(zshape == sshape, "moe_3gemm GEMM ", i, " scale shape ", sshape, " does not match zp shape ", zshape);
                     }
                 }
-                // weight shape: [ic, oc], type: u4/i8
-                int64_t wei_offset = j * get_bytes_count(dnnl_weights[i].ic * dnnl_weights[i].oc, moe_fusion_wei_addr.weight[i]->get_layout());
-                dnnl_weights[i].weight =
-                    convert2dnnl(moe_fusion_wei_addr.weight[i], {dnnl_weights[i].ic, dnnl_weights[i].oc}, dnnl::memory::format_tag::ba, wei_offset);
 
                 // scale shape: [ic / ic_group_size, oc], type: f16
                 int64_t scale_offset =
@@ -2041,6 +2061,9 @@ public:
         // Use the model config to determine ZP presence (symmetric vs asymmetric quantization)
         bool has_zp = config.has_zp;
 
+        // Check if weights are f16 (non-compressed) — no scale/zp needed
+        bool is_f16_weight = (gw_dt == dnnl::memory::data_type::f16);
+
         int K_gu = _hidden_size;        // K for gate / up
         int N_gu = _intermediate_size;  // N for gate / up
         int K_d = _intermediate_size;   // K for down
@@ -2052,18 +2075,20 @@ public:
             dnnl::primitive_attr attr;
             attr.set_fpmath_mode(dnnl::fpmath_mode::f16, true);
 
-            bool has_k_groups = (group_size < K);
-            if (has_k_groups) {
-                // per-expert(0) x per-K-group(1) x per-N-channel(2)
-                attr.set_scales(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 1) | (1 << 2), {group_size, 1}, dnnl::memory::data_type::f16);
-                if (has_zp) {
-                    attr.set_zero_points(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 1) | (1 << 2), {group_size, 1}, w_dt);
-                }
-            } else {
-                // per-expert(0) x per-N-channel(2), no K-grouping
-                attr.set_scales(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 2), {}, dnnl::memory::data_type::f16);
-                if (has_zp) {
-                    attr.set_zero_points(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 2), {}, w_dt);
+            if (!is_f16_weight) {
+                bool has_k_groups = (group_size < K);
+                if (has_k_groups) {
+                    // per-expert(0) x per-K-group(1) x per-N-channel(2)
+                    attr.set_scales(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 1) | (1 << 2), {group_size, 1}, dnnl::memory::data_type::f16);
+                    if (has_zp) {
+                        attr.set_zero_points(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 1) | (1 << 2), {group_size, 1}, w_dt);
+                    }
+                } else {
+                    // per-expert(0) x per-N-channel(2), no K-grouping
+                    attr.set_scales(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 2), {}, dnnl::memory::data_type::f16);
+                    if (has_zp) {
+                        attr.set_zero_points(DNNL_ARG_WEIGHTS, (1 << 0) | (1 << 2), {}, w_dt);
+                    }
                 }
             }
 
@@ -2091,21 +2116,27 @@ public:
 
         gk->gate_pd = make_pd(K_gu, N_gu, _gate_up_group_size, gw_dt);
         gk->gate_prim = dnnl::matmul(gk->gate_pd);
-        gk->gate_scale_md = make_quant_md(num_experts, K_gu, _gate_up_group_size, N_gu, dnnl::memory::data_type::f16);
-        if (has_zp)
-            gk->gate_zp_md = make_quant_md(num_experts, K_gu, _gate_up_group_size, N_gu, gw_dt);
+        if (!is_f16_weight) {
+            gk->gate_scale_md = make_quant_md(num_experts, K_gu, _gate_up_group_size, N_gu, dnnl::memory::data_type::f16);
+            if (has_zp)
+                gk->gate_zp_md = make_quant_md(num_experts, K_gu, _gate_up_group_size, N_gu, gw_dt);
+        }
 
         gk->up_pd = make_pd(K_gu, N_gu, _gate_up_group_size, uw_dt);
         gk->up_prim = dnnl::matmul(gk->up_pd);
-        gk->up_scale_md = gk->gate_scale_md;
-        if (has_zp)
-            gk->up_zp_md = gk->gate_zp_md;
+        if (!is_f16_weight) {
+            gk->up_scale_md = gk->gate_scale_md;
+            if (has_zp)
+                gk->up_zp_md = gk->gate_zp_md;
+        }
 
         gk->down_pd = make_pd(K_d, N_d, _down_group_size, dw_dt);
         gk->down_prim = dnnl::matmul(gk->down_pd);
-        gk->down_scale_md = make_quant_md(num_experts, K_d, _down_group_size, N_d, dnnl::memory::data_type::f16);
-        if (has_zp)
-            gk->down_zp_md = make_quant_md(num_experts, K_d, _down_group_size, N_d, dw_dt);
+        if (!is_f16_weight) {
+            gk->down_scale_md = make_quant_md(num_experts, K_d, _down_group_size, N_d, dnnl::memory::data_type::f16);
+            if (has_zp)
+                gk->down_zp_md = make_quant_md(num_experts, K_d, _down_group_size, N_d, dw_dt);
+        }
 
         _grouped_kernels.add(key, gk);
         return *_grouped_kernels.get(key);
@@ -2372,18 +2403,23 @@ public:
         auto hint_md = dnnl::memory::desc::host_scalar(dnnl::memory::data_type::s32);
         dnnl::memory hint_mem(hint_md, static_cast<int32_t>(max_tokens_per_expert));
 
+        // Check if weights are f16 (non-compressed) — no scale/zp needed for grouped GEMM args
+        ov::element::Type grouped_weight_dt = instance.input_memory_ptr(static_cast<size_t>(MOE3GemmInputIndex::WEIGHT_0))->get_layout().data_type;
+        bool grouped_is_f16 = (grouped_weight_dt == ov::element::f16);
+
         // gate GEMM: [total, hidden] * W_gate[E,hidden,inter] -> [total, inter]
         {
             auto src_mem = scratch.x->get_onednn_grouped_memory(gk.gate_pd.src_desc(), *row_offsets);
             auto dst_mem = scratch.gate->get_onednn_grouped_memory(gk.gate_pd.dst_desc(), *row_offsets);
             auto w_mem = scratch.moe_fusion_wei_addr.weight[0]->get_onednn_memory(gk.gate_pd.weights_desc());
-            auto scale_mem = scratch.moe_fusion_wei_addr.scale[0]->get_onednn_memory(gk.gate_scale_md);
 
             std::unordered_map<int, dnnl::memory> args{{DNNL_ARG_SRC, src_mem},
                                                        {DNNL_ARG_WEIGHTS, w_mem},
                                                        {DNNL_ARG_DST, dst_mem},
-                                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scale_mem},
                                                        {DNNL_ARG_HINT_MAX_GROUP_SIZE, hint_mem}};
+            if (!grouped_is_f16) {
+                args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.scale[0]->get_onednn_memory(gk.gate_scale_md)});
+            }
             if (gk.has_zp) {
                 args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.zp[0]->get_onednn_memory(gk.gate_zp_md)});
             }
@@ -2395,13 +2431,14 @@ public:
             auto src_mem = scratch.x->get_onednn_grouped_memory(gk.up_pd.src_desc(), *row_offsets);
             auto dst_mem = scratch.up->get_onednn_grouped_memory(gk.up_pd.dst_desc(), *row_offsets);
             auto w_mem = scratch.moe_fusion_wei_addr.weight[1]->get_onednn_memory(gk.up_pd.weights_desc());
-            auto scale_mem = scratch.moe_fusion_wei_addr.scale[1]->get_onednn_memory(gk.up_scale_md);
 
             std::unordered_map<int, dnnl::memory> args{{DNNL_ARG_SRC, src_mem},
                                                        {DNNL_ARG_WEIGHTS, w_mem},
                                                        {DNNL_ARG_DST, dst_mem},
-                                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scale_mem},
                                                        {DNNL_ARG_HINT_MAX_GROUP_SIZE, hint_mem}};
+            if (!grouped_is_f16) {
+                args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.scale[1]->get_onednn_memory(gk.up_scale_md)});
+            }
             if (gk.has_zp) {
                 args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.zp[1]->get_onednn_memory(gk.up_zp_md)});
             }
@@ -2428,13 +2465,14 @@ public:
             auto src_mem = scratch.gate->get_onednn_grouped_memory(gk.down_pd.src_desc(), *row_offsets);
             auto dst_mem = scratch.y->get_onednn_grouped_memory(gk.down_pd.dst_desc(), *row_offsets);
             auto w_mem = scratch.moe_fusion_wei_addr.weight[2]->get_onednn_memory(gk.down_pd.weights_desc());
-            auto scale_mem = scratch.moe_fusion_wei_addr.scale[2]->get_onednn_memory(gk.down_scale_md);
 
             std::unordered_map<int, dnnl::memory> args{{DNNL_ARG_SRC, src_mem},
                                                        {DNNL_ARG_WEIGHTS, w_mem},
                                                        {DNNL_ARG_DST, dst_mem},
-                                                       {DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scale_mem},
                                                        {DNNL_ARG_HINT_MAX_GROUP_SIZE, hint_mem}};
+            if (!grouped_is_f16) {
+                args.insert({DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.scale[2]->get_onednn_memory(gk.down_scale_md)});
+            }
             if (gk.has_zp) {
                 args.insert({DNNL_ARG_ATTR_ZERO_POINTS | DNNL_ARG_WEIGHTS, scratch.moe_fusion_wei_addr.zp[2]->get_onednn_memory(gk.down_zp_md)});
             }

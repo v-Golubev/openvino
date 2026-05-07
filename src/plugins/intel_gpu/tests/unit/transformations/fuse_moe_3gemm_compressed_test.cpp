@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include "common_test_utils/ov_test_utils.hpp"
 #include "ov_ops/moe_compressed.hpp"
 #include "intel_gpu/op/moe_3gemm_fused_compressed.hpp"
@@ -13,6 +15,7 @@
 #include "openvino/op/divide.hpp"
 #include "openvino/op/gather_elements.hpp"
 #include "openvino/op/matmul.hpp"
+#include "openvino/op/moe.hpp"
 #include "openvino/op/reduce_sum.hpp"
 #include "openvino/op/reshape.hpp"
 #include "openvino/op/shape_of.hpp"
@@ -499,6 +502,128 @@ TEST_F(TransformationTestsF, FuseMOE3GemmCompressedTest1) {
         model_ref = std::make_shared<ov::Model>(moe_3gemm_fused_compressed, ov::ParameterVector{hidden_states});
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Non-compressed f16 weights: plain MOE → MOE3GemmFusedCompressed fusion
+// ═══════════════════════════════════════════════════════════════════════════
+
+using FuseMOE3GemmNonCompressedTestParams = std::tuple<MoERoutingType, bool /* reshape_on_moe_input */>;
+
+class FuseMOE3GemmNonCompressedTest : public TransformationTestsF,
+                                      public ::testing::WithParamInterface<FuseMOE3GemmNonCompressedTestParams> {
+public:
+    static std::string get_test_case_name(const ::testing::TestParamInfo<FuseMOE3GemmNonCompressedTestParams>& info) {
+        std::string name;
+        switch (std::get<0>(info.param)) {
+        case MoERoutingType::SOFTMAX:
+            name = "Softmax";
+            break;
+        case MoERoutingType::SIGMOID_BIAS:
+            name = "SigmoidBias";
+            break;
+        default:
+            OPENVINO_THROW("Unsupported routing type");
+        }
+        if (std::get<1>(info.param))
+            name += "_ReshapeOnMoeInput";
+        return name;
+    }
+};
+
+TEST_P(FuseMOE3GemmNonCompressedTest, CompareFunctions) {
+    const auto& [routing_type, reshape_on_moe_input] = GetParam();
+    {
+        // tokens:32, hidden_size:2048, inter_size:768, experts:128, topk:8
+        auto hidden_states = std::make_shared<ov::op::v0::Parameter>(element::f16, Shape{4, 8, 2048});
+        auto flatten_shape = op::v0::Constant::create(element::i32, Shape{2}, {32, 2048});
+        auto hidden_states_reshape = std::make_shared<ov::op::v1::Reshape>(hidden_states, flatten_shape, false);
+        auto routers = op::v0::Constant::create(element::f16, Shape{2048, 128}, {0.2});
+        auto routing_weights = std::make_shared<ov::op::v0::MatMul>(hidden_states_reshape, routers);
+
+        auto [unsqueeze_moe, topk_indices] =
+            routing_type == MoERoutingType::SOFTMAX
+                ? build_softmax_routing_for_fuse_test(routing_weights, 8)
+                : build_sigmoid_routing_for_fuse_test(routing_weights, element::f16, 128, 8);
+
+        // Plain f16 weights with Convert to f32
+        // gate_w: [num_experts, inter_size, hidden_size]
+        auto wei_gate_f16 = op::v0::Constant::create(element::f16, Shape{128, 768, 2048}, {0.01f});
+        auto wei_gate = std::make_shared<ov::op::v0::Convert>(wei_gate_f16, element::f32);
+        auto wei_up_f16 = op::v0::Constant::create(element::f16, Shape{128, 768, 2048}, {0.01f});
+        auto wei_up = std::make_shared<ov::op::v0::Convert>(wei_up_f16, element::f32);
+        // down_w: [num_experts, hidden_size, inter_size]
+        auto wei_down_f16 = op::v0::Constant::create(element::f16, Shape{128, 2048, 768}, {0.01f});
+        auto wei_down = std::make_shared<ov::op::v0::Convert>(wei_down_f16, element::f32);
+
+        ov::op::internal::MOE::Config moe_config{ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU, 0.0f, 1.0f};
+        auto moe_input_0 = reshape_on_moe_input
+            ? ov::Output<ov::Node>(hidden_states_reshape)
+            : ov::Output<ov::Node>(hidden_states);
+        auto moe_node = std::make_shared<ov::op::internal::MOE>(
+            ov::OutputVector{moe_input_0, unsqueeze_moe, topk_indices, wei_gate, wei_up, wei_down}, moe_config);
+        model = std::make_shared<ov::Model>(moe_node, ov::ParameterVector{hidden_states});
+    }
+    manager.register_pass<FuseMOE3GemmCompressed>();
+    {
+        // Expected: MOE3GemmFusedCompressed with f16 weight constants directly, dummy scale/zp
+        auto hidden_states = std::make_shared<ov::op::v0::Parameter>(element::f16, Shape{4, 8, 2048});
+        auto flatten_shape = op::v0::Constant::create(element::i32, Shape{2}, {32, 2048});
+        auto hidden_states_reshape = std::make_shared<ov::op::v1::Reshape>(hidden_states, flatten_shape, false);
+        auto routers = op::v0::Constant::create(element::f16, Shape{2048, 128}, {0.2});
+        auto routing_weights = std::make_shared<ov::op::v0::MatMul>(hidden_states_reshape, routers);
+
+        auto wei_gate = op::v0::Constant::create(element::f16, Shape{128, 768, 2048}, {0.01f});
+        auto dummy_scale_gate = op::v0::Constant::create(element::f16, Shape{0}, {});
+        auto dummy_zp_gate = op::v0::Constant::create(element::f16, Shape{0}, {});
+        auto wei_up = op::v0::Constant::create(element::f16, Shape{128, 768, 2048}, {0.01f});
+        auto dummy_scale_up = op::v0::Constant::create(element::f16, Shape{0}, {});
+        auto dummy_zp_up = op::v0::Constant::create(element::f16, Shape{0}, {});
+        auto wei_down = op::v0::Constant::create(element::f16, Shape{128, 2048, 768}, {0.01f});
+        auto dummy_scale_down = op::v0::Constant::create(element::f16, Shape{0}, {});
+        auto dummy_zp_down = op::v0::Constant::create(element::f16, Shape{0}, {});
+
+        ov::op::internal::MOECompressed::Config config;
+        config.expert_type = ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU;
+        config.has_zp = false;
+        config.hidden_size = 2048;
+        config.inter_size = 768;
+        config.num_expert = 128;
+        config.group_size = std::numeric_limits<size_t>::max();
+        config.top_k = 8;
+        config.out_type = ov::element::f16;
+        if (routing_type == MoERoutingType::SOFTMAX) {
+            config.routing_type = ov::op::internal::MOECompressed::RoutingType::SOFTMAX;
+        } else {
+            config.routing_type = ov::op::internal::MOECompressed::RoutingType::SIGMOID_BIAS;
+        }
+
+        ov::OutputVector args{hidden_states_reshape, routing_weights,
+            wei_gate, dummy_scale_gate, dummy_zp_gate, wei_up, dummy_scale_up, dummy_zp_up,
+            wei_down, dummy_scale_down, dummy_zp_down};
+        if (routing_type == MoERoutingType::SIGMOID_BIAS) {
+            auto routing_bias = op::v0::Constant::create(element::f16, Shape{1, 128}, {0.1f});
+            args.push_back(routing_bias);
+            auto routing_eps = op::v0::Constant::create(element::f16, Shape{1, 1}, {1e-6f});
+            args.push_back(routing_eps);
+        }
+
+        std::shared_ptr<ov::Node> result = std::make_shared<ov::intel_gpu::op::MOE3GemmFusedCompressed>(args, config);
+
+        if (!reshape_on_moe_input) {
+            auto hidden_state_shape = std::make_shared<ov::op::v3::ShapeOf>(hidden_states);
+            result = std::make_shared<ov::op::v1::Reshape>(result, hidden_state_shape, false);
+        }
+
+        model_ref = std::make_shared<ov::Model>(result, ov::ParameterVector{hidden_states});
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(smoke,
+                         FuseMOE3GemmNonCompressedTest,
+                         ::testing::Combine(
+                             ::testing::Values(MoERoutingType::SOFTMAX, MoERoutingType::SIGMOID_BIAS),
+                             ::testing::Values(false, true)),
+                         FuseMOE3GemmNonCompressedTest::get_test_case_name);
 
 }  // namespace intel_gpu
 }  // namespace test

@@ -312,4 +312,101 @@ INSTANTIATE_TEST_SUITE_P(smoke_MoE3GemmGeluCompressed,
                                             ::testing::Values(MoEActivationType::GELU)),
                          MoECompressedFusionTest::getTestCaseName);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Non-compressed f16 MoE: plain MOE op with Constant(f16)->Convert(f32) weights
+// ═══════════════════════════════════════════════════════════════════════════
+
+using MoENonCompressedParams = std::tuple<MoeTestShapeParams, MoERoutingType, MoEActivationType>;
+
+class MoENonCompressedTest : public testing::WithParamInterface<MoENonCompressedParams>,
+                             virtual public ov::test::SubgraphBaseTest {
+public:
+    static std::string getTestCaseName(const testing::TestParamInfo<MoENonCompressedParams>& info) {
+        const auto& [moe_params, routing_type, act] = info.param;
+        std::ostringstream result;
+        result << "IS=" << ov::test::utils::partialShape2str({moe_params.data_shape.first}) << "_";
+        result << "TS=";
+        for (const auto& s : moe_params.data_shape.second)
+            result << ov::test::utils::vec2str(s) << ",";
+        result << "topk=" << moe_params.topk << "_";
+        result << "experts=" << moe_params.number_of_experts << "_";
+        result << "inter=" << moe_params.intermediate_size << "_";
+        result << "routing=" << routing_type_str(routing_type) << "_";
+        result << "act=" << (act == MoEActivationType::GELU ? "GELU" : "SWISH");
+        return result.str();
+    }
+
+protected:
+    void SetUp() override {
+        const auto& [moe_params, routing_type, act] = GetParam();
+        targetDevice = ov::test::utils::DEVICE_GPU;
+        const auto caps = core->get_property(targetDevice, ov::device::capabilities);
+        if (std::find(caps.begin(), caps.end(), ov::intel_gpu::capability::HW_MATMUL) == caps.end()) {
+            GTEST_SKIP() << "MoE pipeline requires a systolic GPU (HW_MATMUL capability)";
+        }
+        inType = outType = inference_precision = ov::element::f16;
+        abs_threshold = 10.0;
+        rel_threshold = 0.02;
+
+        init_input_shapes({moe_params.data_shape});
+        const ov::test::MoePatternParams shape_params{moe_params.data_shape.first, moe_params.topk,
+                                                      moe_params.number_of_experts, moe_params.intermediate_size};
+
+        function = ov::test::initMoE3GeMMSubgraph(shape_params,
+                                                  ov::element::f32,   // data_precision
+                                                  ov::element::f16,   // weights_precision
+                                                  false,              // use_weight_decompression
+                                                  std::nullopt,       // decompression_precision
+                                                  std::nullopt,       // scale_precision
+                                                  std::nullopt,       // decompression_multiply_type
+                                                  std::nullopt,       // decompression_subtract_type
+                                                  std::nullopt,       // reshape_on_decompression
+                                                  std::nullopt,       // group_size
+                                                  routing_type,
+                                                  act);
+    }
+
+    void generate_inputs(const std::vector<ov::Shape>& target_input_static_shapes) override {
+        inputs.clear();
+        const auto& params = function->get_parameters();
+        ASSERT_EQ(params.size(), 1);
+        inputs.insert({params[0],
+                       ov::test::utils::create_and_fill_tensor_normal_distribution(params[0]->get_element_type(),
+                                                                                   target_input_static_shapes[0],
+                                                                                   /*mean=*/0.0f,
+                                                                                   /*stddev=*/1.0f,
+                                                                                   /*seed=*/1234)});
+    }
+
+    void validate() override {
+        ov::test::SubgraphBaseTest::validate();
+        const auto activation_type = std::get<2>(GetParam());
+        if (activation_type == MoEActivationType::GELU) {
+            // GELU not supported by fused kernel → falls back to 3 GatherMatmul ops.
+            ov::test::CheckNumberOfNodesWithType(compiledModel, "gather_matmul", 3);
+        } else {
+            // SWISH → single fused moe_3gemm_fused_compressed.
+            ov::test::CheckNumberOfNodesWithType(compiledModel, "moe_3gemm_fused_compressed", 1);
+        }
+    }
+};
+
+TEST_P(MoENonCompressedTest, Inference) {
+    run();
+}
+
+INSTANTIATE_TEST_SUITE_P(smoke_MoE3GemmNonCompressed,
+                         MoENonCompressedTest,
+                         ::testing::Combine(::testing::ValuesIn(moe_params_smoke),
+                                            ::testing::ValuesIn(routing_types),
+                                            ::testing::Values(MoEActivationType::SWISH)),
+                         MoENonCompressedTest::getTestCaseName);
+
+INSTANTIATE_TEST_SUITE_P(smoke_MoE3GemmNonCompressedGelu,
+                         MoENonCompressedTest,
+                         ::testing::Combine(::testing::ValuesIn(moe_params_smoke),
+                                            ::testing::ValuesIn(routing_types),
+                                            ::testing::Values(MoEActivationType::GELU)),
+                         MoENonCompressedTest::getTestCaseName);
+
 }  // namespace

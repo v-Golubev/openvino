@@ -17,6 +17,7 @@
 #include "openvino/op/divide.hpp"
 #include "openvino/op/gather_elements.hpp"
 #include "openvino/op/matmul.hpp"
+#include "openvino/op/moe.hpp"
 #include "openvino/op/reduce_sum.hpp"
 #include "openvino/op/reshape.hpp"
 #include "openvino/op/shape_of.hpp"
@@ -33,10 +34,9 @@
 #include "openvino/pass/pattern/op/pattern.hpp"
 #include "openvino/pass/pattern/op/wrap_type.hpp"
 #include "openvino/util/pp.hpp"
-#include "ov_ops/moe_compressed.hpp"
 
 namespace ov::intel_gpu {
-FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
+FuseMOE3GemmCompressed::FuseMOE3GemmCompressed(bool has_batch_dim) : m_has_batch_dim(has_batch_dim) {
     using namespace ov::pass::pattern;
     using namespace ov::pass;
 #define ANY any_input()
@@ -131,17 +131,89 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
     moe_inputs_shared.push_back(shared_gate_gate_wei_m);
     auto moe_compressed_shared_m = wrap_type<ov::op::internal::MOECompressed>(moe_inputs_shared);
 
-    auto moe_compressed_m = std::make_shared<ov::pass::pattern::op::Or>(OutputVector{moe_compressed_no_shared_m, moe_compressed_shared_m});
+    // ── Plain MOE with f16 weights (Constant(f16) → Convert(f32)) ───────
+    auto plain_gate_weight_m = wrap_const();
+    auto plain_gate_convert_m = wrap_type<ov::op::v0::Convert>({plain_gate_weight_m});
+    auto plain_up_weight_m = wrap_const();
+    auto plain_up_convert_m = wrap_type<ov::op::v0::Convert>({plain_up_weight_m});
+    auto plain_down_weight_m = wrap_const();
+    auto plain_down_convert_m = wrap_type<ov::op::v0::Convert>({plain_down_weight_m});
+
+    ov::OutputVector moe_plain_inputs = {hidden_state_reshape | hidden_state_m,
+                                         unsqueeze_moe,
+                                         topk_idces,
+                                         plain_gate_convert_m,
+                                         plain_up_convert_m,
+                                         plain_down_convert_m};
+    auto moe_plain_m = wrap_type<ov::op::internal::MOE>(moe_plain_inputs, [](const ov::Output<ov::Node>& output) {
+        return !ov::is_type<ov::op::internal::MOECompressed>(output.get_node());
+    });
+
+    auto moe_any_m = std::make_shared<ov::pass::pattern::op::Or>(
+        OutputVector{moe_compressed_no_shared_m, moe_compressed_shared_m, moe_plain_m});
 #undef ANY
     ov::matcher_pass_callback callback = [OV_CAPTURE_CPY_AND_THIS](ov::pass::pattern::Matcher& m) {
         const auto& pattern_map = m.get_pattern_value_map();
 
-        auto moe_compressed = ov::as_type_ptr<ov::op::internal::MOECompressed>(pattern_map.at(moe_compressed_m).get_node_shared_ptr());
-        if (!moe_compressed || transformation_callback(moe_compressed)) {
-            return false;
+        // Determine which branch matched: compressed or plain MOE.
+        const bool is_plain_moe = pattern_map.count(moe_plain_m) > 0;
+        std::shared_ptr<ov::Node> matched_moe_node;
+        ov::op::internal::MOECompressed::Config config;
+
+        if (is_plain_moe) {
+            matched_moe_node = pattern_map.at(moe_plain_m).get_node_shared_ptr();
+            if (transformation_callback(matched_moe_node)) {
+                return false;
+            }
+            // Verify weight constants are f16.
+            auto gate_w_const = ov::as_type_ptr<ov::op::v0::Constant>(
+                pattern_map.at(plain_gate_weight_m).get_node_shared_ptr());
+            auto up_w_const = ov::as_type_ptr<ov::op::v0::Constant>(
+                pattern_map.at(plain_up_weight_m).get_node_shared_ptr());
+            auto down_w_const = ov::as_type_ptr<ov::op::v0::Constant>(
+                pattern_map.at(plain_down_weight_m).get_node_shared_ptr());
+            if (!gate_w_const || !up_w_const || !down_w_const)
+                return false;
+            if (gate_w_const->get_element_type() != ov::element::f16 ||
+                up_w_const->get_element_type() != ov::element::f16 ||
+                down_w_const->get_element_type() != ov::element::f16)
+                return false;
+
+            // Extract shape info: gate_w shape is [num_experts, inter_size, hidden_size]
+            const auto& gate_shape = gate_w_const->get_shape();
+            if (gate_shape.size() != 3)
+                return false;
+
+            config.expert_type = ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU;
+            config.num_expert = gate_shape[0];
+            config.inter_size = gate_shape[1];
+            config.hidden_size = gate_shape[2];
+            config.group_size = std::numeric_limits<size_t>::max();  // per-channel (no compression)
+            config.has_zp = false;
+            config.has_batch_dim = m_has_batch_dim;
+            config.out_type = ov::element::f16;
+            config.num_shared_expert = 0;
+
+            // Extract top_k from the matched TopK node in the routing subgraph.
+            std::shared_ptr<ov::op::v11::TopK> topk_node;
+            if (pattern_map.count(sm_topk)) {
+                topk_node = ov::as_type_ptr<ov::op::v11::TopK>(pattern_map.at(sm_topk).get_node_shared_ptr());
+            } else if (pattern_map.count(sig_topk)) {
+                topk_node = ov::as_type_ptr<ov::op::v11::TopK>(pattern_map.at(sig_topk).get_node_shared_ptr());
+            }
+            if (!topk_node)
+                return false;
+            config.top_k = static_cast<size_t>(topk_node->get_k());
+        } else {
+            auto moe_compressed = ov::as_type_ptr<ov::op::internal::MOECompressed>(
+                pattern_map.at(moe_any_m).get_node_shared_ptr());
+            if (!moe_compressed || transformation_callback(moe_compressed)) {
+                return false;
+            }
+            matched_moe_node = moe_compressed;
+            config = moe_compressed->get_config();
         }
 
-        auto config = moe_compressed->get_config();
         bool has_shared_expert = pattern_map.count(shared_gate_wei_m) > 0;
         if (!has_shared_expert) {
             config.num_shared_expert = 0;
@@ -150,19 +222,47 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
         auto hs_reshaped = pattern_map.count(hidden_state_reshape)
             ? pattern_map.at(hidden_state_reshape)
             : pattern_map.at(hidden_state_m);
-        OutputVector args{
-            hs_reshaped,
-            pattern_map.at(matmul),
-            pattern_map.at(gate_wei_m),
-            pattern_map.at(gate_scale_m),
-            pattern_map.at(gate_zp_m),
-            pattern_map.at(up_wei_m),
-            pattern_map.at(up_scale_m),
-            pattern_map.at(up_zp_m),
-            pattern_map.at(down_wei_m),
-            pattern_map.at(down_scale_m),
-            pattern_map.at(down_zp_m),
-        };
+
+        OutputVector args;
+        if (is_plain_moe) {
+            // For plain MOE: use f16 weight constants directly (bypass Convert),
+            // and create dummy scale/zp inputs.
+            auto dummy_scale = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+            auto dummy_zp = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+            auto dummy_scale2 = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+            auto dummy_zp2 = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+            auto dummy_scale3 = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+            auto dummy_zp3 = ov::op::v0::Constant::create(ov::element::f16, ov::Shape{0}, {});
+
+            args = {
+                hs_reshaped,
+                pattern_map.at(matmul),
+                pattern_map.at(plain_gate_weight_m),  // f16 weight directly
+                dummy_scale,
+                dummy_zp,
+                pattern_map.at(plain_up_weight_m),    // f16 weight directly
+                dummy_scale2,
+                dummy_zp2,
+                pattern_map.at(plain_down_weight_m),  // f16 weight directly
+                dummy_scale3,
+                dummy_zp3,
+            };
+        } else {
+            args = {
+                hs_reshaped,
+                pattern_map.at(matmul),
+                pattern_map.at(gate_wei_m),
+                pattern_map.at(gate_scale_m),
+                pattern_map.at(gate_zp_m),
+                pattern_map.at(up_wei_m),
+                pattern_map.at(up_scale_m),
+                pattern_map.at(up_zp_m),
+                pattern_map.at(down_wei_m),
+                pattern_map.at(down_scale_m),
+                pattern_map.at(down_zp_m),
+            };
+        }
+
         if (pattern_map.count(sig_routing_bias)) {
             args.push_back(pattern_map.at(sig_routing_bias));
             args.push_back(pattern_map.at(sig_eps_value));
@@ -189,24 +289,24 @@ FuseMOE3GemmCompressed::FuseMOE3GemmCompressed() {
         }
 
         std::shared_ptr<ov::Node> moe_router_fused = std::make_shared<ov::intel_gpu::op::MOE3GemmFusedCompressed>(args, config);
-        ov::copy_runtime_info(moe_compressed, moe_router_fused);
+        ov::copy_runtime_info(matched_moe_node, moe_router_fused);
 
-        // If MOECompressed's first input was the original (un-reshaped) hidden state
+        // If the MOE's first input was the original (un-reshaped) hidden state
         // but the fused op works on the flattened 2D input, reshape the output back.
-        if (moe_compressed->input_value(0) != hs_reshaped) {
+        if (matched_moe_node->input_value(0) != hs_reshaped) {
             auto hidden_state_shape = std::make_shared<ov::op::v3::ShapeOf>(pattern_map.at(hidden_state_m));
             moe_router_fused = std::make_shared<ov::op::v1::Reshape>(moe_router_fused, hidden_state_shape, false);
-            ov::copy_runtime_info(moe_compressed, {hidden_state_shape, moe_router_fused});
+            ov::copy_runtime_info(matched_moe_node, {hidden_state_shape, moe_router_fused});
         }
 
-        moe_router_fused->set_friendly_name(moe_compressed->get_friendly_name());
-        ov::replace_node(moe_compressed, moe_router_fused);
+        moe_router_fused->set_friendly_name(matched_moe_node->get_friendly_name());
+        ov::replace_node(matched_moe_node, moe_router_fused);
 
         return true;
     };
 
-    auto m = std::make_shared<Matcher>(moe_compressed_m, "FuseMOE3GemmCompressed");
-    this->register_matcher(m, callback);
+    auto matcher = std::make_shared<Matcher>(moe_any_m, "FuseMOE3GemmCompressed");
+    this->register_matcher(matcher, callback);
 }
 
 }  // namespace ov::intel_gpu

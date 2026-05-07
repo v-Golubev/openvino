@@ -563,7 +563,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 const bool has_batch_dim = !is_pa;
                 manager.register_pass<ov::pass::MoeOpFusion>(has_batch_dim);
                 manager.register_pass<ov::intel_gpu::FuseMOESharedExpert>();
-                manager.register_pass<ov::intel_gpu::FuseMOE3GemmCompressed>();
+                manager.register_pass<ov::intel_gpu::FuseMOE3GemmCompressed>(has_batch_dim);
             }
         }
         manager.register_pass<ov::pass::GatedDeltaNetFusion>();

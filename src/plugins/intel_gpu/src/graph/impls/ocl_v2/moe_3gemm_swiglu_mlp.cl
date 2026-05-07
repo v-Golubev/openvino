@@ -260,7 +260,7 @@ inline void gate_up_gemv_n2x_f16(const __global half* weight, __global half* y, 
 #    if SUBGROUP_SIZE == 32
             half2 sum0;
             half2 sum1;
-            half4 a = as_half4(intel_sub_group_block_read_us4((const __global ushort*)x2 + gk * FAKE_GROUP_SIZE));
+            half4 a = as_half4(intel_sub_group_block_read_us4((const __local ushort*)x2 + gk * FAKE_GROUP_SIZE));
             half4 b = as_half4(intel_sub_group_block_read_us4((const __global ushort*)B + gk * FAKE_GROUP_SIZE));
             half4 b2 = as_half4(intel_sub_group_block_read_us4((const __global ushort*)B + K + gk * FAKE_GROUP_SIZE));
 
@@ -279,7 +279,7 @@ inline void gate_up_gemv_n2x_f16(const __global half* weight, __global half* y, 
 #    else
             half4 sum0;
             half4 sum1;
-            half8 a = as_half8(intel_sub_group_block_read_us8((const __global ushort*)x2 + gk * FAKE_GROUP_SIZE));
+            half8 a = as_half8(intel_sub_group_block_read_us8((const __local ushort*)x2 + gk * FAKE_GROUP_SIZE));
             half8 b = as_half8(intel_sub_group_block_read_us8((const __global ushort*)B + gk * FAKE_GROUP_SIZE));
             half8 b2 = as_half8(intel_sub_group_block_read_us8((const __global ushort*)(B + K + gk * FAKE_GROUP_SIZE)));
 
@@ -357,6 +357,10 @@ __attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE))) KERNEL(mlp_gate_up)(
     const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / 2;
     const int expert_scale_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / GATE_UP_GROUP_SIZE;
     const int expert_zp_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / 2 / GATE_UP_GROUP_SIZE;
+#    elif WEIGHT_COMPRESSEION_DT == 2
+    const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE;
+    const int expert_scale_size = 0;
+    const int expert_zp_size = 0;
 #    else
     const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE;
     const int expert_scale_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / GATE_UP_GROUP_SIZE;
@@ -514,8 +518,8 @@ __attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE))) KERNEL(mlp_gate_up)(
     gate_up_gemv_n2x_u8(up_weight, up_scale, up_zp, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, xg_sum, false);
     gate_up_gemv_n2x_u8(gate_weight, gate_scale, gate_zp, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, xg_sum, true);
 #    elif WEIGHT_COMPRESSEION_DT == 2
-    gate_up_gemv_n2x_f16(up_weight, up_zp, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, false);
-    gate_up_gemv_n2x_f16(gate_weight, gate_zp, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, true);
+    gate_up_gemv_n2x_f16(up_weight, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, false);
+    gate_up_gemv_n2x_f16(gate_weight, y, INTERMEDIATE_SIZE, HIDDEN_SIZE, x2, true);
 #    endif
 }
 
@@ -739,7 +743,7 @@ inline void down_gemv_n2x_f16(const __global half* weight, __global MOE_DTYPE* r
 #    if SUBGROUP_SIZE == 32
             half2 sum0;
             half2 sum1;
-            half4 a = as_half4(intel_sub_group_block_read_us4((const __global ushort*)x2 + gk * FAKE_GROUP_SIZE));
+            half4 a = as_half4(intel_sub_group_block_read_us4((const __local ushort*)x2 + gk * FAKE_GROUP_SIZE));
             half4 b = as_half4(intel_sub_group_block_read_us4((const __global ushort*)B + gk * FAKE_GROUP_SIZE));
             half4 b2 = as_half4(intel_sub_group_block_read_us4((const __global ushort*)B + K + gk * FAKE_GROUP_SIZE));
 
@@ -822,6 +826,10 @@ __attribute__((intel_reqd_sub_group_size(SUBGROUP_SIZE))) KERNEL(mlp_down)(const
     const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / 2;
     const int expert_scale_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / DOWN_GROUP_SIZE;
     const int expert_zp_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / 2 / DOWN_GROUP_SIZE;
+#    elif WEIGHT_COMPRESSEION_DT == 2
+    const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE;
+    const int expert_scale_size = 0;
+    const int expert_zp_size = 0;
 #    else
     const int expert_wei_size = INTERMEDIATE_SIZE * HIDDEN_SIZE;
     const int expert_scale_size = INTERMEDIATE_SIZE * HIDDEN_SIZE / DOWN_GROUP_SIZE;
