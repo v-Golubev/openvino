@@ -23,7 +23,8 @@ struct swiglu_params : public base_params {
           clamp_max(std::numeric_limits<float>::max()),
           swish_beta(1.0f),
           up_add_val(0.0f),
-          scale_factor(-1.0f) {}
+          scale_factor(-1.0f),
+          split_input(false) {}
     int32_t axis;
     int32_t glu_stride;
     ov::op::internal::GLU::GluType glu_type;
@@ -33,6 +34,7 @@ struct swiglu_params : public base_params {
     float swish_beta;
     float up_add_val;
     float scale_factor;
+    bool split_input;
 };
 
 struct swiglu_fuse_params : fuse_params {

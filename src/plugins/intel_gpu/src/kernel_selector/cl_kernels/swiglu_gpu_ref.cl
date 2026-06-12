@@ -7,6 +7,9 @@
 KERNEL(swiglu_gpu_ref)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
+#ifdef SPLIT_INPUT
+    const __global INPUT1_TYPE* input_up,
+#endif
     __global OUTPUT_TYPE* output)
 {
 #if OUTPUT_DIMS == 5
@@ -62,8 +65,13 @@ KERNEL(swiglu_gpu_ref)(
         #endif
     #endif
 #endif
+#ifdef SPLIT_INPUT
+    ACCUMULATOR_TYPE gate = (ACCUMULATOR_TYPE) input[output_idx];
+    ACCUMULATOR_TYPE up = (ACCUMULATOR_TYPE) input_up[output_idx];
+#else
     ACCUMULATOR_TYPE gate = (ACCUMULATOR_TYPE) input[gate_idx];
     ACCUMULATOR_TYPE up = (ACCUMULATOR_TYPE) input[input_idx];
+#endif
 #ifdef SCALE_FACTOR
     // Restore original scale before clamp / swish / up_add_val so that
     // clamp bounds and UP_ADD_VAL stay in the original (unscaled) range.

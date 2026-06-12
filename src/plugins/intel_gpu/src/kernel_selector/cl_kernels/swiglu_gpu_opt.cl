@@ -47,8 +47,16 @@ __attribute__((reqd_work_group_size(LWS0, LWS1, LWS2)))
 KERNEL(swiglu_gpu_opt)(
     OPTIONAL_SHAPE_INFO_ARG
     const __global INPUT0_TYPE* input,
+#ifdef SPLIT_INPUT
+    const __global INPUT1_TYPE* input_up,
+#endif
     __global OUTPUT_TYPE* output)
 {
+#ifdef SPLIT_INPUT
+    const unsigned int x = (uint)get_global_linear_id();
+    ACCUMULATOR_TYPE gate = input[x];
+    ACCUMULATOR_TYPE value = input_up[x];
+#else
 #if GLU_STRIDE == 2 // alternating
     const unsigned int x = (uint)get_global_linear_id();
     const unsigned int y = GLU_STRIDE * x;
@@ -72,6 +80,7 @@ KERNEL(swiglu_gpu_opt)(
         ACCUMULATOR_TYPE gate = input[y + GLU_STRIDE];
     #endif
     ACCUMULATOR_TYPE value = input[y];
+#endif
 #endif
 #ifdef SCALE_FACTOR
     // Restore original scale before clamp / swish / up_add_val so that

@@ -47,6 +47,9 @@ JitConstants SwiGLUKernelBase::GetJitConstants(const swiglu_params& params, cons
     if (params.scale_factor > 0.0f) {
         jit.AddConstants({MakeJitConstant("SCALE_FACTOR", static_cast<float>(params.scale_factor))});
     }
+    if (params.split_input) {
+        jit.AddConstants({MakeJitConstant("SPLIT_INPUT", 1)});
+    }
 
     return jit;
 }
@@ -69,6 +72,7 @@ KernelsData SwiGLUKernelBase::GetKernelsData(const Params& params) const {
     GetUpdateDispatchDataFunc(kd);
 
     auto& kernel = kd.kernels[0];
+    const size_t num_inputs = orgParams.split_input ? 2 : 1;
     FillCLKernelData(kernel,
                      dispatchData,
                      params.engineInfo,
@@ -78,7 +82,7 @@ KernelsData SwiGLUKernelBase::GetKernelsData(const Params& params) const {
                      EXE_MODE_DEFAULT,
                      false,
                      false,
-                     1,
+                     num_inputs,
                      GetFusedPrimitiveInputsCount(params),
                      1,
                      orgParams.is_shape_agnostic);

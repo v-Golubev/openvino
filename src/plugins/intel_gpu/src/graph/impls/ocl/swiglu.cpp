@@ -46,6 +46,10 @@ struct swiglu_impl : typed_primitive_impl_ocl<swiglu> {
         params.swish_beta = primitive->swish_beta;
         params.up_add_val = primitive->up_add_val;
         params.scale_factor = primitive->scale_factor;
+        params.split_input = primitive->split_input;
+        if (primitive->split_input) {
+            params.inputs.push_back(convert_data_tensor(impl_param.get_input_layout(1)));
+        }
         return params;
     }
 

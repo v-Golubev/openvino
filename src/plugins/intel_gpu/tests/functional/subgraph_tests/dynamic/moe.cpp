@@ -161,10 +161,10 @@ protected:
             // GEMM3: gate, up, down → 3 GatherMatmul ops; GEMM2: fused gate_up + down → 2.
             ov::test::CheckNumberOfNodesWithType(compiledModel, "gather_matmul", pattern_type == MoePatternType::GEMM3 ? 3 : 2);
         } else {
-            // GEMM3 → single fused moe_3gemm_fused_compressed; GEMM2 → gate_up + down = 2 moe_gemm ops.
+            // GEMM3 → gate + up + down = 3 moe_gemm ops; GEMM2 → gate_up + down = 2 moe_gemm ops.
             ov::test::CheckNumberOfNodesWithType(compiledModel,
-                                                 pattern_type == MoePatternType::GEMM3 ? "moe_3gemm_fused_compressed" : "moe_gemm",
-                                                 pattern_type == MoePatternType::GEMM3 ? 1 : 2);
+                                                 "moe_gemm",
+                                                 pattern_type == MoePatternType::GEMM3 ? 3 : 2);
         }
         if (pattern_type == MoePatternType::GEMM3) {
             ov::test::CheckNumberOfNodesWithType(compiledModel, "moe_router_fused", 1);

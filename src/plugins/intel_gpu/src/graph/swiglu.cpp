@@ -29,6 +29,11 @@ std::vector<layout> swiglu_inst::calc_output_layouts(swiglu_node const& /*node*/
     auto input_layout = impl_param.get_input_layout();
     auto output_type = impl_param.desc->output_data_types[0].value_or(input_layout.data_type);
     auto output_format = input_layout.format;
+
+    if (desc->split_input) {
+        return {layout(impl_param.get_input_layout(0).get<ShapeType>(), output_type, output_format)};
+    }
+
     std::vector<ShapeType> input_shapes = {impl_param.get_input_layout(0).get<ShapeType>()};
 
     if (desc->clamp_max != std::numeric_limits<float>::max() || desc->clamp_min != std::numeric_limits<float>::lowest()) {
