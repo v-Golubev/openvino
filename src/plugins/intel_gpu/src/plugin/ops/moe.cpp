@@ -3,7 +3,9 @@
 //
 #include "openvino/op/moe.hpp"
 
+#include <intel_gpu/primitives/activation.hpp>
 #include <intel_gpu/primitives/eltwise.hpp>
+#include <intel_gpu/primitives/fully_connected.hpp>
 #include <intel_gpu/primitives/moe_gather.hpp>
 #include <intel_gpu/primitives/moe_scatter_reduction.hpp>
 #include <intel_gpu/primitives/swiglu.hpp>
@@ -12,7 +14,6 @@
 #include "ov_ops/moe_compressed.hpp"
 #include "intel_gpu/plugin/program_builder.hpp"
 #include "intel_gpu/plugin/common_utils.hpp"
-#include "intel_gpu/primitives/moe_3gemm_fused_compressed.hpp"
 #include "intel_gpu/primitives/moe_gemm.hpp"
 #include "intel_gpu/primitives/moe_mask_gen.hpp"
 #include "openvino/op/constant.hpp"
@@ -28,17 +29,10 @@ static void CreateMOECompressedOp(ProgramBuilder& p, const std::shared_ptr<ov::o
         input_infos.push_back(cldnn::input_info(input));
     }
 
-    if (config.expert_type == ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU && config.num_shared_expert > 0) {
-        const size_t expected_inputs = 12 + 10;
-        validate_inputs_count(op, {expected_inputs});
-        const std::string layerName = layer_type_name_ID(op);
-        const cldnn::moe_3gemm_fused_compressed moe(layerName, input_infos, config);
-        p.add_primitive(*op, moe);
-        return;
-    }
-
     if (config.expert_type == ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU) {
-        validate_inputs_count(op, {12});
+        const size_t base_inputs = 12;
+        const size_t shared_inputs = config.num_shared_expert > 0 ? 10 : 0;
+        validate_inputs_count(op, {base_inputs + shared_inputs});
     }
 
     std::string prim_name_base = layer_type_name_ID(op);
@@ -193,6 +187,106 @@ static void CreateMOECompressedOp(ProgramBuilder& p, const std::shared_ptr<ov::o
                                      config,
                                      true);
     p.add_primitive(*op, moe_scatter_reduce_prim);
+
+    // --- Shared expert (appended after routed expert scatter) ---
+    if (config.expert_type == ov::op::internal::MOE::Expert_type::GEMM3_SWIGLU && config.num_shared_expert > 0) {
+        // Shared expert inputs at indices 12-21:
+        //   12: shared_gate_weight,  13: shared_gate_scale,  14: shared_gate_zp
+        //   15: shared_up_weight,    16: shared_up_scale,    17: shared_up_zp
+        //   18: shared_down_weight,  19: shared_down_scale,  20: shared_down_zp
+        //   21: shared_gate_gate_weight (scalar gate, f16, no scale/zp)
+        auto shared_fc_gate_name = prim_name_base + "_shared_fc_gate";
+        auto shared_fc_up_name = prim_name_base + "_shared_fc_up";
+        auto shared_swiglu_name = prim_name_base + "_shared_swiglu";
+        auto shared_fc_down_name = prim_name_base + "_shared_fc_down";
+        auto shared_scalar_gate_name = prim_name_base + "_shared_scalar_gate";
+        auto shared_sigmoid_name = prim_name_base + "_shared_sigmoid";
+        auto shared_gate_mul_name = prim_name_base + "_shared_gate_mul";
+        auto shared_add_name = prim_name_base + "_shared_add";
+
+        auto out_dt = cldnn::element_type_to_data_type(op->get_output_element_type(0));
+        size_t input_rank = op->get_input_partial_shape(0).size();
+
+        // Shared gate FC: hidden_states @ shared_gate_weight (compressed)
+        auto shared_fc_gate = cldnn::fully_connected(shared_fc_gate_name,
+                                                     input_infos[0],           // hidden_states
+                                                     input_infos[12].pid,      // shared_gate_weight
+                                                     "",                       // no bias
+                                                     input_infos[13].pid,      // shared_gate_scale
+                                                     config.has_zp ? input_infos[14].pid : "",
+                                                     out_dt,
+                                                     input_rank,
+                                                     4);                       // weights_rank
+        p.add_primitive(*op, shared_fc_gate);
+
+        // Shared up FC: hidden_states @ shared_up_weight (compressed)
+        auto shared_fc_up = cldnn::fully_connected(shared_fc_up_name,
+                                                   input_infos[0],
+                                                   input_infos[15].pid,        // shared_up_weight
+                                                   "",
+                                                   input_infos[16].pid,        // shared_up_scale
+                                                   config.has_zp ? input_infos[17].pid : "",
+                                                   out_dt,
+                                                   input_rank,
+                                                   4);
+        p.add_primitive(*op, shared_fc_up);
+
+        // SwiGLU: activation(gate) * up
+        ov::op::internal::GLU::GluType glu_type = ov::op::internal::GLU::GluType::Swish;
+        switch (config.activation_type) {
+            case ov::op::internal::MOE::Activation_type::GEGLU_TANH:
+                glu_type = ov::op::internal::GLU::GluType::Gelu_Tanh;
+                break;
+            case ov::op::internal::MOE::Activation_type::GEGLU_ERF:
+                glu_type = ov::op::internal::GLU::GluType::Gelu;
+                break;
+            default:
+                break;
+        }
+        p.add_primitive(*op, cldnn::swiglu(shared_swiglu_name,
+                                           input_info(shared_fc_gate_name),
+                                           input_info(shared_fc_up_name),
+                                           glu_type));
+
+        // Shared down FC: swiglu_out @ shared_down_weight (compressed)
+        auto shared_fc_down = cldnn::fully_connected(shared_fc_down_name,
+                                                     input_info(shared_swiglu_name),
+                                                     input_infos[18].pid,      // shared_down_weight
+                                                     "",
+                                                     input_infos[19].pid,      // shared_down_scale
+                                                     config.has_zp ? input_infos[20].pid : "",
+                                                     out_dt,
+                                                     input_rank,
+                                                     4);
+        p.add_primitive(*op, shared_fc_down);
+
+        // Scalar gate: hidden_states @ scalar_gate_weight → sigmoid
+        auto shared_scalar_gate = cldnn::fully_connected(shared_scalar_gate_name,
+                                                         input_infos[0],
+                                                         input_infos[21].pid,  // scalar_gate_weight (f16, small)
+                                                         "",
+                                                         "",
+                                                         "",
+                                                         out_dt,
+                                                         input_rank,
+                                                         2);
+        p.add_primitive(*op, shared_scalar_gate);
+
+        // Sigmoid on scalar gate
+        p.add_primitive(*op, cldnn::activation(shared_sigmoid_name,
+                                              input_info(shared_scalar_gate_name),
+                                              cldnn::activation_func::logistic));
+
+        // Multiply shared_down_out * scalar_gate (broadcast over hidden dim)
+        p.add_primitive(*op, cldnn::eltwise(shared_gate_mul_name,
+                                            {input_info(shared_fc_down_name), input_info(shared_sigmoid_name)},
+                                            cldnn::eltwise_mode::prod));
+
+        // Add to routed expert output: moe_output + gated_shared
+        p.add_primitive(*op, cldnn::eltwise(shared_add_name,
+                                            {input_info(moe_scatter_reduce_name), input_info(shared_gate_mul_name)},
+                                            cldnn::eltwise_mode::sum));
+    }
 }
 
 REGISTER_FACTORY_IMPL(internal, MOECompressed);
