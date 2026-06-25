@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "grouped_matmul_inst.h"
+#include "intel_gpu/primitives/swiglu.hpp"
 #include "json_object.h"
 #include "primitive_type_base.h"
 #include "to_string_utils.h"
@@ -38,7 +39,15 @@ std::vector<layout> grouped_matmul_inst::calc_output_layouts(const grouped_matmu
                         "grouped_matmul 3D×3D: A must have at least rank 3");
         const ov::Dimension G = a_shape[a_shape.size() - 3];
         const ov::Dimension M = a_shape[a_shape.size() - 2];
-        const ov::Dimension N = b_shape[b_shape.size() - 2];
+        ov::Dimension N = b_shape[b_shape.size() - 2];
+        // Fused SwiGLU halves the output feature dimension.
+        for (const auto& fd : impl_param.fused_desc) {
+            if (fd.is_type<swiglu>()) {
+                if (N.is_static()) N = N.get_length() / 2;
+                else               N = ov::Dimension::dynamic();
+                break;
+            }
+        }
         output_shape = {G, M, N};
     } else {
         // 2D×3D: A:[T,K], B:[G,N,K], offsets:[G] -> out:[T,N]
@@ -47,7 +56,14 @@ std::vector<layout> grouped_matmul_inst::calc_output_layouts(const grouped_matmu
         OPENVINO_ASSERT(b_shape.rank().is_static() && b_shape.size() >= 2,
                         "grouped_matmul 2D×3D: B must have at least rank 2");
         const ov::Dimension T = a_shape[a_shape.size() - 2];
-        const ov::Dimension N = b_shape[b_shape.size() - 2];
+        ov::Dimension N = b_shape[b_shape.size() - 2];
+        for (const auto& fd : impl_param.fused_desc) {
+            if (fd.is_type<swiglu>()) {
+                if (N.is_static()) N = N.get_length() / 2;
+                else               N = ov::Dimension::dynamic();
+                break;
+            }
+        }
         output_shape = {T, N};
     }
 

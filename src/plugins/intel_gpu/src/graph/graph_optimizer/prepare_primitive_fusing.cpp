@@ -40,6 +40,7 @@
 #include "embedding_bag_inst.h"
 #include "swiglu_inst.h"
 #include "gather_matmul_inst.h"
+#include "grouped_matmul_inst.h"
 #include "extract_image_patches_inst.h"
 #include "reduce_inst.h"
 #include "group_normalization_inst.h"
@@ -251,6 +252,23 @@ void prepare_primitive_fusing::fuse_swiglu(program &p) {
             if (!data_type_traits::is_i4_u4(wt_dt))
                 continue;
             GPU_DEBUG_TRACE_DETAIL << node->id() << " : fuse swiglu to GatherMatmul " << dep_node.id() << std::endl;
+            GPU_DEBUG_TRACE_DETAIL << " - glu stride : " << swiglu_prim->glu_stride << std::endl;
+            GPU_DEBUG_TRACE_DETAIL << " - gate idx : " << swiglu_prim->gate_idx << std::endl;
+            p.fuse_nodes(dep_node, *node, &fusing_history);
+            continue;
+        }
+
+        // GroupedMatMul + SwiGLU fusion (systolic platforms, i4/u4 weights only)
+        if (dep_node.is_type<grouped_matmul>()) {
+            if (!dep_node.get_fused_primitives().empty())
+                continue;
+            auto in_dt = dep_node.get_input_layout(0).data_type;
+            if (in_dt != data_types::f16)
+                continue;
+            auto wt_dt = dep_node.get_input_layout(1).data_type;
+            if (!data_type_traits::is_i4_u4(wt_dt))
+                continue;
+            GPU_DEBUG_TRACE_DETAIL << node->id() << " : fuse swiglu to GroupedMatMul " << dep_node.id() << std::endl;
             GPU_DEBUG_TRACE_DETAIL << " - glu stride : " << swiglu_prim->glu_stride << std::endl;
             GPU_DEBUG_TRACE_DETAIL << " - gate idx : " << swiglu_prim->gate_idx << std::endl;
             p.fuse_nodes(dep_node, *node, &fusing_history);
