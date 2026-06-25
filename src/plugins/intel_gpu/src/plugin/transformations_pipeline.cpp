@@ -16,6 +16,8 @@
 #include <vector>
 #include <type_traits>
 
+#include "transformations/utils/extract_subgraph.hpp"
+
 #include "intel_gpu/runtime/debug_configuration.hpp"
 #include "intel_gpu/runtime/itt.hpp"
 #include "intel_gpu/primitives/paged_attention.hpp"
@@ -575,7 +577,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         // Gated on supports_immad (systolic-only) and oneDNN (required for expert GEMM dispatch).
         // Note: even though we are already inside `if (supports_immad)`, oneDNN can still be explicitly disabled by the user.
         if (device_info.supports_immad && config.get_use_onednn()) {
-            manager.register_pass<ov::pass::ConvertGroupedMatMulToGatherMatmul>();
+            // manager.register_pass<ov::pass::ConvertGroupedMatMulToGatherMatmul>();
             const std::vector<ov::element::Type> supported_compressed_weights_types{ov::element::u4,
                                                                                     ov::element::i4,
                                                                                     ov::element::i8,
@@ -1723,6 +1725,7 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
             manager.register_pass<ov::intel_gpu::PrintModelStatistics>();
         }
         manager.register_pass<ov::pass::Validate>();
+        manager.register_pass<ov::pass::Serialize>("after.xml", "");
         manager.run_passes(func);
     }
 }
