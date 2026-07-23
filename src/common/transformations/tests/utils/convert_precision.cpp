@@ -1554,33 +1554,28 @@ TEST(TransformationTests, ConvertCompressedToMixedPrecission_do_not_keep_in_fp32
     ASSERT_TRUE(interpolate->output(0).get_partial_shape() == PartialShape({1, 3, 287, 511}));
 }
 
-template <typename From, typename To>
-void constant_convert_test(element::Type type_from,
+template <typename To>
+void constant_convert_test(const std::shared_ptr<opset4::Constant>& constant,
                            element::Type type_to,
-                           const std::vector<From>& value,
                            const std::vector<To>& expected) {
-    std::shared_ptr<Model> f(nullptr);
-    std::string expected_friendly_name;
-    size_t size = value.size() * sizeof(From) * 8 / type_from.bitwidth();
-    {
-        auto c = std::make_shared<opset4::Constant>(type_from, Shape{size}, value.data());
-        expected_friendly_name = c->get_friendly_name();
-        f = std::make_shared<Model>(OutputVector{c}, ParameterVector{});
+    const auto expected_friendly_name = constant->get_friendly_name();
+    const auto size = shape_size(constant->get_shape());
+    auto model = std::make_shared<Model>(OutputVector{constant}, ParameterVector{});
 
-        pass::Manager manager;
-        manager.register_pass<pass::ConvertPrecision>(precisions_map{{type_from, type_to}});
-        manager.run_passes(f);
-    }
-    auto ops = f->get_ordered_ops();
-    auto c = ov::as_type_ptr<opset4::Constant>(ops[0]);
-    ASSERT_NE(c, nullptr);
-    ASSERT_EQ(c->get_friendly_name(), expected_friendly_name);
+    pass::Manager manager;
+    manager.register_pass<pass::ConvertPrecision>(precisions_map{{constant->get_element_type(), type_to}});
+    manager.run_passes(model);
+
+    const auto converted = ov::as_type_ptr<opset4::Constant>(model->get_ordered_ops()[0]);
+    ASSERT_NE(converted, nullptr);
+    ASSERT_EQ(converted->get_friendly_name(), expected_friendly_name);
+    ASSERT_EQ(converted->get_element_type(), type_to);
     std::vector<To> actual;
     try {
-        actual = c->cast_vector<To>();
+        actual = converted->cast_vector<To>();
     } catch (...) {
         size_t dst_size = (type_to.bitwidth() * size + 7) / 8;
-        actual.assign(c->get_data_ptr<uint8_t>(), c->get_data_ptr<uint8_t>() + dst_size);
+        actual.assign(converted->get_data_ptr<uint8_t>(), converted->get_data_ptr<uint8_t>() + dst_size);
     }
     ASSERT_TRUE(actual.size() >= expected.size());
     for (size_t i = 0; i < expected.size(); i++) {
@@ -1589,25 +1584,19 @@ void constant_convert_test(element::Type type_from,
 }
 
 template <typename From, typename To>
+void constant_convert_test(element::Type type_from,
+                           element::Type type_to,
+                           const std::vector<From>& value,
+                           const std::vector<To>& expected) {
+    const auto size = value.size() * sizeof(From) * 8 / type_from.bitwidth();
+    const auto constant = std::make_shared<opset4::Constant>(type_from, Shape{size}, value.data());
+    constant_convert_test(constant, type_to, expected);
+}
+
+template <typename From, typename To>
 void constant_convert_test(element::Type_t type_from, element::Type_t type_to, From value, To expected) {
-    std::shared_ptr<Model> f(nullptr);
-    std::string expected_friendly_name;
-    {
-        auto c = std::make_shared<opset4::Constant>(type_from, Shape{}, &value);
-        expected_friendly_name = c->get_friendly_name();
-        f = std::make_shared<Model>(OutputVector{c}, ParameterVector{});
-
-        pass::Manager manager;
-        manager.register_pass<pass::ConvertPrecision>(precisions_map{{type_from, type_to}});
-        manager.run_passes(f);
-    }
-    auto ops = f->get_ordered_ops();
-    auto c = ov::as_type_ptr<opset4::Constant>(ops[0]);
-    ASSERT_NE(c, nullptr);
-    ASSERT_EQ(c->get_friendly_name(), expected_friendly_name);
-
-    auto actual = c->cast_vector<To>()[0];
-    ASSERT_EQ(expected, actual);
+    const auto constant = std::make_shared<opset4::Constant>(type_from, Shape{}, &value);
+    constant_convert_test(constant, element::Type{type_to}, std::vector<To>{expected});
 }
 
 TEST(TransformationTests, ConvertPrecision_ConstantConversion_I64MinToI32) {
@@ -1665,6 +1654,12 @@ TEST(TransformationTests, ConvertPrecision_ConstantConversion_U4ToI8) {
 
 TEST(TransformationTests, ConvertPrecision_ConstantConversion_U4ToU8) {
     constant_convert_test<uint8_t, uint8_t>(element::u4, element::u8, {171}, {11, 10});
+}
+
+TEST(TransformationTests, ConvertPrecision_ConstantConversion_U3ToU4) {
+    const std::vector<uint8_t> values{3, 5};
+    auto constant = std::make_shared<opset4::Constant>(element::u3, Shape{values.size()}, values);
+    constant_convert_test(constant, element::u4, values);
 }
 
 TEST(TransformationTests, ConvertPrecision_ConstantConversion_U4ToI8_2) {

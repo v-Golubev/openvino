@@ -1290,6 +1290,7 @@ std::shared_ptr<Node> convert_low_precisions_int(std::shared_ptr<v0::Constant>& 
     // Supported integer precisions
     static const precisions_set_t supported_integer_precisions = {ov::element::i4,
                                                                   ov::element::u4,
+                                                                  ov::element::u3,
                                                                   ov::element::u1,
                                                                   ov::element::u2};
     auto src_type = constant->get_element_type();
@@ -1363,7 +1364,8 @@ bool fuse_type_to_constant(const std::shared_ptr<ov::Node>& node,
             new_const = change_constant_precision<ov::element::Type_t::u8, ov::element::Type_t::f32>(constant);
         } else if (from == ov::element::i8 && to == ov::element::i64) {
             new_const = change_constant_precision<ov::element::Type_t::i8, ov::element::Type_t::i64>(constant);
-        } else if (from == ov::element::i4 || from == ov::element::u4 || from == ov::element::u1) {
+        } else if (from == ov::element::i4 || from == ov::element::u4 || from == ov::element::u3 ||
+                   from == ov::element::u1) {
             new_const = convert_low_precisions_int(constant, to);
         } else {
             OPENVINO_THROW("Precision conversion from " + from.get_type_name() + " to " + to.get_type_name() +
