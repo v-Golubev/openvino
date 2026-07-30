@@ -52,8 +52,8 @@ ov::OutputVector group_query_attention(const ov::frontend::onnx::Node& node) {
     const auto v_quant_type = node.get_attribute_value<std::string>("v_quant_type", "NONE");
 
     // Reject spec inputs whose semantics are not implemented by the OpenVINO decomposition.
-    FRONT_END_OP_CONVERSION_CHECK(!common::is_input_valid(onnx_op_inputs, 11),
-                                  "GroupQueryAttention: head_sink input is not supported.");
+    // head_sink (input 11) is supported: it is forwarded as-is to the internal op and applied as an extra
+    // softmax column in GroupQueryAttentionDecomposition.
     FRONT_END_OP_CONVERSION_CHECK(
         !common::is_input_valid(onnx_op_inputs, 14) && !common::is_input_valid(onnx_op_inputs, 15),
         "GroupQueryAttention: q_norm_weight/k_norm_weight (QK-Norm) inputs are not "

@@ -98,6 +98,26 @@ void GroupQueryAttention::validate_and_infer_types() {
                               "GroupQueryAttention k_scale/v_scale must be f32");
     }
 
+    // head_sink (input 11, com.microsoft spec): optional per-head learnable bias applied as an extra softmax
+    // logit ("attention sink"). When present it must be a 1D tensor of size num_heads matching the query type.
+    // Note: a "NullNode" placeholder (the ONNX frontend's representation of an omitted optional input) can occupy
+    // this slot when later inputs (e.g. k_scale/v_scale) are provided but head_sink itself is not - skip validation
+    // in that case.
+    if (get_input_size() > 11 && get_input_node_ptr(11)->get_type_name() != std::string("NullNode")) {
+        const auto& head_sink_shape = get_input_partial_shape(11);
+        NODE_VALIDATION_CHECK(this,
+                              get_input_element_type(11) == q_type,
+                              "GroupQueryAttention head_sink must have the same element type as query");
+        NODE_VALIDATION_CHECK(this,
+                              head_sink_shape.rank().is_dynamic() || head_sink_shape.rank().get_length() == 1,
+                              "GroupQueryAttention head_sink must be a 1D tensor");
+        NODE_VALIDATION_CHECK(
+            this,
+            head_sink_shape.rank().is_dynamic() || !head_sink_shape[0].is_static() ||
+                head_sink_shape[0].get_length() == m_num_heads,
+            "GroupQueryAttention head_sink must have num_heads elements");
+    }
+
     set_output_type(0, q_type, PartialShape{batch_size, sequence_len, head_size * m_num_heads});
     for (auto&& port : {1, 2}) {
         set_output_type(port, kv_cache_type, kv_shape);

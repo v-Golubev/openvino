@@ -5075,6 +5075,36 @@ OPENVINO_TEST(${BACKEND_NAME}, onnx_model_gqa_f8e4m3fnkv_present_type_is_f8e4m3)
     EXPECT_EQ(model->outputs()[2].get_element_type(), element::f8e4m3);
 }
 
+OPENVINO_TEST(${BACKEND_NAME}, onnx_model_gqa_head_sink) {
+    // head_sink (com.microsoft spec, e.g. GPT-OSS "attention sinks"): a per-head learnable logit that
+    // participates in the softmax as an extra virtual key but never contributes to the output.
+    // With a single valid KV token, softmax reduces to a 2-logit case: weight_key = sigmoid(score - head_sink).
+    // Here Q == K == [1, 0], head_size = 2, so score = (Q.K) * scale = 1 * (1/sqrt(2)).
+    // head_sink is set to the same value, so score - head_sink == 0 and weight_key == 0.5 exactly.
+    const auto model = convert_model("com.microsoft/gqa_head_sink.onnx");
+
+    std::vector<float> query = {1.0f, 0.0f, 1.0f, 0.0f, 2.0f, -3.0f};  // packed Q, K, V
+    std::vector<float> past_key = {};
+    std::vector<float> past_value = {};
+    std::vector<int> seqlens_k = {0};
+    std::vector<int> total_sequence_length = {1};
+
+    std::vector<float> expected_output = {1.0f, -1.5f};  // V * sigmoid(score - head_sink) == V * 0.5
+    std::vector<float> expected_present_key = {1.0f, 0.0f};
+    std::vector<float> expected_present_value = {2.0f, -3.0f};
+
+    auto test_case = ov::test::TestCase(model, s_device);
+    test_case.add_input<float>(Shape{1, 1, 6}, query);
+    test_case.add_input<float>(Shape{1, 1, 0, 2}, past_key);
+    test_case.add_input<float>(Shape{1, 1, 0, 2}, past_value);
+    test_case.add_input<int>(Shape{1, 1}, seqlens_k);
+    test_case.add_input<int>(Shape{}, total_sequence_length);
+    test_case.add_expected_output<float>(Shape{1, 1, 2}, expected_output);
+    test_case.add_expected_output<float>(Shape{1, 1, 1, 2}, expected_present_key);
+    test_case.add_expected_output<float>(Shape{1, 1, 1, 2}, expected_present_value);
+    test_case.run_with_tolerance_as_fp();
+}
+
 OPENVINO_TEST(${BACKEND_NAME}, onnx_model_gqa_qk_norm_unsupported_throws) {
     // q_norm_weight/k_norm_weight (QK-Norm) inputs are not implemented and must be rejected.
     try {

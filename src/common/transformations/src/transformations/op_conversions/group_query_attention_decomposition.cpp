@@ -25,6 +25,7 @@
 #include "openvino/op/gather.hpp"
 #include "openvino/op/greater.hpp"
 #include "openvino/op/greater_eq.hpp"
+#include "openvino/op/matmul.hpp"
 #include "openvino/op/multiply.hpp"
 #include "openvino/op/range.hpp"
 #include "openvino/op/reshape.hpp"
@@ -34,6 +35,8 @@
 #include "openvino/op/select.hpp"
 #include "openvino/op/shape_of.hpp"
 #include "openvino/op/slice.hpp"
+#include "openvino/op/softmax.hpp"
+#include "openvino/op/sqrt.hpp"
 #include "openvino/op/squeeze.hpp"
 #include "openvino/op/subtract.hpp"
 #include "openvino/op/transpose.hpp"
@@ -250,7 +253,50 @@ ov::OutputVector ov::pass::GroupQueryAttentionDecomposition::decompose(
     }
 
     std::shared_ptr<ov::Node> qga_output;
-    if (scale != 0.0f) {
+    // head_sink (com.microsoft spec, e.g. GPT-OSS "attention sinks"): an optional per-head learnable bias that
+    // participates in the softmax as one extra virtual key, pulling probability mass away from the real
+    // keys/values without contributing to the output itself. The fused ScaledDotProductAttention op has no
+    // notion of such an extra logit, so when head_sink is present attention is decomposed manually: compute the
+    // (scaled, masked) scores, concatenate the broadcast sink logit as one extra column, softmax over
+    // [scores, sink], then drop the sink column before multiplying by V.
+    const bool has_head_sink = node->get_input_size() > 11 && !is_null(node->input_value(11));
+    if (has_head_sink) {
+        const auto head_sink = node->input_value(11);
+
+        ov::Output<ov::Node> scale_val;
+        if (scale != 0.0f) {
+            scale_val = register_new_node(v0::Constant::create(T, ov::Shape{}, {scale}));
+        } else {
+            // Default scaling factor is 1 / sqrt(head_size), matching ScaledDotProductAttention's default.
+            const auto head_size_f = register_new_node<v0::Convert>(head_size_node, T);
+            const auto sqrt_head_size = register_new_node<v0::Sqrt>(head_size_f);
+            const auto one_f = register_new_node(v0::Constant::create(T, ov::Shape{}, {1}));
+            scale_val = register_new_node<v1::Divide>(one_f, sqrt_head_size);
+        }
+
+        auto scores = ov::Output<ov::Node>(register_new_node<v0::MatMul>(Q, K, false, true));
+        scores = register_new_node<v1::Multiply>(scores, scale_val);
+        scores = register_new_node<v1::Add>(scores, mask);
+
+        // Broadcast head_sink ([num_heads]) to [batch, num_heads, curr_seqlen, 1] so it can be concatenated as
+        // an extra column of scores.
+        const auto sink_reshape_shape = register_new_node(v0::Constant::create(
+                                          ov::element::i64,
+                                          ov::Shape{4},
+                                          std::vector<int64_t>{1, num_heads, 1, 1}));
+        const auto sink_reshaped = register_new_node<v1::Reshape>(head_sink, sink_reshape_shape, false);
+        const auto batch_and_heads = get_dimensions(q_shape, {0, 1});
+        const auto sink_target_shape =
+            register_new_node<v0::Concat>(ov::NodeVector{batch_and_heads, current_seqlen, one}, 0);
+        const ov::Output<ov::Node> sink_broadcast =
+            register_new_node<v3::Broadcast>(sink_reshaped, sink_target_shape, ov::op::BroadcastType::NUMPY);
+
+        const auto scores_with_sink = register_new_node<v0::Concat>(ov::OutputVector{scores, sink_broadcast}, -1);
+        const auto weights_with_sink = register_new_node<v8::Softmax>(scores_with_sink, -1);
+        const auto last_axis = register_new_node(v0::Constant::create(ov::element::i64, ov::Shape{1}, {3}));
+        const auto weights = register_new_node<v8::Slice>(weights_with_sink, zero, concat_kv_len, one, last_axis);
+        qga_output = register_new_node<v0::MatMul>(weights, V, false, false);
+    } else if (scale != 0.0f) {
         auto scale_node = register_new_node(v0::Constant::create(T, Shape{}, {scale}));
         qga_output = register_new_node<v13::ScaledDotProductAttention>(Q, K, V, mask, scale_node, false);
     } else {
