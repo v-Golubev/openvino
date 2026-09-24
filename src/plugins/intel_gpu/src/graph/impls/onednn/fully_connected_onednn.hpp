@@ -10,6 +10,7 @@
 #include "intel_gpu/runtime/debug_configuration.hpp"
 #include <memory>
 #include <cmath>
+#include <cstdlib>
 
 #define LOG_AND_RETURN_FALSE(node) do {                                         \
     GPU_DEBUG_TRACE << (node).id() << " :  Do not select onednn" << std::endl;  \
@@ -71,6 +72,19 @@ struct FullyConnectedImplementationManager : public ImplementationManager {
         if (!f16f16_case && !bf16bf16_case && !f32f32_case && !u8s8_case && !compressed_case && !fp_compressed_case) {
             LOG_AND_RETURN_FALSE(node);
         }
+
+        // oneDNN has no optimized kernel for u3 weights and falls back to ocl:ref, which is
+        // orders of magnitude slower than the OCL int3 GEMM, so hand those nodes over. This
+        // covers plain 2D weights and the grouped MoE matmuls ([G, N, K], flattened to
+        // [G*N, K]) alike: fully_connected_gpu_int3_dpas takes the expert index from a third
+        // grid dimension, and get_fc_output_layout now derives the output feature size from
+        // one expert's N rather than from the flattened G*N, so the dispatch shape and the
+        // allocated buffer agree.
+        const auto u3_weights_rank = fc_node.weights().get_output_layout(false).get_partial_shape().size();
+        // TEMPORARY: OV_INT3_BASELINE keeps every u3 node on oneDNN.
+        static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+        if (!int3_baseline && wei_dt == data_types::u3 && fc_prim->weights_transposed && (u3_weights_rank == 2 || u3_weights_rank == 3))
+            LOG_AND_RETURN_FALSE(node);
 
         if (fc_prim->compressed_weights) {
             if (fc_prim->decompression_zero_point.is_valid()) {
