@@ -167,8 +167,9 @@ size_t get_dense_sg_m(size_t rows) {
     return 1;
 }
 
-// Column blocks per subgroup and rows per subgroup of the v2 path.
-constexpr size_t v2_nb = 2;
+// Column blocks per subgroup and rows per subgroup of the v2 path. Its 16 x 64
+// tiles need 256 registers per thread (see add_large_grf_option).
+constexpr size_t v2_nb = 4;
 constexpr size_t v2_tile_m = 16;
 // Row counts from which v2 takes over with 8 and with 16 subgroups per workgroup.
 // A workgroup covers 16 * sg_m rows, so each step pays off once it is mostly full.
@@ -203,8 +204,18 @@ bool is_valid_v2_sg_m(const fully_connected_params& params, size_t sg_m) {
         return false;
     const size_t gran_per_group = (group_size / k_chunk) * v2_nb;
     const size_t groups_k = get_input_bf_size(params).second / group_size;
-    const size_t groups_per_iter = (sg_m > gran_per_group) ? sg_m / gran_per_group : 1;
-    return ((groups_per_iter * gran_per_group) % sg_m) == 0 && (groups_k % groups_per_iter) == 0;
+    const size_t groups_per_iter = (sg_m > 2 * gran_per_group) ? sg_m / gran_per_group : 2;
+    return ((groups_per_iter * gran_per_group) % sg_m) == 0 && (groups_per_iter % 2) == 0 &&
+           (groups_k % groups_per_iter) == 0;
+}
+
+void add_large_grf_option(clKernelData& kernel) {
+    auto& options = kernel.code.kernelString->options;
+    const std::string small_grf = " -ze-exp-register-file-size 128";
+    const auto pos = options.find(small_grf);
+    if (pos != std::string::npos)
+        options.erase(pos, small_grf.size());
+    options += " -cl-intel-256-GRF-per-thread";
 }
 
 gemm_config get_v2_config(size_t sg_m, size_t min_rows) {
@@ -704,6 +715,8 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
         gemm_kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
         gemm_kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
         gemm_kernel.skip_execution = (i != selected);
+        if (cfg.v2)
+            add_large_grf_option(gemm_kernel);
     }
 
     GetUpdateDispatchDataFunc(kd);

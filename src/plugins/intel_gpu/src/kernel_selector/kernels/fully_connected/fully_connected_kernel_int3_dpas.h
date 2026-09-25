@@ -74,6 +74,7 @@ bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m);
 bool supports_v2(const fully_connected_params& params);
 bool is_valid_v2_sg_m(const fully_connected_params& params, size_t sg_m);
 gemm_config get_v2_config(size_t sg_m, size_t min_rows);
+void add_large_grf_option(clKernelData& kernel);
 size_t get_dense_sg_m(size_t rows);
 std::vector<gemm_config> get_dense_variants(const fully_connected_params& params);
 bool use_dense_variants(const fully_connected_params& params);
