@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -84,6 +85,7 @@
 #include "ov_ops/gather_matmul_compressed.hpp"
 #include "plugin/transformations/bcast_and_pad_zp_buffers.hpp"
 #include "plugin/transformations/binary_conv_to_conv.hpp"
+#include "plugin/transformations/dense_moe_experts.hpp"
 #include "plugin/transformations/clamp_fp16_output.hpp"
 #include "plugin/transformations/convert_convolution.hpp"
 #include "plugin/transformations/convert_fc_to_compressed.hpp"
@@ -1736,6 +1738,11 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         manager.register_pass<ov::pass::ConvertWeightCompressedConv1x1ToMatmul>();
         manager.register_pass<ov::intel_gpu::IncreaseRMSInputPrecision>();
         manager.register_pass<ov::intel_gpu::ClampFP16Output>();
+        // TEMPORARY: OV_INT3_BASELINE leaves the u3 experts on oneDNN, which needs the tiled input.
+        if (device_info.supports_immad && std::getenv("OV_INT3_BASELINE") == nullptr) {
+            manager.register_pass<ov::intel_gpu::BypassExpertTile>();
+            manager.register_pass<ov::intel_gpu::MoveExpertRoutingScale>();
+        }
         manager.register_pass<ov::intel_gpu::ConvertMatMulToFullyConnected>(device_info.supports_immad);
         manager.register_pass<ov::pass::MoveFCReshapeToWeights<ov::intel_gpu::op::FullyConnected>>();
         if (!device_info.supports_immad) {
@@ -1853,6 +1860,24 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                         return true;
                     }
                 }
+                // u3 weights run on the OCL int3 GEMM, which quantizes the activations
+                // itself; a graph-level DynamicQuantize would hand it an activation scale it
+                // has no argument slot for. This applies both to a plain 2D weight and to a
+                // grouped MoE matmul ([G, N, K]), which that kernel now serves through its
+                // expert grid dimension. Keep the two in step with the u3 bypass in
+                // fully_connected_onednn.hpp: a node that keeps its DynamicQuantize but is
+                // then handed to the int3 kernel, or vice versa, loses the int8 activation
+                // path and gets dramatically slower.
+                const size_t u3_weights_rank = root->get_input_partial_shape(1).size();
+                // TEMPORARY: OV_INT3_BASELINE keeps DynamicQuantize on every u3 node.
+                static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+                if (!int3_baseline && root->get_input_element_type(1) == ov::element::u3 &&
+                    (u3_weights_rank == 2 || u3_weights_rank == 3)) {
+                    GPU_DEBUG_TRACE << root->get_friendly_name() << "  dyn_quan is turned off: u3 weights are handled in-kernel"
+                                    << std::endl;
+                    return true;
+                }
+
                 uint64_t adj_group_size = dynamic_quantization_group_size;
                 const bool is_wei_i8u8 = cldnn::one_of(root->get_input_element_type(1), {ov::element::i8, ov::element::u8});
                 if (ov::intel_gpu::DynamicQuantizeFullyConnected::ShouldUseGs128(is_wei_i8u8, use_gs128_for_int8_per_token, adj_group_size, use_gs128_for_linear_attention)) {

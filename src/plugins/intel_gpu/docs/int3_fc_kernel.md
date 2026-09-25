@@ -1,0 +1,255 @@
+# u3 (int3) weights in the GPU plugin: the `fully_connected_gpu_int3_dpas` kernel
+
+Target model: `Qwen3.6-35B-A3B-compressed-int3`
+(140 u3 weight constants: 10 `q_proj`, 10 `o_proj`, 120 MoE expert matmuls over 256
+experts; the rest of the model is u8). Measured on Panther Lake (Xe3, XMX).
+
+## 1. What had to change to support u3
+
+### Core and oneDNN (from the u3 weights-decompression branch, merged in)
+
+- **u3 storage layout** (PR 37430, `fcf9308813`): u3/u6 are a linear LSB-first bit stream,
+  value `i` in bits `[3i, 3i+3)`. The previous layout grouped 8 values into 3 bytes as bit
+  planes. Every kernel below relies on the linear layout.
+- Reference `Convert`, `Transpose` and `Concat` for u3 (constant folding, CPU fallbacks).
+- GPU transformation pipeline: u3 accepted as a compressed-weights type
+  (`compressed_weights_pattern.hpp`, `convert_fc_to_compressed.cpp`).
+- oneDNN submodule: reference u3 weights x int8/u8 activations
+  (`ONEDNN_TEMPORARY_U3_CONTIGUOUS_LAYOUT=ON`, which must match the core layout).
+  That path is correct but slow; it was the only implementation before this work.
+
+### Plugin: kernel_selector type plumbing
+
+- `Datatype::UINT3` / `WeightsType::UINT3`, `ParamsKey` bit, `toString`, the cldnn <->
+  kernel_selector conversions in `kernel_selector_helper.cpp`.
+- `jitter.cpp`: u3 type constants. `BytesPerElement` throws for sub-byte types, so
+  kernel_selector never does byte arithmetic on u3; byte sizes come from cldnn `layout`.
+- `int3_utils.cl`: granule helpers. A granule is 32 values = 96 bits = 3 uints, so it
+  never straddles a word boundary.
+- u3 input in `reorder_data.cl` and in the reference FC kernel (`fully_connected_gpu_bfyx_ref`).
+
+### Plugin: weights layout and reorder
+
+- New weights format `os_is_yx_osv16_isv32` (`format.hpp/.cpp`, `tensor_type.h/.cpp`,
+  both mappings in `kernel_selector_helper.cpp`). A block is 16 N x 32 K = 512 u3 values
+  = 192 bytes, dense and byte aligned.
+- `reorder_weights_int3.{h,cpp,cl}` repacks plain `oiyx` u3 into it at compile time.
+  One work item per granule, so there are no atomics.
+  Layout: `uint index = (n_block * CHUNKS_K + k_chunk) * 48 + w * 16 + lane`, which lets
+  lane L load its 32 weights for column `n_block*16 + L` with three coalesced block reads.
+- Grouped (rank-3 `[G, N, K]`) weights flatten expert-major to `[G*N, K]`. Since N is a
+  multiple of 16, the blocked layout of that matrix is a contiguous stack of per-expert slices.
+
+### Plugin: the FC kernel
+
+`kernels/fully_connected/fully_connected_kernel_int3_dpas.{h,cpp}` and
+`cl_kernels/fully_connected_gpu_int3_dpas.cl`, registered in
+`fully_connected_kernel_selector.cpp`. It is a multi-kernel FC, like `bf_tiled`'s
+dynamic-quantization path:
+
+- **Kernel 0 (quantizer)** turns f16 activations into int8 with one scale per group
+  (group size 128/64/32) into internal buffers. One 16-lane subgroup per group.
+- **Kernel 1 (DPAS GEMM)** decodes u3 granules straight into the `b` operand of
+  `intel_sub_group_i8_i8_matrix_mad_k32`, with per-group float rescale and a scalar zp.
+- **Kernel 2 (scalar GEMM)** for decode-sized row counts, with K split across subgroups.
+- Grouped MoE weights: the expert index is a third grid dimension. It only adds base
+  offsets to weights, scales and rows; rows are tiled within an expert.
+- Scales are addressed through host pitches (`WEI_SCALE_{OFFSET,E_PITCH,N_PITCH,G_PITCH}`).
+  The grouped scale is `byfx [G, N, groups]`, i.e. `[G][groups][N]` in memory.
+- ACTIVATION and ELTWISE fused ops at the store. The MoE gate matmul carries a fused
+  `Swish * up`, and the down matmul a fused routing-weight multiply.
+- **Dense v2 GEMM (`DPAS_V2`)** for 96+ rows on Xe2 and later (`supports_v2`). It is
+  limited to dense FCs with a scalar or no zero point, N a multiple of 64 and an even
+  number of 32-wide chunks per quantization group. Each subgroup covers 16 rows x 4
+  column blocks, so every activation load feeds four DPAS. It runs with 256 GRF per
+  thread. u3 fits in a signed 4-bit value, so the weights are decoded to nibbles and
+  multiplied with `intel_sub_group_i8_i4_matrix_mad_k32`, which halves the SLM
+  traffic of the decoded weights compared to int8. The activations of a whole
+  group arrive through `intel_sub_group_2d_block_read_8b_16r32x2c`, whose layout is
+  the DPAS `a` operand and which reads rows past the batch as zero. The raw weights
+  of the next stage are prefetched into registers. The decoded weights are shared
+  through a triple-buffered SLM stage behind a split barrier
+  (`intel_work_group_barrier_arrive/wait`), so the barrier latency hides behind the
+  DPAS. The decode spreads eight u3 values into nibbles with ~1 op per weight, and the
+  rescale folds the scalar zp into a per-row term (one convert and two fma per output).
+  The scales of two groups are loaded as one vector. The epilogue computes all rows of
+  a column block before storing any, so the fused-op loads are not serialized behind
+  the stores (worth ~0.8 ms on the gate FC with its fused `Swish * up` at 978 rows).
+- Launch config: `tile_m` 32 by default. Dense FCs pick `sg_m` (subgroups sharing the
+  weight decode via SLM) by row count: 32x1 below 48 rows, 32x2 below 96, then v2 with
+  8 subgroups below 192 and 16 from 192. Without v2 support the old 32x4 (below 384)
+  and 32x8 take over. A shape-agnostic dense FC compiles all four DPAS variants plus
+  the scalar one and selects one per inference through `skip_execution`
+  (`get_dense_variants` / `select_gemm`). Static kernels use `tile_m` 8 or 16 for
+  <= 8 or <= 16 rows. Grouped (MoE) weights keep a single variant: 32x1, or `sg_m` 2
+  above 64 rows when static.
+
+### Plugin: graph-level changes
+
+- `graph/fully_connected.cpp` shape inference: the weights reorder crops grouped weights
+  to 2D `[G*N, K]`, so the expert dimension is restored from the scale's dim 0.
+  `impls/ocl/fully_connected.cpp` (`get_fc_output_layout`) uses the inferred output
+  for grouped weights. Without both, the output is `[G, M, G*N]` and the kernel page-faults.
+- The oneDNN u3 bypass (`fully_connected_onednn.hpp`) and the u3 DynamicQuantize skip
+  (`transformations_pipeline.cpp`) send u3 FCs to the int3 kernel, which quantizes
+  internally. **These two must always move together.**
+- `primitive_inst::is_valid_fusion` allows fused eltwise/activation ops on dynamic OCL
+  FCs only for an allowlist of kernels. `fully_connected_gpu_int3_dpas` is on it now.
+  Without it, every dynamic inference ran the FC through an unfused subgraph, with the
+  residual adds, Swish and multiply as separate kernels (Qwen3-8B: ~130 ms of a 1k
+  prefill and ~10 ms per decoded token).
+- `plugin/transformations/dense_moe_experts.{hpp,cpp}`, both registered before
+  `ConvertMatMulToFullyConnected` and only for u3 weights:
+  - `BypassExpertTile`: the model tiles each token's activations to all 256 experts.
+    The pass feeds the untiled `[1, T, K]` input instead, and the kernel reuses the same
+    rows for every expert (`BROADCAST_INPUT`).
+  - `MoveExpertRoutingScale`: moves the routing-weight multiply in front of the Reshape,
+    so it fuses into the down matmul.
+
+Gotcha: sources are globbed at configure time. Re-run `cmake build` after adding a file,
+or it is silently skipped (undefined-vtable link error).
+
+## 2. How KernelFoundry optimized the kernel
+
+The kernel was developed standalone first, in the `int3_gemm_ocl` (2D) and
+`int3_moe_gemm_ocl` (grouped) KernelFoundry tasks, against a naive per-element-unpack
+reference that stands in for the old oneDNN path. The tasks live outside this repo.
+
+The starting kernel was ALU-bound: decoding a granule costs about 3 integer ops per weight
+and fed a single DPAS over 8 rows, so XMX was idle ~95% of the time. The changes were:
+
+1. **Hoist the unpack out of M.** A group's granules are decoded once into registers and
+   replayed against `tile_m/8` row tiles, with `tile_m` raised from 8 to 32. 64 spills
+   registers and is slower.
+2. **Share the decode through SLM.** Subgroups of a workgroup cover the same N block, so
+   they split the granules, publish them to SLM and read back the full set,
+   double-buffered with one barrier per stage (`sg_m`).
+3. **Wider activation loads.** One `intel_sub_group_block_read_us4` per row and group
+   yields exactly the DPAS `a` operand for four consecutive granules.
+4. **K-split for decode.** At M=1 there are too few workgroups, so `sg_k` subgroups split K
+   and reduce through SLM. This was the biggest decode win.
+5. **Experts as a grid dimension** (MoE task). A single expert sees only 1-64 rows, but
+   256 of them together fill the machine. The inner loop is unchanged.
+
+Standalone results: 99.6x over the naive reference for the dense shapes (prefill ~31
+TOPS, XMX-bound; decode at the DRAM roof). The MoE shapes run 92.8x over it:
+gate/up at 88-96 GB/s (DRAM roof), 1.1 ms per 256-expert node at M=8.
+The best config depends on the shape. The plugin keeps only what a device-timed sweep
+inside it confirmed (Qwen3-8B dense shapes, N and K from 4096 to 12288): 32x1 gives
+~10-11 TOPS, 32x2 wins at 64 rows, 32x4 at 128-256 rows (~18-19 TOPS) and 32x8 from
+~512 rows (~20-21 TOPS). 64-row tiles and 16-row tiles with more subgroups lose. On the
+Qwen3.6 MoE shapes (16-64 rows per expert) 32x1 is the best or near-best choice.
+
+The dense v2 path came from a second task, `int3_dense_gemm_lnl` (run on Lunar Lake,
+dense shapes only, against the 32xN plugin kernel as the reference). The profiler showed
+the old kernel stalled on the SLM barrier (21%) and on send/DPAS dependencies, with XMX
+active less than half the time. What helped, in order: 2D block reads of the
+activations, two column blocks per subgroup (four spill registers), register prefetch
+of the next stage's raw weights, a split barrier with triple-buffered SLM (+5-8% on
+large shapes), and the cheaper decode and rescale. 256 GRF per thread, prefetching the
+activations or the scales, and 32-row tiles were all slower. Standalone it runs 1.49x
+over the 32xN kernel (gate at 978 rows: 3.43 ms against 5.71 ms, ~29 TOPS).
+
+A second round on the same task switched the weights to int4 DPAS operands, which made
+room for four column blocks per subgroup at 256 GRF, two-group scale vector loads and a
+read-ahead of the next granules from SLM. Gate at 978 rows went from 3.43 to 2.80 ms
+(-18%), down from 3.80 to 2.70 ms, and qkv from 1.94 to 1.41 ms. Deferring the rescale,
+pipelining the activations, 32x32 tiles and four-group scale loads did not help.
+
+## 3. Results (2026-09-24)
+
+All 140 u3 FCs select `fully_connected_gpu_int3_dpas__f16`; none fall back to `bfyx_ref`
+or oneDNN. The output tokens match the known-good sequence
+`[248068, 198, 90700, 8340, 25, 271, 16, 13]` for the 27-token test prompt.
+
+27-token prompt, 8 generated tokens:
+
+| configuration | prefill | decode |
+| --- | --- | --- |
+| u3 on oneDNN reference (before) | 77.4 s | 3.0 s/tok |
+| int3 kernel, first inference (wall) | 2.3 s | 0.17 s/tok |
+| int3 kernel, warm (wall) | 0.53 s | 0.19 s/tok |
+| int3 kernel, warm, GPU time (profiled) | 177 ms | |
+| int4 model, same build (reference point) | 0.86 s | 0.04 s/tok |
+
+Of the 177 ms of prefill GPU time, int3 FCs take 129 ms (about 1.05 ms per 256-expert
+node, the same as the standalone kernel), u8 oneDNN FCs 23.5 ms, and the expert
+ReduceSum 10.8 ms. Per-node timings at M=27: gate/up 1.74 ms, down 1.55 ms
+(`bench_moe.py`).
+
+The numbers above were measured on the previous base, where u3 was not in the MoE fusion.
+
+Tests: `test_u3_fc.py` (2D FC) and `test_u3_moe.py` (grouped bmm, fused gate, Tile
+bypass, routed down, FC + add; M from 1 to 256) compare against NumPy.
+
+### Dense model: Qwen3-8B (u3, group 128)
+
+All u3 FCs run on this kernel. Warm wall time, 32 generated tokens:
+
+| configuration | prefill 24 tok | prefill 978 tok | decode |
+| --- | --- | --- | --- |
+| u3 on oneDNN reference (`OV_INT3_BASELINE=1`) | 31.5 s | | 1.49 s/tok |
+| int3 kernel, shape-agnostic FCs fixed at 32x1 | 0.11 s | 1.71 s | 48-56 ms/tok |
+| int3 kernel, shape-agnostic `sg_m` variants | 0.11 s | 1.30 s | 48-56 ms/tok |
+
+With the oneDNN submodule on `uarshad/ggemm_u3` (`d21c1b27f0`), oneDNN has a real u3
+GEMM. Back-to-back on 2026-09-25, 33 generated tokens, same machine state:
+
+| configuration | prefill 24 tok | prefill 978 tok | decode |
+| --- | --- | --- | --- |
+| u3 on oneDNN `ggemm_u3` (`OV_INT3_BASELINE=1`) | 0.074 s | 0.78-0.80 s | 43-44 ms/tok |
+| int3 kernel, 32xN only, fused ops not applied | 0.123 s | 1.03-1.06 s | 48-57 ms/tok |
+| int3 kernel, v2 + fused ops | 0.066-0.069 s | 0.845 s | 37-40 ms/tok |
+| int3 kernel, v2 int4 DPAS, 4 column blocks | 0.085-0.087 s | 0.792-0.794 s | 38-41 ms/tok |
+
+In a back-to-back run with the last row, oneDNN measured 0.075 s, 0.798-0.805 s and
+43-45 ms/tok. The short prompt (24 rows) runs the unchanged 32x1 kernel. Its drop from
+0.066 s is not explained yet. The FC kernels account for less than the difference, so it
+may be the machine state.
+
+The greedy tokens of the v2 build match the 32xN build (identical for the short prompt,
+first difference at token 30 of 33 for the long one), and the int4 build matches the v2
+build. Per FC at 978 rows, device-timed including activation quantization, the int4
+build is ahead of oneDNN on every shape (gate 3.52 against 3.84 ms, down 3.68 against
+4.37 ms, qkv 1.91 against 2.23 ms, o 1.67 against 1.74 ms).
+
+Decode varies between runs with the machine state; both builds measure the same in
+back-to-back runs. The prefill logits match the f16-activation reference at cos 0.998
+with the same top-10, and the two builds give identical logits. At 978 tokens the gate
+FC (12288x4096) takes 5.0 ms instead of 9.9 ms.
+
+Measure shape-agnostic FCs with device timing (`unitrace --opencl -d`). PERF_COUNT
+under-reports multi-kernel shape-agnostic FCs by about 2x.
+
+### On top of `vg/gpu/u3_weights_decompression_poc` (fused MoE for u3)
+
+That branch adds u3 to the plugin's MoE fusion (`ConvertTiledMoeBlockToGatherMatmuls` ->
+`MOE3GemmCompressed`, routed top-k experts via oneDNN grouped matmul). The fusion runs
+before `BypassExpertTile`, so by default the 120 expert matmuls leave this kernel and only
+the 20 attention projections stay on it. Warm, 27-token prompt, correct tokens in both:
+
+| configuration | prefill (wall) | prefill GPU | decode |
+| --- | --- | --- | --- |
+| fused MoE (default) | 0.39 s | 27 ms | 0.070 s/tok |
+| `OV_GPU_MOE_DISABLE_FUSION=1` (dense MoE on this kernel) | 0.69 s | 87 ms | 0.22 s/tok |
+
+Measured with the oneDNN submodule on the public `uarshad/ggemm_u3` branch
+(`d21c1b27f0`), which has the u3 JIT GEMM and grouped-matmul kernels. The branch's own
+oneDNN commit (`dffe00b1`) adds unpublished grouped-matmul and accuracy fixes. With
+the u3 reference-only oneDNN (`3093f54feb`), the fused MoE took 9.0 s prefill and
+0.77 s/tok.
+
+### Known limits
+
+- **Without the fusion, the MoE runs dense.** The IR computes every expert and masks
+  with the routing weights, so every token goes through all 256 experts. Decode then
+  reads every expert's weights (bandwidth-bound), and activation memory grows as
+  256 x T x 2048: prompts of 256+ tokens run out of memory on a 32 GB iGPU machine.
+  `BypassExpertTile` and `MoveExpertRoutingScale` only speed up this dense fallback;
+  the routed fused MoE is the real fix, and could use this kernel for its expert GEMMs.
+- Grouped zero points are not supported; only a scalar zp.
+
+### Temporary code to remove before upstreaming
+
+- `OV_INT3_BASELINE` env switch (`fully_connected_onednn.hpp`, `transformations_pipeline.cpp`,
+  `fully_connected_kernel_int3_dpas.cpp`) restores the all-oneDNN path for A/B runs.
