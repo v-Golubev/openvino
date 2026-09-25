@@ -198,11 +198,44 @@ KERNEL(quantize_input)(
 #if USE_DPAS && (TILE_M % 8) != 0
 #   error "fully_connected_gpu_int3_dpas.cl - the DPAS path needs TILE_M to be a multiple of 8"
 #endif
-#if USE_DPAS && (CHUNKS_PER_ITER % SG_M) != 0
+#if USE_DPAS && !DPAS_V2 && (CHUNKS_PER_ITER % SG_M) != 0
 #   error "fully_connected_gpu_int3_dpas.cl - SG_M must divide CHUNKS_PER_ITER so the granules split evenly"
 #endif
-#if USE_DPAS && (GROUPS_K % GROUPS_PER_ITER) != 0
+#if USE_DPAS && !DPAS_V2 && (GROUPS_K % GROUPS_PER_ITER) != 0
 #   error "fully_connected_gpu_int3_dpas.cl - GROUPS_PER_ITER must divide GROUPS_K"
+#endif
+
+#if DPAS_V2
+// Granules staged per barrier: one quantization group spans CHUNKS_PER_GROUP
+// granules for each of the V2_NB column blocks, and every subgroup decodes at
+// least one of them.
+#define V2_GRAN_PER_GROUP (CHUNKS_PER_GROUP * V2_NB)
+#if SG_M > V2_GRAN_PER_GROUP
+#define V2_GPI (SG_M / V2_GRAN_PER_GROUP)
+#else
+#define V2_GPI 1
+#endif
+#define V2_GRAN_PER_ITER (V2_GPI * V2_GRAN_PER_GROUP)
+#define V2_GRAN_PER_SG   (V2_GRAN_PER_ITER / SG_M)
+#define V2_ITERS_K       (GROUPS_K / V2_GPI)
+#define V2_RB            ((TILE_M + 15) / 16)
+#if (V2_GRAN_PER_ITER % SG_M) != 0 || (GROUPS_K % V2_GPI) != 0 || (CHUNKS_PER_GROUP % 2) != 0 || SG_M < 2
+#   error "fully_connected_gpu_int3_dpas.cl - invalid DPAS_V2 configuration"
+#endif
+#if TILE_M == 8
+#   define V2_A_READ intel_sub_group_2d_block_read_8b_8r32x2c
+#elif TILE_M == 16
+#   define V2_A_READ intel_sub_group_2d_block_read_8b_16r32x2c
+#elif TILE_M == 32
+#   define V2_A_READ intel_sub_group_2d_block_read_8b_32r32x2c
+#else
+#   error "fully_connected_gpu_int3_dpas.cl - DPAS_V2 needs TILE_M of 8, 16 or 32"
+#endif
+#if DECOMPRESSION_ZP_TERM
+#   define V2_WEI_ZP ((float)(DECOMPRESSION_ZP_VALUE))
+#else
+#   define V2_WEI_ZP 0.0f
+#endif
 #endif
 #if !USE_DPAS && (GROUPS_K % SG_K) != 0
 #   error "fully_connected_gpu_int3_dpas.cl - SG_K must divide GROUPS_K"
@@ -234,6 +267,27 @@ KERNEL(quantize_input)(
            as_int(U3_CHAR4(w0, w1, w2, 8)), as_int(U3_CHAR4(w0, w1, w2, 12)),       \
            as_int(U3_CHAR4(w0, w1, w2, 16)), as_int(U3_CHAR4(w0, w1, w2, 20)),      \
            as_int(U3_CHAR4(w0, w1, w2, 24)), as_int(U3_CHAR4(w0, w1, w2, 28)))
+
+// Four consecutive u3 values (the low 12 bits of f; higher bits are ignored)
+// spread into the four bytes of an int: first into two 6-bit pairs at bits 0 and
+// 16, then each pair into bytes 0/1 and 2/3. About 2 ops per weight, against ~5
+// for extracting and inserting the values one by one.
+inline int FUNC(u3_spread4)(uint f) {
+    const uint u = (f & 0x3Fu) | ((f << 10) & 0x3F0000u);
+    return as_int((u & 0x00070007u) | ((u << 5) & 0x07000700u));
+}
+
+// One granule as the DPAS b operand, via u3_spread4 on each 12-bit field.
+inline int8 FUNC(u3_to_dpas_b_fast)(uint w0, uint w1, uint w2) {
+    return (int8)(FUNC_CALL(u3_spread4)(w0),
+                  FUNC_CALL(u3_spread4)(w0 >> 12),
+                  FUNC_CALL(u3_spread4)((w0 >> 24) | (w1 << 8)),
+                  FUNC_CALL(u3_spread4)(w1 >> 4),
+                  FUNC_CALL(u3_spread4)(w1 >> 16),
+                  FUNC_CALL(u3_spread4)((w1 >> 28) | (w2 << 4)),
+                  FUNC_CALL(u3_spread4)(w2 >> 8),
+                  FUNC_CALL(u3_spread4)(w2 >> 20));
+}
 
 // The scale of expert e, output channel n (within the expert) and input k. The
 // pitches come from the host and follow the scale's actual memory order, which for
@@ -282,6 +336,154 @@ KERNEL(fc)(
     , const __global float* quan_var
 )
 {
+#if DPAS_V2
+    // Dense FC only (no experts, scalar or no zero point). A subgroup computes
+    // TILE_M rows x V2_NB 16-column blocks, so each activation load feeds V2_NB
+    // DPAS. The activations of a whole quantization group arrive through 2D block
+    // reads, whose layout is exactly the DPAS a operand and which read rows past
+    // the batch as zero. The SG_M subgroups share the decoded weights through a
+    // triple-buffered SLM stage behind a split barrier: the next iteration's
+    // weights are staged and the barrier is entered before the current iteration
+    // is computed, and only waited on afterwards, so its latency hides behind the
+    // DPAS. A buffer is rewritten two iterations after it was read, and passing
+    // the wait of the iteration in between proves every subgroup is done with it.
+    const uint lane = get_sub_group_local_id();
+    const uint sg   = (uint)get_local_id(1);
+    const uint nbw  = (uint)get_group_id(0);
+    const uint m0   = ((uint)get_group_id(1) * SG_M + sg) * TILE_M;
+    const uint batch_size = BATCH_SIZE;
+    const uint var_pitch  = TILE_IN_B_PITCH / QUANTIZE_GROUP_SIZE;
+    const __global uint* B = (const __global uint*)weights;
+
+    float acc_f[V2_NB][TILE_M];
+    unroll_for (uint j = 0; j < V2_NB; ++j)
+        unroll_for (uint t = 0; t < TILE_M; ++t)
+            acc_f[j][t] = 0.0f;
+
+    __local int8 wshare[3][V2_GRAN_PER_ITER][SIMD];
+    uint raw[V2_GRAN_PER_SG][3];
+
+    // Granule gidx of staging iteration it: group gi, chunk cc, column block j.
+#define V2_GRAN_PTR(it, gidx)                                                       \
+    (B + ((nbw * V2_NB + ((gidx) % V2_NB)) * CHUNKS_K +                             \
+          ((it) * V2_GPI + (gidx) / V2_GRAN_PER_GROUP) * CHUNKS_PER_GROUP +         \
+          ((gidx) / V2_NB) % CHUNKS_PER_GROUP) * CHUNK_UINTS)
+#define V2_LOAD_RAW(it_)                                                            \
+    unroll_for (uint i = 0; i < V2_GRAN_PER_SG; ++i) {                              \
+        const __global uint* wp = V2_GRAN_PTR(it_, sg * V2_GRAN_PER_SG + i);        \
+        raw[i][0] = intel_sub_group_block_read(wp);                                 \
+        raw[i][1] = intel_sub_group_block_read(wp + SIMD);                          \
+        raw[i][2] = intel_sub_group_block_read(wp + 2 * SIMD);                      \
+    }
+#define V2_STAGE_RAW(b_)                                                            \
+    unroll_for (uint i = 0; i < V2_GRAN_PER_SG; ++i)                                \
+        wshare[b_][sg * V2_GRAN_PER_SG + i][lane] =                                 \
+            FUNC_CALL(u3_to_dpas_b_fast)(raw[i][0], raw[i][1], raw[i][2]);
+
+    V2_LOAD_RAW(0)
+    V2_STAGE_RAW(0)
+    barrier(CLK_LOCAL_MEM_FENCE);
+    if (1 < V2_ITERS_K) {
+        V2_LOAD_RAW(1)
+    }
+
+    for (uint it = 0; it < V2_ITERS_K; ++it) {
+        const uint buf = it % 3u;
+        if (it + 1 < V2_ITERS_K) {
+            V2_STAGE_RAW((it + 1) % 3u)
+            intel_work_group_barrier_arrive(CLK_LOCAL_MEM_FENCE);
+            if (it + 2 < V2_ITERS_K) {
+                V2_LOAD_RAW(it + 2)
+            }
+        }
+
+        unroll_for (uint gi = 0; gi < V2_GPI; ++gi) {
+            const uint g = it * V2_GPI + gi;
+
+            float bs[V2_NB];
+            unroll_for (uint j = 0; j < V2_NB; ++j)
+                bs[j] = WEI_SCALE(0, (nbw * V2_NB + j) * SIMD + lane, g * GROUP_SIZE);
+
+            // Per row r * 16 + lane: x = activation scale, y = zp * scale * sum,
+            // so each output element costs one convert and two fma.
+            float2 sv[V2_RB];
+            unroll_for (uint r = 0; r < V2_RB; ++r) {
+                const uint row = min(m0 + r * 16 + lane, batch_size - 1);
+                const uint qv = (row * var_pitch + g) * 2;
+                sv[r].x = quan_var[qv];
+                sv[r].y = quan_var[qv + 1] * sv[r].x * V2_WEI_ZP;
+            }
+
+            ushort a_all[CHUNKS_PER_GROUP / 2][TILE_M * 2];
+            unroll_for (uint h = 0; h < CHUNKS_PER_GROUP / 2; ++h)
+                V2_A_READ((__global void*)quantized_input, IFM_SIZE, batch_size, TILE_IN_B_PITCH,
+                          (int2)(g * GROUP_SIZE + h * 2 * K_CHUNK, m0), a_all[h]);
+
+            int8 acc[M_BLOCKS][V2_NB];
+            unroll_for (uint mb = 0; mb < M_BLOCKS; ++mb)
+                unroll_for (uint j = 0; j < V2_NB; ++j)
+                    acc[mb][j] = (int8)(0);
+
+            unroll_for (uint h = 0; h < CHUNKS_PER_GROUP / 2; ++h) {
+                unroll_for (uint c = 0; c < 2; ++c) {
+                    const uint cc = h * 2 + c;
+                    int8 w[V2_NB];
+                    unroll_for (uint j = 0; j < V2_NB; ++j)
+                        w[j] = wshare[buf][(gi * CHUNKS_PER_GROUP + cc) * V2_NB + j][lane];
+                    unroll_for (uint mb = 0; mb < M_BLOCKS; ++mb) {
+                        short8 a;
+                        unroll_for (uint t = 0; t < 8; ++t)
+                            a[t] = as_short(a_all[h][c * TILE_M + mb * 8 + t]);
+                        unroll_for (uint j = 0; j < V2_NB; ++j)
+                            acc[mb][j] = intel_sub_group_i8_i8_matrix_mad_k32(a, w[j], acc[mb][j]);
+                    }
+                }
+            }
+
+            unroll_for (uint mb = 0; mb < M_BLOCKS; ++mb) {
+                unroll_for (uint t = 0; t < 8; ++t) {
+                    const uint r = mb * 8 + t;
+                    const float as  = sub_group_broadcast(sv[r / 16].x, r % 16);
+                    const float azs = sub_group_broadcast(sv[r / 16].y, r % 16);
+                    unroll_for (uint j = 0; j < V2_NB; ++j) {
+                        const float part = fma((float)acc[mb][j][t], as, -azs);
+                        acc_f[j][r] = fma(part, bs[j], acc_f[j][r]);
+                    }
+                }
+            }
+        }
+
+        if (it + 1 < V2_ITERS_K)
+            intel_work_group_barrier_wait(CLK_LOCAL_MEM_FENCE);
+    }
+#undef V2_GRAN_PTR
+#undef V2_LOAD_RAW
+#undef V2_STAGE_RAW
+
+    unroll_for (uint j = 0; j < V2_NB; ++j) {
+        const uint n = (nbw * V2_NB + j) * SIMD + lane;
+        if (n < TILE_OUT_F_NUM) {
+            unroll_for (uint t = 0; t < TILE_M; ++t) {
+                const uint row = m0 + t;
+                if (row < batch_size) {
+                    float res = acc_f[j][t];
+#if BIAS_TERM
+                    res += (float)biases[n];
+#endif
+                    const uint out_row = row;
+                    const uint output_offset = n * TILE_OUT_F_PITCH + out_row * TILE_OUT_B_PITCH + OUTPUT_OFFSET;
+                    const float activated = ACTIVATION_TYPED(res, ACTIVATION_PARAMS_TYPED);
+#if HAS_FUSED_OPS
+                    FUSED_OPS;
+                    output[output_offset] = FUSED_OPS_RESULT;
+#else
+                    output[output_offset] = TO_OUTPUT_TYPE(activated);
+#endif
+                }
+            }
+        }
+    }
+#else   // !DPAS_V2
     const uint lane = get_sub_group_local_id();
     const uint sg   = (uint)get_local_id(1);
     const uint nb   = (uint)get_group_id(0);
@@ -506,6 +708,7 @@ KERNEL(fc)(
 #endif
         }
     }
+#endif  // DPAS_V2
 }
 
 #undef SIMD
@@ -527,5 +730,15 @@ KERNEL(fc)(
 #undef ITERS_K
 #undef GROUPS_PER_SG
 #undef SG_COUNT
+#ifdef V2_GRAN_PER_GROUP
+#undef V2_GRAN_PER_GROUP
+#undef V2_GPI
+#undef V2_GRAN_PER_ITER
+#undef V2_GRAN_PER_SG
+#undef V2_ITERS_K
+#undef V2_RB
+#undef V2_A_READ
+#undef V2_WEI_ZP
+#endif
 
 #endif  // !FC_KERNEL_DYNAMIC_QUANTIZE

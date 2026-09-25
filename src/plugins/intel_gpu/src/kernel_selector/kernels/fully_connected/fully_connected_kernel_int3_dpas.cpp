@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <iterator>
 #include <vector>
 
 namespace kernel_selector {
@@ -168,16 +167,96 @@ size_t get_dense_sg_m(size_t rows) {
     return 1;
 }
 
+// Column blocks per subgroup and rows per subgroup of the v2 path.
+constexpr size_t v2_nb = 2;
+constexpr size_t v2_tile_m = 16;
+// Row counts from which v2 takes over with 8 and with 16 subgroups per workgroup.
+// A workgroup covers 16 * sg_m rows, so each step pays off once it is mostly full.
+// Below 96 rows the 32-row tiles of the original path are as fast or faster.
+constexpr size_t v2_min_rows_sg8 = 96;
+constexpr size_t v2_min_rows_sg16 = 192;
+
+// The v2 path relies on 2D block reads and split work-group barriers (Xe2 and
+// later), shares one decode across nb column blocks and folds a scalar zero
+// point into a per-row term, so it is limited to dense FCs whose zero point is
+// scalar or absent and whose output channels fill whole nb * 16 column tiles.
+bool supports_v2(const fully_connected_params& params) {
+    if (params.engineInfo.arch < gpu_arch::xe2)
+        return false;
+    if (get_expert_count(params) > 1)
+        return false;
+    if (params.has_decompression_zp && !params.scalar_zp)
+        return false;
+    const size_t group_size = get_quantize_group_size(params);
+    if (group_size < 2 * k_chunk || ((group_size / k_chunk) % 2) != 0)
+        return false;
+    const size_t ofm = get_output_aligned_bf_size(params, false).second;
+    if ((ofm % (v2_nb * osv)) != 0)
+        return false;
+    // 2D block reads need a surface width and pitch of at least 64 bytes.
+    return get_input_bf_size(params).second >= 64;
+}
+
+bool is_valid_v2_sg_m(const fully_connected_params& params, size_t sg_m) {
+    const size_t group_size = get_quantize_group_size(params);
+    if (sg_m < 2 || group_size < k_chunk)
+        return false;
+    const size_t gran_per_group = (group_size / k_chunk) * v2_nb;
+    const size_t groups_k = get_input_bf_size(params).second / group_size;
+    const size_t groups_per_iter = (sg_m > gran_per_group) ? sg_m / gran_per_group : 1;
+    return ((groups_per_iter * gran_per_group) % sg_m) == 0 && (groups_k % groups_per_iter) == 0;
+}
+
+gemm_config get_v2_config(size_t sg_m, size_t min_rows) {
+    gemm_config cfg;
+    cfg.dpas = true;
+    cfg.v2 = true;
+    cfg.tile_m = v2_tile_m;
+    cfg.sg_m = sg_m;
+    cfg.nb = v2_nb;
+    cfg.min_rows = min_rows;
+    return cfg;
+}
+
 // A shape-agnostic dense FC compiles one DPAS kernel per entry and picks one per
 // inference by row count, since a single compiled config cannot serve both a
-// 30-row and a 2000-row prompt well.
-constexpr size_t dense_sg_m_variants[] = {1, 2, 4, 8};
+// 30-row and a 2000-row prompt well. Every list has four entries, which is how
+// the update function recognises the dense variant set from the kernel count.
+constexpr size_t dense_variant_count = 4;
+
+std::vector<gemm_config> get_dense_variants(const fully_connected_params& params) {
+    std::vector<gemm_config> configs;
+    const size_t sg_ms[] = {1, 2};
+    const size_t min_rows[] = {0, 48};
+    for (size_t i = 0; i < 2; ++i) {
+        gemm_config cfg;
+        cfg.dpas = true;
+        cfg.tile_m = 32;
+        cfg.sg_m = sg_ms[i];
+        cfg.min_rows = min_rows[i];
+        configs.push_back(cfg);
+    }
+    if (supports_v2(params) && is_valid_v2_sg_m(params, 8) && is_valid_v2_sg_m(params, 16)) {
+        configs.push_back(get_v2_config(8, v2_min_rows_sg8));
+        configs.push_back(get_v2_config(16, v2_min_rows_sg16));
+    } else {
+        for (size_t sg_m : {size_t{4}, size_t{8}}) {
+            gemm_config cfg;
+            cfg.dpas = true;
+            cfg.tile_m = 32;
+            cfg.sg_m = sg_m;
+            cfg.min_rows = (sg_m == 4) ? 96 : 384;
+            configs.push_back(cfg);
+        }
+    }
+    return configs;
+}
 
 bool use_dense_variants(const fully_connected_params& params) {
     if (!params.is_shape_agnostic || get_expert_count(params) > 1 || get_quantize_group_size(params) == 0)
         return false;
-    for (size_t sg_m : dense_sg_m_variants) {
-        if (!is_valid_sg_m(params, sg_m))
+    for (const auto& cfg : get_dense_variants(params)) {
+        if (!cfg.v2 && !is_valid_sg_m(params, cfg.sg_m))
             return false;
     }
     return true;
@@ -196,7 +275,7 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
     // A shape-agnostic kernel is compiled before the row count is known. Grouped
     // MoE weights keep 32 x 1 there, the best or near-best choice from 16 to 64
     // rows per expert on the Qwen3.6 MoE shapes; dense FCs use
-    // dense_sg_m_variants instead.
+    // get_dense_variants instead.
     if (params.is_shape_agnostic)
         return cfg;
 
@@ -206,6 +285,11 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
     } else if (rows <= 16) {
         cfg.tile_m = 16;
     } else if (get_expert_count(params) <= 1) {
+        if (rows >= v2_min_rows_sg8 && supports_v2(params)) {
+            const size_t sg_m = (rows >= v2_min_rows_sg16) ? 16 : 8;
+            if (is_valid_v2_sg_m(params, sg_m))
+                return get_v2_config(sg_m, 0);
+        }
         for (size_t sg_m = get_dense_sg_m(rows); sg_m > 1; sg_m /= 2) {
             if (is_valid_sg_m(params, sg_m)) {
                 cfg.sg_m = sg_m;
@@ -223,13 +307,7 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
 std::vector<gemm_config> get_gemm_configs(const fully_connected_params& params, bool dense_variants) {
     std::vector<gemm_config> configs;
     if (dense_variants) {
-        for (size_t sg_m : dense_sg_m_variants) {
-            gemm_config cfg;
-            cfg.dpas = true;
-            cfg.tile_m = 32;
-            cfg.sg_m = sg_m;
-            configs.push_back(cfg);
-        }
+        configs = get_dense_variants(params);
     } else {
         configs.push_back(get_dpas_config(params));
     }
@@ -242,10 +320,9 @@ size_t select_gemm(const fully_connected_params& params, const std::vector<gemm_
     const size_t rows_per_expert = get_rows_per_expert(params);
     if (rows_per_expert < dpas_min_batch)
         return configs.size() - 1;
-    const size_t want = get_dense_sg_m(rows_per_expert);
     size_t best = 0;
     for (size_t i = 0; i + 1 < configs.size(); ++i) {
-        if (configs[i].sg_m <= want && configs[i].sg_m >= configs[best].sg_m)
+        if (configs[i].min_rows <= rows_per_expert && configs[i].min_rows >= configs[best].min_rows)
             best = i;
     }
     return best;
@@ -305,7 +382,7 @@ CommonDispatchData get_gemm_dispatch(const fully_connected_params& params,
 
     if (cfg.dpas) {
         const size_t m_groups = CeilDiv(rows, cfg.tile_m * cfg.sg_m);
-        dispatchData.gws = {n_blocks * simd, m_groups * cfg.sg_m, groups};
+        dispatchData.gws = {(n_blocks / cfg.nb) * simd, m_groups * cfg.sg_m, groups};
         dispatchData.lws = {simd, cfg.sg_m, 1};
     } else {
         dispatchData.gws = {n_blocks * simd, CeilDiv(rows, cfg.tile_m) * cfg.sg_k, groups};
@@ -518,6 +595,8 @@ JitConstants FullyConnected_int3_dpas::GetGemmJitConstants(const fully_connected
     JitConstants jit = GetJitConstants(params, DispatchData());
 
     jit.AddConstant(MakeJitConstant("USE_DPAS", cfg.dpas ? 1 : 0));
+    jit.AddConstant(MakeJitConstant("DPAS_V2", cfg.v2 ? 1 : 0));
+    jit.AddConstant(MakeJitConstant("V2_NB", cfg.nb));
     jit.AddConstant(MakeJitConstant("TILE_M", cfg.tile_m));
     jit.AddConstant(MakeJitConstant("SG_M", cfg.sg_m));
     jit.AddConstant(MakeJitConstant("SG_K", cfg.sg_k));
@@ -659,7 +738,7 @@ void FullyConnected_int3_dpas::GetUpdateDispatchDataFunc(KernelData& kd) const {
 
         // The runtime params are always built as shape-agnostic, so the variant set
         // compiled into kd is recognised by its kernel count instead.
-        const bool dense_variants = kd.kernels.size() == 2 + std::size(dense_sg_m_variants);
+        const bool dense_variants = kd.kernels.size() == 2 + dense_variant_count;
         const auto configs = get_gemm_configs(prim_params, dense_variants);
         OPENVINO_ASSERT(kd.kernels.size() == 1 + configs.size(), "[GPU] int3 FC: unexpected kernel count.");
         const size_t selected = select_gemm(prim_params, configs);

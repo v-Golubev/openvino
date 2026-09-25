@@ -34,11 +34,18 @@ public:
     // Launch geometry of one GEMM variant. `dpas` selects the matrix-engine path,
     // which stacks tile_m rows per subgroup and shares decoded weights across sg_m
     // subgroups; the scalar path uses sg_k subgroups to split K instead.
+    //
+    // `v2` selects the dense-only DPAS path (2D block reads for the activations,
+    // nb column blocks per subgroup, split-barrier SLM staging). `min_rows` is the
+    // row count from which a dense variant is selected at runtime.
     struct gemm_config {
         bool dpas = false;
+        bool v2 = false;
         size_t tile_m = 1;
         size_t sg_m = 1;
         size_t sg_k = 1;
+        size_t nb = 1;
+        size_t min_rows = 0;
     };
 
 protected:
@@ -64,7 +71,11 @@ constexpr size_t dpas_min_batch = 8;
 
 size_t get_quantize_group_size(const fully_connected_params& params);
 bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m);
+bool supports_v2(const fully_connected_params& params);
+bool is_valid_v2_sg_m(const fully_connected_params& params, size_t sg_m);
+gemm_config get_v2_config(size_t sg_m, size_t min_rows);
 size_t get_dense_sg_m(size_t rows);
+std::vector<gemm_config> get_dense_variants(const fully_connected_params& params);
 bool use_dense_variants(const fully_connected_params& params);
 gemm_config get_dpas_config(const fully_connected_params& params);
 gemm_config get_scalar_config(const fully_connected_params& params);
