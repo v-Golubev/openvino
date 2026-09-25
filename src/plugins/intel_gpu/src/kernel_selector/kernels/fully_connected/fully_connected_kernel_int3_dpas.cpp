@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iterator>
 #include <vector>
 
 namespace kernel_selector {
@@ -140,6 +141,48 @@ size_t get_rows_per_expert(const fully_connected_params& params) {
     return batch / experts;
 }
 
+// The sg_m subgroups split one staging iteration's granules between them, so the
+// iteration has to cover whole quantization groups and split evenly.
+bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m) {
+    const size_t group_size = get_quantize_group_size(params);
+    if (group_size < k_chunk)
+        return sg_m == 1;
+    const size_t chunks_per_group = group_size / k_chunk;
+    const size_t groups_k = get_input_bf_size(params).second / group_size;
+    const size_t groups_per_iter = (sg_m > chunks_per_group) ? sg_m / chunks_per_group : 1;
+    const size_t chunks_per_iter = groups_per_iter * chunks_per_group;
+    return (chunks_per_iter % sg_m) == 0 && (groups_k % groups_per_iter) == 0;
+}
+
+// Subgroups sharing one weight decode through SLM for a dense (non-grouped) FC,
+// by row count, with 32-row tiles. Device-timed on the Qwen3-8B shapes (N and K
+// from 4096 to 12288): each doubling of sg_m pays off once the workgroup's
+// 32 * sg_m rows are mostly filled, up to ~21 TOPS at sg_m 8 versus ~10 at 1.
+size_t get_dense_sg_m(size_t rows) {
+    if (rows >= 384)
+        return 8;
+    if (rows >= 96)
+        return 4;
+    if (rows >= 48)
+        return 2;
+    return 1;
+}
+
+// A shape-agnostic dense FC compiles one DPAS kernel per entry and picks one per
+// inference by row count, since a single compiled config cannot serve both a
+// 30-row and a 2000-row prompt well.
+constexpr size_t dense_sg_m_variants[] = {1, 2, 4, 8};
+
+bool use_dense_variants(const fully_connected_params& params) {
+    if (!params.is_shape_agnostic || get_expert_count(params) > 1 || get_quantize_group_size(params) == 0)
+        return false;
+    for (size_t sg_m : dense_sg_m_variants) {
+        if (!is_valid_sg_m(params, sg_m))
+            return false;
+    }
+    return true;
+}
+
 gemm_config get_dpas_config(const fully_connected_params& params) {
     gemm_config cfg;
     cfg.dpas = true;
@@ -150,11 +193,10 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
     if (group_size == 0)
         return cfg;
 
-    // A shape-agnostic kernel is compiled before the row count is known, and its
-    // runtime dispatch recomputes this config, so it must not depend on M there.
-    // 32 x 1 is the best or near-best choice from 16 to 64 rows per expert on the
-    // Qwen3.6 MoE shapes; the rows past M in a tile are padding the matrix engine
-    // still pays for, and SLM sharing (sg_m > 1) only pays off from ~128 rows.
+    // A shape-agnostic kernel is compiled before the row count is known. Grouped
+    // MoE weights keep 32 x 1 there, the best or near-best choice from 16 to 64
+    // rows per expert on the Qwen3.6 MoE shapes; dense FCs use
+    // dense_sg_m_variants instead.
     if (params.is_shape_agnostic)
         return cfg;
 
@@ -163,19 +205,50 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
         cfg.tile_m = 8;
     } else if (rows <= 16) {
         cfg.tile_m = 16;
-    } else if (rows > 64) {
-        // The sg_m subgroups split one staging iteration's granules between them,
-        // so the iteration has to cover whole quantization groups and split evenly.
-        const size_t chunks_per_group = group_size / k_chunk;
-        const size_t groups_k = get_input_bf_size(params).second / group_size;
-        const size_t sg_m = 2;
-        const size_t groups_per_iter = (sg_m > chunks_per_group) ? sg_m / chunks_per_group : 1;
-        const size_t chunks_per_iter = groups_per_iter * chunks_per_group;
-        if ((chunks_per_iter % sg_m) == 0 && (groups_k % groups_per_iter) == 0)
-            cfg.sg_m = sg_m;
+    } else if (get_expert_count(params) <= 1) {
+        for (size_t sg_m = get_dense_sg_m(rows); sg_m > 1; sg_m /= 2) {
+            if (is_valid_sg_m(params, sg_m)) {
+                cfg.sg_m = sg_m;
+                break;
+            }
+        }
+    } else if (rows > 64 && is_valid_sg_m(params, 2)) {
+        cfg.sg_m = 2;
     }
 
     return cfg;
+}
+
+// DPAS variants followed by the scalar one, which is always last.
+std::vector<gemm_config> get_gemm_configs(const fully_connected_params& params, bool dense_variants) {
+    std::vector<gemm_config> configs;
+    if (dense_variants) {
+        for (size_t sg_m : dense_sg_m_variants) {
+            gemm_config cfg;
+            cfg.dpas = true;
+            cfg.tile_m = 32;
+            cfg.sg_m = sg_m;
+            configs.push_back(cfg);
+        }
+    } else {
+        configs.push_back(get_dpas_config(params));
+    }
+    configs.push_back(get_scalar_config(params));
+    return configs;
+}
+
+// Index into get_gemm_configs of the variant to run for these params.
+size_t select_gemm(const fully_connected_params& params, const std::vector<gemm_config>& configs) {
+    const size_t rows_per_expert = get_rows_per_expert(params);
+    if (rows_per_expert < dpas_min_batch)
+        return configs.size() - 1;
+    const size_t want = get_dense_sg_m(rows_per_expert);
+    size_t best = 0;
+    for (size_t i = 0; i + 1 < configs.size(); ++i) {
+        if (configs[i].sg_m <= want && configs[i].sg_m >= configs[best].sg_m)
+            best = i;
+    }
+    return best;
 }
 
 gemm_config get_scalar_config(const fully_connected_params& params) {
@@ -468,8 +541,9 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
         return {};
 
     const auto& fc_params = static_cast<const fully_connected_params&>(params);
+    const auto configs = get_gemm_configs(fc_params, use_dense_variants(fc_params));
 
-    KernelData kd = KernelData::Default<fully_connected_params>(params, 3);
+    KernelData kd = KernelData::Default<fully_connected_params>(params, 1 + configs.size());
     auto& new_params = *static_cast<fully_connected_params*>(kd.params.get());
 
     if (!UpdateWeightsParams(new_params, WeightsLayout::os_is_yx_osv16_isv32, kd.weightsReorderParams, GetSupportedKey()))
@@ -521,14 +595,12 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
     kd.internalBuffers.push_back(var_size);
     kd.internalBufferDataType = Datatype::F16;
 
-    // Kernels 1 and 2: the two GEMM variants. Only one of them runs per inference.
-    const gemm_config configs[2] = {get_dpas_config(new_params), get_scalar_config(new_params)};
-    // Rows per expert, not the flattened batch, is what has to fill the 8-row
-    // tiles: with 256 experts the flattened batch is large even when each expert
-    // has a single row.
-    const bool use_dpas = rows_per_expert >= dpas_min_batch;
+    // Kernels 1..: the GEMM variants. Only one of them runs per inference. Rows per
+    // expert, not the flattened batch, is what has to fill the 8-row tiles: with
+    // 256 experts the flattened batch is large even when each expert has a single row.
+    const size_t selected = select_gemm(fc_params, configs);
 
-    for (size_t i = 0; i < 2; ++i) {
+    for (size_t i = 0; i < configs.size(); ++i) {
         const auto& cfg = configs[i];
         auto& gemm_kernel = kd.kernels[i + 1];
         const auto dispatch = get_gemm_dispatch(fc_params, cfg, rows_per_expert, experts);
@@ -552,7 +624,7 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
 
         gemm_kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 0});
         gemm_kernel.params.arguments.push_back({ArgumentDescriptor::Types::INTERNAL_BUFFER, 1});
-        gemm_kernel.skip_execution = (cfg.dpas != use_dpas);
+        gemm_kernel.skip_execution = (i != selected);
     }
 
     GetUpdateDispatchDataFunc(kd);
@@ -584,12 +656,16 @@ void FullyConnected_int3_dpas::GetUpdateDispatchDataFunc(KernelData& kd) const {
 
         const size_t experts = get_expert_count(prim_params);
         const size_t rows_per_expert = get_rows_per_expert(prim_params);
-        const bool use_dpas = rows_per_expert >= dpas_min_batch;
 
-        const gemm_config configs[2] = {get_dpas_config(prim_params), get_scalar_config(prim_params)};
-        for (size_t i = 0; i < 2; ++i) {
+        // The runtime params are always built as shape-agnostic, so the variant set
+        // compiled into kd is recognised by its kernel count instead.
+        const bool dense_variants = kd.kernels.size() == 2 + std::size(dense_sg_m_variants);
+        const auto configs = get_gemm_configs(prim_params, dense_variants);
+        OPENVINO_ASSERT(kd.kernels.size() == 1 + configs.size(), "[GPU] int3 FC: unexpected kernel count.");
+        const size_t selected = select_gemm(prim_params, configs);
+        for (size_t i = 0; i < configs.size(); ++i) {
             auto& kernel = kd.kernels[i + 1];
-            kernel.skip_execution = skip || (configs[i].dpas != use_dpas);
+            kernel.skip_execution = skip || i != selected;
             if (kernel.skip_execution)
                 continue;
             const auto dispatch = get_gemm_dispatch(prim_params, configs[i], rows_per_expert, experts);

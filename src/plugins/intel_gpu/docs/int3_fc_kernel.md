@@ -58,9 +58,12 @@ dynamic-quantization path:
   The grouped scale is `byfx [G, N, groups]`, i.e. `[G][groups][N]` in memory.
 - ACTIVATION and ELTWISE fused ops at the store. The MoE gate matmul carries a fused
   `Swish * up`, and the down matmul a fused routing-weight multiply.
-- Launch config (`get_dpas_config`): `tile_m` 32, `sg_m` 1 by default and for
-  shape-agnostic kernels. Static kernels use `tile_m` 8 or 16 for <= 8 or <= 16 rows,
-  and `sg_m` 2 (weights shared via SLM) above 64 rows.
+- Launch config: `tile_m` 32 by default. Dense FCs pick `sg_m` (subgroups sharing the
+  weight decode via SLM) by row count: 1 below 48 rows, 2 below 96, 4 below 384, else 8.
+  A shape-agnostic dense FC compiles all four DPAS variants plus the scalar one and
+  selects one per inference through `skip_execution` (`get_gemm_configs` /
+  `select_gemm`). Static kernels use `tile_m` 8 or 16 for <= 8 or <= 16 rows. Grouped
+  (MoE) weights keep a single variant: 32x1, or `sg_m` 2 above 64 rows when static.
 
 ### Plugin: graph-level changes
 
@@ -107,9 +110,11 @@ and fed a single DPAS over 8 rows, so XMX was idle ~95% of the time. The changes
 Standalone results: 99.6x over the naive reference for the dense shapes (prefill ~31
 TOPS, XMX-bound; decode at the DRAM roof). The MoE shapes run 92.8x over it:
 gate/up at 88-96 GB/s (DRAM roof), 1.1 ms per 256-expert node at M=8.
-The best config depends on the shape. `get_dpas_config` keeps only what a sweep inside
-the plugin confirmed: 32x1 wins for 16-64 rows, 64-row tiles lose, and SLM sharing only
-pays off from ~128 rows.
+The best config depends on the shape. The plugin keeps only what a device-timed sweep
+inside it confirmed (Qwen3-8B dense shapes, N and K from 4096 to 12288): 32x1 gives
+~10-11 TOPS, 32x2 wins at 64 rows, 32x4 at 128-256 rows (~18-19 TOPS) and 32x8 from
+~512 rows (~20-21 TOPS). 64-row tiles and 16-row tiles with more subgroups lose. On the
+Qwen3.6 MoE shapes (16-64 rows per expert) 32x1 is the best or near-best choice.
 
 ## 3. Results (2026-09-24)
 
@@ -137,6 +142,24 @@ The numbers above were measured on the previous base, where u3 was not in the Mo
 Tests: `test_u3_fc.py` (2D FC) and `test_u3_moe.py` (grouped bmm, fused gate, Tile
 bypass, routed down, FC + add; M from 1 to 256) compare against NumPy.
 
+### Dense model: Qwen3-8B (u3, group 128)
+
+All u3 FCs run on this kernel. Warm wall time, 32 generated tokens:
+
+| configuration | prefill 24 tok | prefill 978 tok | decode |
+| --- | --- | --- | --- |
+| u3 on oneDNN reference (`OV_INT3_BASELINE=1`) | 31.5 s | | 1.49 s/tok |
+| int3 kernel, shape-agnostic FCs fixed at 32x1 | 0.11 s | 1.71 s | 48-56 ms/tok |
+| int3 kernel, shape-agnostic `sg_m` variants | 0.11 s | 1.30 s | 48-56 ms/tok |
+
+Decode varies between runs with the machine state; both builds measure the same in
+back-to-back runs. The prefill logits match the f16-activation reference at cos 0.998
+with the same top-10, and the two builds give identical logits. At 978 tokens the gate
+FC (12288x4096) takes 5.0 ms instead of 9.9 ms.
+
+Measure shape-agnostic FCs with device timing (`unitrace --opencl -d`). PERF_COUNT
+under-reports multi-kernel shape-agnostic FCs by about 2x.
+
 ### On top of `vg/gpu/u3_weights_decompression_poc` (fused MoE for u3)
 
 That branch adds u3 to the plugin's MoE fusion (`ConvertTiledMoeBlockToGatherMatmuls` ->
@@ -146,12 +169,14 @@ the 20 attention projections stay on it. Warm, 27-token prompt, correct tokens i
 
 | configuration | prefill (wall) | prefill GPU | decode |
 | --- | --- | --- | --- |
-| fused MoE (default) | 9.0 s | 28 ms | 0.77 s/tok |
-| `OV_GPU_MOE_DISABLE_FUSION=1` (dense MoE on this kernel) | 0.70 s | 101 ms | 0.23 s/tok |
+| fused MoE (default) | 0.39 s | 27 ms | 0.070 s/tok |
+| `OV_GPU_MOE_DISABLE_FUSION=1` (dense MoE on this kernel) | 0.69 s | 87 ms | 0.22 s/tok |
 
-Measured with the oneDNN submodule pinned to `3093f54feb`, because the branch's
-oneDNN commit (`dffe00b1`, "performant implementation PoC") is not published. The
-fused path's time is not in the GPU profile and is expected to change with that oneDNN.
+Measured with the oneDNN submodule on the public `uarshad/ggemm_u3` branch
+(`d21c1b27f0`), which has the u3 JIT GEMM and grouped-matmul kernels. The branch's own
+oneDNN commit (`dffe00b1`) adds unpublished grouped-matmul and accuracy fixes. With
+the u3 reference-only oneDNN (`3093f54feb`), the fused MoE took 9.0 s prefill and
+0.77 s/tok.
 
 ### Known limits
 

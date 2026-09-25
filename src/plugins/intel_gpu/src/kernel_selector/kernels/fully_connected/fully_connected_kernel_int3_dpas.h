@@ -63,8 +63,13 @@ using gemm_config = FullyConnected_int3_dpas::gemm_config;
 constexpr size_t dpas_min_batch = 8;
 
 size_t get_quantize_group_size(const fully_connected_params& params);
+bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m);
+size_t get_dense_sg_m(size_t rows);
+bool use_dense_variants(const fully_connected_params& params);
 gemm_config get_dpas_config(const fully_connected_params& params);
 gemm_config get_scalar_config(const fully_connected_params& params);
+std::vector<gemm_config> get_gemm_configs(const fully_connected_params& params, bool dense_variants);
+size_t select_gemm(const fully_connected_params& params, const std::vector<gemm_config>& configs);
 size_t get_quantized_input_size(const fully_connected_params& params);
 size_t get_expert_count(const fully_connected_params& params);
 bool is_broadcast_input(const fully_connected_params& params);
