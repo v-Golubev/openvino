@@ -16,6 +16,11 @@ namespace kernel_selector {
 //   1 - DPAS GEMM, used once the batch is large enough to fill the 8-row tiles
 //   2 - scalar GEMM with a K split, used for decode-shaped batches
 // Which GEMM runs is decided from the runtime batch in update_dispatch_data_func.
+//
+// Also serves grouped (MoE expert) weights, where the primitive is a batched
+// matmul over G experts: activations [G, M, K], weights [G*N, K] flattened
+// expert-major, output [G, M, N]. The expert index is a third grid dimension and
+// contributes only a base offset, so G == 1 is the ordinary FC case.
 class FullyConnected_int3_dpas : public FullyConnectedKernelBase {
 public:
     using Parent = FullyConnectedKernelBase;
@@ -30,7 +35,7 @@ public:
     // which stacks tile_m rows per subgroup and shares decoded weights across sg_m
     // subgroups; the scalar path uses sg_k subgroups to split K instead.
     //
-    // `v2` selects the second DPAS path (2D block reads for the activations,
+    // `v2` selects the dense-only DPAS path (2D block reads for the activations,
     // nb column blocks per subgroup, split-barrier SLM staging). `min_rows` is the
     // row count from which a dense variant is selected at runtime.
     struct gemm_config {
@@ -78,8 +83,14 @@ gemm_config get_scalar_config(const fully_connected_params& params);
 std::vector<gemm_config> get_gemm_configs(const fully_connected_params& params, bool dense_variants);
 size_t select_gemm(const fully_connected_params& params, const std::vector<gemm_config>& configs);
 size_t get_quantized_input_size(const fully_connected_params& params);
+size_t get_expert_count(const fully_connected_params& params);
+bool is_broadcast_input(const fully_connected_params& params);
+size_t get_rows_per_expert(const fully_connected_params& params);
 CommonDispatchData get_quantize_dispatch(size_t num_groups);
-CommonDispatchData get_gemm_dispatch(const fully_connected_params& params, const gemm_config& cfg);
+CommonDispatchData get_gemm_dispatch(const fully_connected_params& params,
+                                     const gemm_config& cfg,
+                                     size_t rows_per_expert,
+                                     size_t experts);
 }  // namespace fc_kernel_int3_dpas_utils
 
 }  // namespace kernel_selector

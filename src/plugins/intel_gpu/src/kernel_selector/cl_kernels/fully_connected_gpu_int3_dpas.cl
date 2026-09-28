@@ -49,6 +49,25 @@
 // workgroups to fill the machine and the unpack has nothing to amortize against.
 // There USE_DPAS is off and SG_K subgroups split the K range instead, each
 // accumulating a partial dot product that is reduced through SLM at the end.
+//
+// Grouped (MoE expert) weights
+// ----------------------------
+// With GROUPED_WEIGHTS the primitive is a batched matmul over NUM_EXPERTS expert
+// matrices: activations [G, M, K], weights [G*N, K], output [G, M, N], computing
+// C[e] = A[e] x W[e]^T for each expert independently. This is how the Qwen3.6
+// MoE gate / up / down projections arrive.
+//
+// It costs almost nothing here. OpenVINO flattens the weight expert-major, so
+// row (e*N + n) is output n of expert e, and N is a multiple of the 16-channel
+// block; the blocked layout of the flattened weight is therefore already a
+// contiguous stack of per-expert slices. Likewise the flattened activation batch
+// is expert-major, so row (e*M + m) is row m of expert e. The expert index is
+// consequently just a base offset on the weights, the scale / zero point and the
+// row index, taken from a third grid dimension so that a row tile never straddles
+// two experts (it must not: one weight unpack serves the whole tile).
+//
+// With NUM_EXPERTS == 1 the expert is a compile-time zero and every offset below
+// folds away, leaving the non-grouped code path unchanged.
 
 #if FC_KERNEL_DYNAMIC_QUANTIZE
 
@@ -146,6 +165,17 @@ KERNEL(quantize_input)(
 #define M_BLOCKS         (TILE_M / 8)
 #define A_UINTS_PER_ROW  (TILE_IN_B_PITCH / 4)
 #define A_UINTS_PER_CHUNK (K_CHUNK / 4)
+
+// Rows of one expert, and one expert's slice of the packed weights in uints.
+// BATCH_SIZE counts every expert's rows, so the per-expert row count is the
+// output feature dimension when the weights are grouped.
+#if GROUPED_WEIGHTS
+#define ROWS_PER_EXPERT  (OUTPUT_FEATURE_NUM)
+#else
+#define ROWS_PER_EXPERT  (BATCH_SIZE)
+#endif
+#define N_BLOCKS_PER_EXPERT (TILE_OUT_F_NUM / SIMD)
+#define B_UINTS_PER_EXPERT  (N_BLOCKS_PER_EXPERT * CHUNKS_K * CHUNK_UINTS)
 
 // Quantization groups staged into SLM per barrier, so that every subgroup has at
 // least one granule to decode.
@@ -260,10 +290,12 @@ inline int4 FUNC(u3_to_dpas_b4)(uint w0, uint w1, uint w2) {
                   FUNC_CALL(u3_spread8_nib)(w2 >> 8));
 }
 
-// The scale of output channel n and input k. The pitches come from the host and
-// follow the scale's actual memory order.
-#define WEI_SCALE(n, k)                                                             \
-    ((float)(decompression_scale[WEI_SCALE_OFFSET + (n) * WEI_SCALE_N_PITCH +       \
+// The scale of expert e, output channel n (within the expert) and input k. The
+// pitches come from the host and follow the scale's actual memory order, which for
+// a grouped weight is not necessarily [G, N, groups] (E_PITCH is 0 when plain).
+#define WEI_SCALE(e, n, k)                                                          \
+    ((float)(decompression_scale[WEI_SCALE_OFFSET + (e) * WEI_SCALE_E_PITCH +       \
+                                 (n) * WEI_SCALE_N_PITCH +                          \
                                  ((k) / WEI_SCALE_GROUP_SIZE) * WEI_SCALE_G_PITCH]))
 
 #if DECOMPRESSION_ZP_TERM
@@ -306,7 +338,7 @@ KERNEL(fc)(
 )
 {
 #if DPAS_V2
-    // Scalar or no zero point only. A subgroup computes
+    // Dense FC only (no experts, scalar or no zero point). A subgroup computes
     // TILE_M rows x V2_NB 16-column blocks, so each activation load feeds V2_NB
     // DPAS. The weights are staged as 4-bit values for the int8 x int4 DPAS, which
     // halves the SLM traffic against 8-bit values. The activations of a whole quantization group arrive through 2D block
@@ -381,7 +413,7 @@ KERNEL(fc)(
 #if V2_SCALE_VEC
                     bs_pair[j] = convert_float2(vload2(0, decompression_scale + WEI_SCALE_OFFSET + n * WEI_SCALE_N_PITCH + g));
 #else
-                    bs_pair[j] = (float2)(WEI_SCALE(n, g * GROUP_SIZE), WEI_SCALE(n, (g + 1) * GROUP_SIZE));
+                    bs_pair[j] = (float2)(WEI_SCALE(0, n, g * GROUP_SIZE), WEI_SCALE(0, n, (g + 1) * GROUP_SIZE));
 #endif
                 }
                 unroll_for (uint r = 0; r < V2_RB; ++r) {
@@ -493,9 +525,27 @@ KERNEL(fc)(
     const uint n    = nb * SIMD + lane;
 
     const uint var_pitch  = TILE_IN_B_PITCH / QUANTIZE_GROUP_SIZE;
-    const uint batch_size = BATCH_SIZE;
 
-    const __global uint* B = (const __global uint*)weights;
+#if GROUPED_WEIGHTS
+    const uint expert = (uint)get_group_id(2);
+#else
+    const uint expert = 0;
+#endif
+    // Rows are indexed within the expert; row_base lifts them back into the
+    // flattened, expert-major activation and output tensors.
+    const uint batch_size = ROWS_PER_EXPERT;
+    const uint row_base   = expert * batch_size;
+    // A broadcast input is one [M, K] slice read by every expert.
+#if BROADCAST_INPUT
+    const uint a_row_base = 0;
+#else
+    const uint a_row_base = row_base;
+#endif
+    // Output channel in the flattened [G*N] weight space, for the zero point and
+    // the bias, both of which are indexed per output channel.
+    const uint n_global   = expert * TILE_OUT_F_NUM + n;
+
+    const __global uint* B = (const __global uint*)weights + (size_t)expert * B_UINTS_PER_EXPERT;
 
     float out[TILE_M];
     unroll_for (uint t = 0; t < TILE_M; ++t)
@@ -543,9 +593,9 @@ KERNEL(fc)(
 #endif
             }
 
-            const float bs = WEI_SCALE(n, g * GROUP_SIZE);
+            const float bs = WEI_SCALE(expert, n, g * GROUP_SIZE);
 #if DECOMPRESSION_ZP_TERM
-            const float bzp = WEI_ZP(n, g * GROUP_SIZE);
+            const float bzp = WEI_ZP(n_global, g * GROUP_SIZE);
 #endif
 
             unroll_for (uint mb = 0; mb < M_BLOCKS; ++mb) {
@@ -558,7 +608,7 @@ KERNEL(fc)(
                 float asum[8];
 #endif
                 unroll_for (uint t = 0; t < 8; ++t) {
-                    const uint row = min(m0 + mb * 8 + t, batch_size - 1);
+                    const uint row = a_row_base + min(m0 + mb * 8 + t, batch_size - 1);
                     const __global ushort* ap = (const __global ushort*)(
                         quantized_input + row * TILE_IN_B_PITCH + g * GROUP_SIZE);
 #if CHUNKS_PER_GROUP == 4
@@ -623,7 +673,7 @@ KERNEL(fc)(
             const char4 v7 = U3_CHAR4(w0, w1, w2, 28);
 
             unroll_for (uint t = 0; t < TILE_M; ++t) {
-                const uint row = min(m0 + t, batch_size - 1);
+                const uint row = a_row_base + min(m0 + t, batch_size - 1);
                 const __global uint* ap = (const __global uint*)quantized_input +
                                           row * A_UINTS_PER_ROW + chunk * A_UINTS_PER_CHUNK;
                 int a = acc[t];
@@ -639,12 +689,12 @@ KERNEL(fc)(
             }
         }
 
-        const float bs = WEI_SCALE(n, g * GROUP_SIZE);
+        const float bs = WEI_SCALE(expert, n, g * GROUP_SIZE);
 #if DECOMPRESSION_ZP_TERM
-        const float bzp = WEI_ZP(n, g * GROUP_SIZE);
+        const float bzp = WEI_ZP(n_global, g * GROUP_SIZE);
 #endif
         unroll_for (uint t = 0; t < TILE_M; ++t) {
-            const uint row = min(m0 + t, batch_size - 1);
+            const uint row = a_row_base + min(m0 + t, batch_size - 1);
             const uint qv = (row * var_pitch + g) * 2;
             float part = (float)acc[t];
 #if DECOMPRESSION_ZP_TERM
@@ -680,9 +730,9 @@ KERNEL(fc)(
         if (row < batch_size) {
             float res = out[t];
 #if BIAS_TERM
-            res += (float)biases[n];
+            res += (float)biases[n_global];
 #endif
-            const uint out_row = row;
+            const uint out_row = row_base + row;
             const uint output_offset = n * TILE_OUT_F_PITCH + out_row * TILE_OUT_B_PITCH + OUTPUT_OFFSET;
             const float activated = ACTIVATION_TYPED(res, ACTIVATION_PARAMS_TYPED);
 #if HAS_FUSED_OPS
@@ -706,6 +756,9 @@ KERNEL(fc)(
 #undef M_BLOCKS
 #undef A_UINTS_PER_ROW
 #undef A_UINTS_PER_CHUNK
+#undef ROWS_PER_EXPERT
+#undef N_BLOCKS_PER_EXPERT
+#undef B_UINTS_PER_EXPERT
 #undef GROUPS_PER_ITER
 #undef CHUNKS_PER_ITER
 #undef CHUNKS_PER_SG

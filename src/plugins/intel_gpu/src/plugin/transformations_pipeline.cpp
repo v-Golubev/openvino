@@ -1855,11 +1855,13 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 }
                 // u3 weights run on the OCL int3 GEMM, which quantizes the activations
                 // itself; a graph-level DynamicQuantize would hand it an activation scale it
-                // has no argument slot for. Keep this in step with the u3 bypass in
+                // has no argument slot for. This applies both to a plain 2D weight and to a
+                // grouped MoE matmul ([G, N, K]). Keep this in step with the u3 bypass in
                 // fully_connected_onednn.hpp: a node that keeps its DynamicQuantize but is
                 // then handed to the int3 kernel, or vice versa, loses the int8 activation
                 // path and gets dramatically slower.
-                if (root->get_input_element_type(1) == ov::element::u3 && root->get_input_partial_shape(1).size() == 2) {
+                const size_t u3_weights_rank = root->get_input_partial_shape(1).size();
+                if (root->get_input_element_type(1) == ov::element::u3 && (u3_weights_rank == 2 || u3_weights_rank == 3)) {
                     GPU_DEBUG_TRACE << root->get_friendly_name() << "  dyn_quan is turned off: u3 weights are handled in-kernel"
                                     << std::endl;
                     return true;

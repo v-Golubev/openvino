@@ -135,6 +135,13 @@ public:
         auto get_fc_output_layout = [primitive](const std::vector<layout>& input_layouts, const layout& output_layout, bool swiglu_fused) {
             auto updated_out_layout = output_layout;
 
+            // A grouped MoE weight is flattened to [G*N, K] here, and may already
+            // have arrived flattened from a weights reorder, so one expert's N can
+            // not be read off it. Shape inference restores the expert dimension, so
+            // its [G, M, N] output (already halved if swiglu is fused) is used as is.
+            if (primitive->input_size == 3 && primitive->weights_rank == 3)
+                return updated_out_layout;
+
             auto input0_pshape = input_layouts[0].get_partial_shape();
             auto input1_pshape = input_layouts[1].get_partial_shape();
             const auto out_features_dim = primitive->weights_transposed ? input1_pshape[0] : input1_pshape[1];

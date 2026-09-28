@@ -21,8 +21,15 @@ constexpr size_t min_quantize_group_size = simd * 2;
 using fc_kernel_bf_tiled_utils::get_input_bf_size;
 using fc_kernel_bf_tiled_utils::get_output_aligned_bf_size;
 
-// Quantization groups along K carried by the decompression scale, which holds one
-// row of groups per output channel.
+// Quantization groups along K carried by the decompression scale.
+//
+// Deliberately not bf_tiled's get_scale_group_size, which reads the group count
+// off the scale's Feature() dimension. That holds for a plain 2D weight, whose
+// scale is [N, groups], but a grouped MoE weight's scale is [G, N, groups] where
+// Feature() is N - there the same assumption silently yields a group size of K/N
+// (4 instead of 128 for the Qwen3.6 experts) and the kernel rejects the node.
+// The total element count is correct for both: the scale always carries one row
+// of groups per output channel of the flattened weight.
 size_t get_scale_groups_k(const fully_connected_params& params) {
     const size_t rows = params.weights.OFM().v;
     const size_t total = params.decompression_scale.LogicalSize();
@@ -103,6 +110,35 @@ size_t get_quantized_input_size(const fully_connected_params& params) {
     return std::max(params.inputs[0].PhysicalSize(), bf.first * bf.second);
 }
 
+// Number of expert matrices packed into the weight tensor. A grouped MoE weight
+// is [G, N, K] flattened expert-major to [G*N, K], so it carries G times the
+// output channels of a single expert; an ordinary FC has exactly one. Returns 0
+// when the two do not divide, which Validate treats as unsupported.
+size_t get_expert_count(const fully_connected_params& params) {
+    const size_t ofm = get_output_aligned_bf_size(params, false).second;
+    const size_t weights_ofm = params.weights.OFM().v;
+    if (ofm == 0 || weights_ofm == 0 || (weights_ofm % ofm) != 0)
+        return 0;
+    return weights_ofm / ofm;
+}
+
+// A grouped weight against activations [1, M, K] shared by every expert, as left
+// by BypassExpertTile, rather than one [M, K] slice per expert.
+bool is_broadcast_input(const fully_connected_params& params) {
+    return get_expert_count(params) > 1 && params.outputs[0].GetLayout() == DataLayout::bfyx &&
+           params.inputs[0].Batch().v == 1;
+}
+
+// Rows belonging to one expert. get_input_bf_size flattens the batch across
+// experts, so it counts every expert's rows unless the input is broadcast.
+size_t get_rows_per_expert(const fully_connected_params& params) {
+    const size_t batch = get_input_bf_size(params).first;
+    const size_t experts = get_expert_count(params);
+    if (experts <= 1 || is_broadcast_input(params))
+        return batch;
+    return batch / experts;
+}
+
 // The sg_m subgroups split one staging iteration's granules between them, so the
 // iteration has to cover whole quantization groups and split evenly.
 bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m) {
@@ -116,7 +152,8 @@ bool is_valid_sg_m(const fully_connected_params& params, size_t sg_m) {
     return (chunks_per_iter % sg_m) == 0 && (groups_k % groups_per_iter) == 0;
 }
 
-// Subgroups sharing one weight decode through SLM, by row count, with 32-row tiles. Device-timed on the Qwen3-8B shapes (N and K
+// Subgroups sharing one weight decode through SLM for a dense (non-grouped) FC,
+// by row count, with 32-row tiles. Device-timed on the Qwen3-8B shapes (N and K
 // from 4096 to 12288): each doubling of sg_m pays off once the workgroup's
 // 32 * sg_m rows are mostly filled, up to ~21 TOPS at sg_m 8 versus ~10 at 1.
 size_t get_dense_sg_m(size_t rows) {
@@ -141,10 +178,12 @@ constexpr size_t v2_min_rows_sg16 = 192;
 
 // The v2 path relies on 2D block reads and split work-group barriers (Xe2 and
 // later), shares one decode across nb column blocks and folds a scalar zero
-// point into a per-row term, so it is limited to FCs whose zero point is
+// point into a per-row term, so it is limited to dense FCs whose zero point is
 // scalar or absent and whose output channels fill whole nb * 16 column tiles.
 bool supports_v2(const fully_connected_params& params) {
     if (params.engineInfo.arch < gpu_arch::xe2)
+        return false;
+    if (get_expert_count(params) > 1)
         return false;
     if (params.has_decompression_zp && !params.scalar_zp)
         return false;
@@ -224,7 +263,7 @@ std::vector<gemm_config> get_dense_variants(const fully_connected_params& params
 }
 
 bool use_dense_variants(const fully_connected_params& params) {
-    if (!params.is_shape_agnostic || get_quantize_group_size(params) == 0)
+    if (!params.is_shape_agnostic || get_expert_count(params) > 1 || get_quantize_group_size(params) == 0)
         return false;
     for (const auto& cfg : get_dense_variants(params)) {
         if (!cfg.v2 && !is_valid_sg_m(params, cfg.sg_m))
@@ -243,17 +282,19 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
     if (group_size == 0)
         return cfg;
 
-    // A shape-agnostic kernel is compiled before the row count is known. It gets
-    // 32 x 1 when get_dense_variants does not apply.
+    // A shape-agnostic kernel is compiled before the row count is known. Grouped
+    // MoE weights keep 32 x 1 there, the best or near-best choice from 16 to 64
+    // rows per expert on the Qwen3.6 MoE shapes; dense FCs use
+    // get_dense_variants instead.
     if (params.is_shape_agnostic)
         return cfg;
 
-    const size_t rows = get_input_bf_size(params).first;
+    const size_t rows = get_rows_per_expert(params);
     if (rows <= 8) {
         cfg.tile_m = 8;
     } else if (rows <= 16) {
         cfg.tile_m = 16;
-    } else {
+    } else if (get_expert_count(params) <= 1) {
         if (rows >= v2_min_rows_sg8 && supports_v2(params)) {
             const size_t sg_m = (rows >= v2_min_rows_sg16) ? 16 : 8;
             if (is_valid_v2_sg_m(params, sg_m))
@@ -265,6 +306,8 @@ gemm_config get_dpas_config(const fully_connected_params& params) {
                 break;
             }
         }
+    } else if (rows > 64 && is_valid_sg_m(params, 2)) {
+        cfg.sg_m = 2;
     }
 
     return cfg;
@@ -284,12 +327,12 @@ std::vector<gemm_config> get_gemm_configs(const fully_connected_params& params, 
 
 // Index into get_gemm_configs of the variant to run for these params.
 size_t select_gemm(const fully_connected_params& params, const std::vector<gemm_config>& configs) {
-    const size_t rows = get_input_bf_size(params).first;
-    if (rows < dpas_min_batch)
+    const size_t rows_per_expert = get_rows_per_expert(params);
+    if (rows_per_expert < dpas_min_batch)
         return configs.size() - 1;
     size_t best = 0;
     for (size_t i = 0; i + 1 < configs.size(); ++i) {
-        if (configs[i].min_rows <= rows && configs[i].min_rows >= configs[best].min_rows)
+        if (configs[i].min_rows <= rows_per_expert && configs[i].min_rows >= configs[best].min_rows)
             best = i;
     }
     return best;
@@ -333,19 +376,26 @@ CommonDispatchData get_quantize_dispatch(size_t num_groups) {
     return dispatchData;
 }
 
-CommonDispatchData get_gemm_dispatch(const fully_connected_params& params, const gemm_config& cfg) {
+// The M dimension is tiled within one expert, never across two: a row tile shares
+// a single weight unpack, so it has to stay inside the expert that unpack came
+// from. The expert therefore gets its own grid dimension.
+CommonDispatchData get_gemm_dispatch(const fully_connected_params& params,
+                                     const gemm_config& cfg,
+                                     size_t rows_per_expert,
+                                     size_t experts) {
     CommonDispatchData dispatchData;
 
     const size_t output_f = get_output_aligned_bf_size(params, false).second;
     const size_t n_blocks = CeilDiv(output_f, osv);
-    const size_t rows = std::max(get_input_bf_size(params).first, size_t{1});
+    const size_t rows = std::max(rows_per_expert, size_t{1});
+    const size_t groups = std::max(experts, size_t{1});
 
     if (cfg.dpas) {
         const size_t m_groups = CeilDiv(rows, cfg.tile_m * cfg.sg_m);
-        dispatchData.gws = {(n_blocks / cfg.nb) * simd, m_groups * cfg.sg_m, 1};
+        dispatchData.gws = {(n_blocks / cfg.nb) * simd, m_groups * cfg.sg_m, groups};
         dispatchData.lws = {simd, cfg.sg_m, 1};
     } else {
-        dispatchData.gws = {n_blocks * simd, CeilDiv(rows, cfg.tile_m) * cfg.sg_k, 1};
+        dispatchData.gws = {n_blocks * simd, CeilDiv(rows, cfg.tile_m) * cfg.sg_k, groups};
         dispatchData.lws = {simd, cfg.sg_k, 1};
     }
 
@@ -419,10 +469,40 @@ bool FullyConnected_int3_dpas::Validate(const Params& params) const {
     // that does not fill them exactly would need edge handling the GEMM lacks.
     const size_t ifm = get_input_bf_size(fc_params).second;
     const size_t ofm = get_output_aligned_bf_size(fc_params, false).second;
-    if (ifm == 0 || ofm == 0 || weights.IFM().v != ifm || weights.OFM().v != ofm)
+    if (ifm == 0 || ofm == 0 || weights.IFM().v != ifm)
         DO_NOT_USE_THIS_KERNEL(params.layerID);
     if ((ifm % k_chunk) != 0 || (ofm % osv) != 0)
         DO_NOT_USE_THIS_KERNEL(params.layerID);
+
+    // A grouped (MoE expert) weight holds G stacked expert matrices, so it has G
+    // times one expert's output channels. get_expert_count returns 0 if the two
+    // do not divide, which means the weight is not a clean stack of experts.
+    const size_t experts = get_expert_count(fc_params);
+    if (experts == 0)
+        DO_NOT_USE_THIS_KERNEL(params.layerID);
+    if (experts > 1) {
+        // The kernel takes the expert from a third grid dimension and reads the
+        // per-expert row count out of the output feature dimension, so the output
+        // must be the 3D [G, M, N] that a batched matmul produces, with the expert
+        // count in its batch dimension.
+        if (fc_params.outputs[0].GetLayout() != DataLayout::bfyx)
+            DO_NOT_USE_THIS_KERNEL(params.layerID);
+        if (fc_params.outputs[0].Batch().v != experts)
+            DO_NOT_USE_THIS_KERNEL(params.layerID);
+        // M is dynamic at build time, so only cross-check the flattened batch
+        // against the expert count when it is actually known.
+        const size_t batch = get_input_bf_size(fc_params).first;
+        if (!is_broadcast_input(fc_params) && batch != 0 && (batch % experts) != 0)
+            DO_NOT_USE_THIS_KERNEL(params.layerID);
+        if (!is_broadcast_input(fc_params) && input.Batch().v != experts)
+            DO_NOT_USE_THIS_KERNEL(params.layerID);
+        // A per-group zero point is indexed through the DECOMPRESSION_ZP_* tensor
+        // macros, which describe the unflattened [G, N, groups] tensor and so do
+        // not address it by flattened output channel. Only the scalar form, which
+        // needs no indexing at all, is wired up for grouped weights.
+        if (fc_params.has_decompression_zp && !fc_params.scalar_zp)
+            DO_NOT_USE_THIS_KERNEL(params.layerID);
+    }
 
     // Rows of the quantized activation buffer are read with uint / block_read_us4,
     // both of which need the row stride to stay 4-byte aligned.
@@ -470,11 +550,27 @@ JitConstants FullyConnected_int3_dpas::GetJitConstants(const fully_connected_par
     const size_t group_size = get_quantize_group_size(params);
     jit.AddConstant(MakeJitConstant("QUANTIZE_GROUP_SIZE", group_size));
     jit.AddConstant(MakeJitConstant("IFM_SIZE", get_input_bf_size(params).second));
-    // The scale [N, groups] is addressed through its own pitches, per channel and group.
+    const bool grouped = get_expert_count(params) > 1;
+    jit.AddConstant(MakeJitConstant("GROUPED_WEIGHTS", grouped ? 1 : 0));
+    jit.AddConstant(MakeJitConstant("BROADCAST_INPUT", is_broadcast_input(params) ? 1 : 0));
+
+    // The scale is [N, groups] for a plain weight and [G, N, groups] for a grouped
+    // one, and is not necessarily dense in that order: the grouped scale of the
+    // Qwen3.6 experts arrives as byfx, i.e. [G][groups][N] in memory. So it is
+    // addressed through its own pitches, per (expert, channel, group).
     const auto& scale = params.decompression_scale;
+    size_t scale_e_pitch = 0;
+    size_t scale_n_pitch = scale.Batch().pitch;
+    size_t scale_g_pitch = scale.Feature().pitch;
+    if (grouped) {
+        scale_e_pitch = scale.Batch().pitch;
+        scale_n_pitch = scale.Feature().pitch;
+        scale_g_pitch = (scale.Y().v == get_scale_groups_k(params)) ? scale.Y().pitch : scale.X().pitch;
+    }
     jit.AddConstant(MakeJitConstant("WEI_SCALE_OFFSET", scale.GetFirstElementOffset()));
-    jit.AddConstant(MakeJitConstant("WEI_SCALE_N_PITCH", scale.Batch().pitch));
-    jit.AddConstant(MakeJitConstant("WEI_SCALE_G_PITCH", scale.Feature().pitch));
+    jit.AddConstant(MakeJitConstant("WEI_SCALE_E_PITCH", scale_e_pitch));
+    jit.AddConstant(MakeJitConstant("WEI_SCALE_N_PITCH", scale_n_pitch));
+    jit.AddConstant(MakeJitConstant("WEI_SCALE_G_PITCH", scale_g_pitch));
     jit.AddConstant(MakeJitConstant("WEI_SCALE_GROUP_SIZE", get_wei_scale_group_size(params)));
 
     const auto activation_dt = Datatype::F32;
@@ -511,7 +607,8 @@ JitConstants FullyConnected_int3_dpas::GetGemmJitConstants(const fully_connected
     jit.AddConstant(MakeJitConstant("SG_K", cfg.sg_k));
 
     // The store addresses output element (out_row, n), out_row being the row of
-    // the flattened batch. A 3D bfyx output [B, M, N] splits it back into b and f.
+    // the flattened, expert-major batch. A 3D bfyx output [G, M, N] splits it back
+    // into (expert, row) as b and f.
     if (!params.fused_ops.empty()) {
         std::vector<std::string> idx_order = { "out_row", "n", "0", "0" };
         if (params.outputs[0].GetLayout() == DataLayout::bfyx)
@@ -540,6 +637,8 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
     OPENVINO_ASSERT(group_size != 0, "[GPU] int3 FC: dynamic quantization group size is zero.");
     const size_t input_size = get_quantized_input_size(fc_params);
     const size_t var_size = (input_size / group_size) * 2 * sizeof(float);
+    const size_t experts = get_expert_count(fc_params);
+    const size_t rows_per_expert = get_rows_per_expert(fc_params);
 
     int inputs_count = 2;  // input + decompression scale
     if (new_params.has_decompression_zp && !new_params.scalar_zp)
@@ -580,13 +679,15 @@ KernelsData FullyConnected_int3_dpas::GetKernelsData(const Params& params) const
     kd.internalBuffers.push_back(var_size);
     kd.internalBufferDataType = Datatype::F16;
 
-    // Kernels 1..: the GEMM variants. Only one of them runs per inference.
+    // Kernels 1..: the GEMM variants. Only one of them runs per inference. Rows per
+    // expert, not the flattened batch, is what has to fill the 8-row tiles: with
+    // 256 experts the flattened batch is large even when each expert has a single row.
     const size_t selected = select_gemm(fc_params, configs);
 
     for (size_t i = 0; i < configs.size(); ++i) {
         const auto& cfg = configs[i];
         auto& gemm_kernel = kd.kernels[i + 1];
-        const auto dispatch = get_gemm_dispatch(fc_params, cfg);
+        const auto dispatch = get_gemm_dispatch(fc_params, cfg, rows_per_expert, experts);
 
         auto entry_point = GetEntryPoint(kernelName, fc_params.layerID, params, static_cast<int>(i) + 1);
         auto jit = CreateJit(kernelName, GetGemmJitConstants(new_params, cfg), entry_point);
@@ -639,6 +740,9 @@ void FullyConnected_int3_dpas::GetUpdateDispatchDataFunc(KernelData& kd) const {
         kd.kernels[0].params.workGroups.local = quan_dispatch.lws;
         kd.kernels[0].skip_execution = skip;
 
+        const size_t experts = get_expert_count(prim_params);
+        const size_t rows_per_expert = get_rows_per_expert(prim_params);
+
         // The runtime params are always built as shape-agnostic, so the variant set
         // compiled into kd is recognised by its kernel count instead.
         const bool dense_variants = kd.kernels.size() == 2 + dense_variant_count;
@@ -650,7 +754,7 @@ void FullyConnected_int3_dpas::GetUpdateDispatchDataFunc(KernelData& kd) const {
             kernel.skip_execution = skip || i != selected;
             if (kernel.skip_execution)
                 continue;
-            const auto dispatch = get_gemm_dispatch(prim_params, configs[i]);
+            const auto dispatch = get_gemm_dispatch(prim_params, configs[i], rows_per_expert, experts);
             kernel.params.workGroups.global = dispatch.gws;
             kernel.params.workGroups.local = dispatch.lws;
         }

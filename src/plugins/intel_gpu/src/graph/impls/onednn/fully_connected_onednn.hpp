@@ -72,10 +72,13 @@ struct FullyConnectedImplementationManager : public ImplementationManager {
             LOG_AND_RETURN_FALSE(node);
         }
 
-        // u3 weights run on the OCL fully_connected_gpu_int3_dpas kernel. Grouped (MoE) weights
-        // [G, N, K] stay here; the weights reorder may already have flattened their layout to
-        // 2D, so the rank is taken from the primitive.
-        if (wei_dt == data_types::u3 && fc_prim->weights_transposed && fc_prim->weights_rank == 2)
+        // u3 weights run on the OCL fully_connected_gpu_int3_dpas kernel. This covers plain
+        // 2D weights and the grouped MoE matmuls ([G, N, K], flattened to [G*N, K]) alike:
+        // the kernel takes the expert index from a third grid dimension, and
+        // get_fc_output_layout keeps the [G, M, N] output from shape inference, so the
+        // dispatch shape and the allocated buffer agree.
+        const auto u3_weights_rank = fc_node.weights().get_output_layout(false).get_partial_shape().size();
+        if (wei_dt == data_types::u3 && fc_prim->weights_transposed && (u3_weights_rank == 2 || u3_weights_rank == 3))
             LOG_AND_RETURN_FALSE(node);
 
         if (fc_prim->compressed_weights) {
