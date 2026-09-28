@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -1737,7 +1738,8 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
         manager.register_pass<ov::pass::ConvertWeightCompressedConv1x1ToMatmul>();
         manager.register_pass<ov::intel_gpu::IncreaseRMSInputPrecision>();
         manager.register_pass<ov::intel_gpu::ClampFP16Output>();
-        if (device_info.supports_immad) {
+        // TEMPORARY: OV_INT3_BASELINE leaves the u3 experts on oneDNN, which needs the tiled input.
+        if (device_info.supports_immad && std::getenv("OV_INT3_BASELINE") == nullptr) {
             manager.register_pass<ov::intel_gpu::BypassExpertTile>();
             manager.register_pass<ov::intel_gpu::MoveExpertRoutingScale>();
         }
@@ -1866,7 +1868,10 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 // then handed to the int3 kernel, or vice versa, loses the int8 activation
                 // path and gets dramatically slower.
                 const size_t u3_weights_rank = root->get_input_partial_shape(1).size();
-                if (root->get_input_element_type(1) == ov::element::u3 && (u3_weights_rank == 2 || u3_weights_rank == 3)) {
+                // TEMPORARY: OV_INT3_BASELINE keeps DynamicQuantize on every u3 node.
+                static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+                if (!int3_baseline && root->get_input_element_type(1) == ov::element::u3 &&
+                    (u3_weights_rank == 2 || u3_weights_rank == 3)) {
                     GPU_DEBUG_TRACE << root->get_friendly_name() << "  dyn_quan is turned off: u3 weights are handled in-kernel"
                                     << std::endl;
                     return true;

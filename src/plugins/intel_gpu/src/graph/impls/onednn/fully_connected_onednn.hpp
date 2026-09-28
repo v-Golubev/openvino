@@ -10,6 +10,7 @@
 #include "intel_gpu/runtime/debug_configuration.hpp"
 #include <memory>
 #include <cmath>
+#include <cstdlib>
 
 #define LOG_AND_RETURN_FALSE(node) do {                                         \
     GPU_DEBUG_TRACE << (node).id() << " :  Do not select onednn" << std::endl;  \
@@ -78,7 +79,9 @@ struct FullyConnectedImplementationManager : public ImplementationManager {
         // get_fc_output_layout keeps the [G, M, N] output from shape inference, so the
         // dispatch shape and the allocated buffer agree.
         const auto u3_weights_rank = fc_node.weights().get_output_layout(false).get_partial_shape().size();
-        if (wei_dt == data_types::u3 && fc_prim->weights_transposed && (u3_weights_rank == 2 || u3_weights_rank == 3))
+        // TEMPORARY: OV_INT3_BASELINE keeps every u3 node on oneDNN.
+        static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+        if (!int3_baseline && wei_dt == data_types::u3 && fc_prim->weights_transposed && (u3_weights_rank == 2 || u3_weights_rank == 3))
             LOG_AND_RETURN_FALSE(node);
 
         if (fc_prim->compressed_weights) {

@@ -8,6 +8,7 @@
 #include "common_types.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <vector>
 
 namespace kernel_selector {
@@ -437,6 +438,11 @@ DeviceFeaturesKey FullyConnected_int3_dpas::get_required_device_features_key(con
 
 bool FullyConnected_int3_dpas::Validate(const Params& params) const {
     if (!Parent::Validate(params))
+        DO_NOT_USE_THIS_KERNEL(params.layerID);
+
+    // TEMPORARY: OV_INT3_BASELINE disables this kernel for A/B runs.
+    static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+    if (int3_baseline)
         DO_NOT_USE_THIS_KERNEL(params.layerID);
 
     const auto& fc_params = static_cast<const fully_connected_params&>(params);

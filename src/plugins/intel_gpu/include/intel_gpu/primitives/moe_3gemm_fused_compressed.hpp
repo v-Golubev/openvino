@@ -3,6 +3,7 @@
 //
 
 #pragma once
+#include <cstdlib>
 #include <filesystem>
 #include <vector>
 #include <string>
@@ -64,6 +65,10 @@ struct moe_otd_descriptor {
 /// so the weights need a zero point. ConvertMOE3GemmZpToU8 keeps a scalar zero point only for these
 /// kernels, so both call this.
 inline bool moe_3gemm_use_int3_gemm(bool has_zp, size_t hidden_size, size_t inter_size, size_t gate_up_groups, size_t down_groups) {
+    // TEMPORARY: OV_INT3_BASELINE keeps u3 experts on OneDNN grouped matmul for A/B runs.
+    if (std::getenv("OV_INT3_BASELINE") != nullptr) {
+        return false;
+    }
     if (!has_zp) {
         return false;
     }
