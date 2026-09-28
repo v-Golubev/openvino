@@ -10,6 +10,7 @@
 #include "intel_gpu/runtime/debug_configuration.hpp"
 #include <memory>
 #include <cmath>
+#include <cstdlib>
 
 #define LOG_AND_RETURN_FALSE(node) do {                                         \
     GPU_DEBUG_TRACE << (node).id() << " :  Do not select onednn" << std::endl;  \
@@ -75,7 +76,9 @@ struct FullyConnectedImplementationManager : public ImplementationManager {
         // u3 weights run on the OCL fully_connected_gpu_int3_dpas kernel. Grouped (MoE) weights
         // [G, N, K] stay here; the weights reorder may already have flattened their layout to
         // 2D, so the rank is taken from the primitive.
-        if (wei_dt == data_types::u3 && fc_prim->weights_transposed && fc_prim->weights_rank == 2)
+        // TEMPORARY: OV_INT3_BASELINE keeps every u3 node on oneDNN.
+        static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+        if (!int3_baseline && wei_dt == data_types::u3 && fc_prim->weights_transposed && fc_prim->weights_rank == 2)
             LOG_AND_RETURN_FALSE(node);
 
         if (fc_prim->compressed_weights) {

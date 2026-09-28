@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <memory>
@@ -1859,7 +1860,10 @@ void TransformationsPipeline::apply(std::shared_ptr<ov::Model> func) {
                 // fully_connected_onednn.hpp: a node that keeps its DynamicQuantize but is
                 // then handed to the int3 kernel, or vice versa, loses the int8 activation
                 // path and gets dramatically slower.
-                if (root->get_input_element_type(1) == ov::element::u3 && root->get_input_partial_shape(1).size() == 2) {
+                // TEMPORARY: OV_INT3_BASELINE keeps DynamicQuantize on every u3 node.
+                static const bool int3_baseline = std::getenv("OV_INT3_BASELINE") != nullptr;
+                if (!int3_baseline && root->get_input_element_type(1) == ov::element::u3 &&
+                    root->get_input_partial_shape(1).size() == 2) {
                     GPU_DEBUG_TRACE << root->get_friendly_name() << "  dyn_quan is turned off: u3 weights are handled in-kernel"
                                     << std::endl;
                     return true;
