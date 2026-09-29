@@ -64,15 +64,15 @@ std::shared_ptr<ov::Model> make_model(ov::element::Type wei_type, ZpFactory make
 
 }  // namespace
 
-// NNCF int3 layout: u3 weights with one i8 zp (= 4) for all experts, expanded to the scale shape
+// A single byte zp for all experts is expanded to the scale shape for OneDNN
 TEST_F(TransformationTestsF, ConvertMOE3GemmZpToU8_ScalarZpBroadcast) {
     using C = ov::op::v0::Constant;
-    model = make_model(ov::element::u3, [](size_t, size_t) {
+    model = make_model(ov::element::u8, [](size_t, size_t) {
         return C::create(ov::element::i8, ov::Shape{}, {4});
     });
     manager.register_pass<ConvertMOE3GemmZpToU8>();
 
-    model_ref = make_model(ov::element::u3, [](size_t n, size_t k) {
+    model_ref = make_model(ov::element::u8, [](size_t n, size_t k) {
         return C::create(ov::element::i8, scale_shape(n, k), std::vector<int8_t>(ov::shape_size(scale_shape(n, k)), 4));
     });
     comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
@@ -92,7 +92,8 @@ TEST_F(TransformationTestsF, ConvertMOE3GemmZpToU8_U3ZpToU8) {
     comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
 }
 
-// Scalar u3 zp: converted to u8, then broadcast
+// NNCF int3 layout: u3 weights with one u3 zp (= 4) for all experts. The u3 expert kernels take it
+// as a scalar, so it is only converted to u8.
 TEST_F(TransformationTestsF, ConvertMOE3GemmZpToU8_ScalarU3Zp) {
     using C = ov::op::v0::Constant;
     model = make_model(ov::element::u3, [](size_t, size_t) {
@@ -100,8 +101,8 @@ TEST_F(TransformationTestsF, ConvertMOE3GemmZpToU8_ScalarU3Zp) {
     });
     manager.register_pass<ConvertMOE3GemmZpToU8>();
 
-    model_ref = make_model(ov::element::u3, [](size_t n, size_t k) {
-        return C::create(ov::element::u8, scale_shape(n, k), std::vector<uint8_t>(ov::shape_size(scale_shape(n, k)), 4));
+    model_ref = make_model(ov::element::u3, [](size_t, size_t) {
+        return C::create(ov::element::u8, ov::Shape{1, 1, 1, 1}, {4});
     });
     comparator.enable(FunctionsComparator::CmpValues::CONST_VALUES);
 }

@@ -7,6 +7,7 @@
 #include <array>
 #include <memory>
 
+#include "intel_gpu/primitives/moe_3gemm_fused_compressed.hpp"
 #include "openvino/core/rt_info.hpp"
 #include "openvino/op/broadcast.hpp"
 #include "openvino/op/constant.hpp"
@@ -32,6 +33,16 @@ ConvertMOE3GemmZpToU8::ConvertMOE3GemmZpToU8() {
             return false;
         }
 
+        const auto groups_per_channel = [&](size_t scale_idx, size_t n) {
+            return ov::shape_size(moe_compressed->get_input_shape(scale_idx)) / (config.num_expert * n);
+        };
+        const bool keep_routed_scalar_zp = moe_compressed->get_input_element_type(3) == ov::element::u3 &&
+                                           cldnn::moe_3gemm_use_int3_gemm(config.has_zp,
+                                                                          config.hidden_size,
+                                                                          config.inter_size,
+                                                                          groups_per_channel(4, config.inter_size),
+                                                                          groups_per_channel(10, config.hidden_size));
+
         // Routed gate/up/down zp, then shared gate/up/down zp (input layout of GEMM3_SWIGLU MOECompressed).
         // Each zp directly follows its scale.
         constexpr std::array<size_t, 6> zp_indices{5, 8, 11, 14, 17, 20};
@@ -47,11 +58,14 @@ ConvertMOE3GemmZpToU8::ConvertMOE3GemmZpToU8() {
             }
 
             // A single zp shared by all experts (e.g. the symmetric u3 midpoint) is expanded to the scale shape:
-            // the kernels and OneDNN grouped matmul take per-group zp only. Sub-byte zp is left as is.
+            // OneDNN grouped matmul and the u4/u8 kernels take per-group zp only, while the routed u3 expert
+            // kernels take it as is. Sub-byte zp is left as is.
             const auto& scale_pshape = moe_compressed->get_input_partial_shape(zp_idx - 1);
             const auto& zp_pshape = zp.get_partial_shape();
             const bool byte_zp = zp.get_element_type() == ov::element::u8 || zp.get_element_type() == ov::element::i8;
-            if (byte_zp && zp_pshape.is_static() && scale_pshape.is_static() && ov::shape_size(zp_pshape.to_shape()) == 1 &&
+            const bool routed_zp = zp_idx <= 11;
+            if (byte_zp && !(routed_zp && keep_routed_scalar_zp) && zp_pshape.is_static() && scale_pshape.is_static() &&
+                ov::shape_size(zp_pshape.to_shape()) == 1 &&
                 ov::shape_size(scale_pshape.to_shape()) > 1) {
                 const auto& scale_shape = scale_pshape.to_shape();
                 auto target_shape = ov::op::v0::Constant::create(ov::element::i64, {scale_shape.size()}, scale_shape);
